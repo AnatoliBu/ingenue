@@ -672,7 +672,7 @@ button{font-family:inherit}
 </div>
 
 <script>
-const BUILD='b19 · 2026-06-03 · ingenue repo + engine dedup option · on-device';
+const BUILD='b20 · 2026-06-03 · real installed-detection + device backend (:7777)';
 console.log('%cmaiden redesign build: '+BUILD,'color:#DEB887;font-weight:bold');
 const LS={
   get(k,d){try{const v=localStorage.getItem('maiden.'+k);return v==null?d:JSON.parse(v);}catch(e){return d;}},
@@ -836,9 +836,27 @@ async function loadCatalog(){
     // keep the mocked non-community entries (your github repos + pure custom-catalog items) so the trust gate is demonstrable
     const KEEP=REPO.available.filter(p=>p.srcs.includes('mine')||(p.srcs.includes('kalium')&&!p.srcs.includes('community')));
     REPO.available = entries.concat(KEEP);
-    REPO.installed = entries.slice(0,5).map((e,i)=>({...e,inst:1,upd_avail:i<2}));  // first few installed; 2 have updates
+    const real = await fetchInstalled();   // null when running off-device (no backend)
+    if(real && real.length) applyRealInstalled(real, entries);
+    else REPO.installed = entries.slice(0,5).map((e,i)=>({...e,inst:1,upd_avail:i<2}));  // local demo fallback
     if(document.getElementById('repoview').classList.contains('on')) renderRepo();
   }catch(err){ console.warn('catalog load failed — using built-in fallback list', err); }
+}
+async function fetchInstalled(){   // real installed scripts from the ingenue backend (dust/code)
+  try{ const r=await fetch('api/installed',{cache:'no-store'}); if(!r.ok) return null;
+    const j=await r.json(); return Array.isArray(j)?j:(j.scripts||null); }
+  catch(_){ return null; }
+}
+function norm(s){ return (s||'').toLowerCase().replace(/[\s.-]+/g,'_'); }
+function applyRealInstalled(names, entries){
+  const byNorm={}; entries.forEach(e=>{ byNorm[norm(e.n)]=e; });
+  REPO.installed = names.slice().sort().map(nm=>{
+    const e=byNorm[norm(nm)];
+    if(e){ e.inst=1; return {...e, inst:1}; }     // mark the catalog entry installed (badge + hide-known)
+    return { n:nm, a:'(on device)', d:'installed script — not in the community catalog', tags:[], srcs:['community'], inst:1, local:1 };
+  });
+  INSTALLED_ENGINES={};                            // engines actually present, derived from installed scripts
+  names.forEach(nm=>{ const eng=SHIP_ENGINE[norm(nm)]; if(eng && !INSTALLED_ENGINES[eng]) INSTALLED_ENGINES[eng]=norm(nm); });
 }
 
 /* ============ theme engine ============ */
@@ -1518,7 +1536,7 @@ function renderGh(){
         <label class="theme-search"><svg viewBox="0 0 32 32"><path d="${I.search}"/></svg>
           <input id="gh-token" type="password" placeholder="github personal access token (repo, read:user)"></label>
         <button class="btn btn-install" id="gh-connect">Connect</button></div>
-      <div class="gh-hint">connect to pull your own public &amp; private repos, add custom catalogs, and search all of GitHub for norns scripts. matching scripts are tagged by source. <b>token stays on-device</b> (proxied through maiden's server, never bundled into the web app).</div>`;
+      <div class="gh-hint">connect to pull your own public &amp; private repos, add custom catalogs, and search all of GitHub for norns scripts. matching scripts are tagged by source. <b>your token is stored only in this browser's localStorage</b> and sent only to GitHub (api.github.com, over HTTPS) to authorize search — never to ingenue or any other server.</div>`;
     b.querySelector('#gh-connect').onclick=()=>{
       const t=b.querySelector('#gh-token').value.trim();
       ghConnected = t.length>0 || true;   // demo: accept anything (even empty) to preview
