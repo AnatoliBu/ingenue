@@ -73,6 +73,70 @@ def ensure_home_dust():
         return f"warn: could not create {hw} symlink: {e}\n"
 
 
+def run_install(full):
+    """Interpret a script's lib/install.sh ourselves so it works on ANY port:
+    downloads + tar extracts run in Python (native gzip/xz, no BusyBox-tar / GNU-tar
+    differences), /home/we/dust is translated to the real dust, and other commands
+    (builds, etc.) fall back to the shell."""
+    import shlex, tarfile, zipfile
+    inst = os.path.join(full, "lib", "install.sh")
+    log = []
+    pp = ensure_home_dust().strip()
+    if pp:
+        log.append(pp)
+    cwd = full
+    ok = True
+    for raw in open(inst, "r", errors="ignore"):
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        line = line.replace("/home/we/dust", DUST)
+        try:
+            if line.startswith("echo "):
+                log.append(line[5:].strip().strip('"').strip("'"))
+            elif line.startswith("cd "):
+                d = line[3:].strip()
+                cwd = d if os.path.isabs(d) else os.path.normpath(os.path.join(cwd, d))
+                os.makedirs(cwd, exist_ok=True)
+            elif re.search(r"\b(wget|curl)\b", line) and re.search(r"https?://", line):
+                url = re.search(r"(https?://\S+)", line).group(1).rstrip("\"'")
+                om = re.search(r"-[oO]\s+(\S+)", line)
+                out = om.group(1) if om else os.path.basename(url.split("?")[0])
+                dest = os.path.join(cwd, out)
+                urllib.request.urlretrieve(url, dest)
+                log.append(f"downloaded {out} ({os.path.getsize(dest)} bytes)")
+            elif line.startswith("tar "):
+                fm = re.search(r"(\S+\.(?:tar\.gz|tgz|tar\.xz|tar|zip))\b", line)
+                if fm:
+                    p = fm.group(1)
+                    p = p if os.path.isabs(p) else os.path.join(cwd, p)
+                    if p.endswith(".zip"):
+                        with zipfile.ZipFile(p) as z: z.extractall(cwd)
+                    else:
+                        with tarfile.open(p) as t: t.extractall(cwd)
+                    log.append(f"extracted {os.path.basename(p)}")
+            elif line.startswith("rm "):
+                for f in shlex.split(line)[1:]:
+                    if not f.startswith("-"):
+                        try: os.remove(f if os.path.isabs(f) else os.path.join(cwd, f))
+                        except OSError: pass
+            elif line.startswith("mkdir"):
+                for d in shlex.split(line)[1:]:
+                    if not d.startswith("-"):
+                        os.makedirs(d if os.path.isabs(d) else os.path.join(cwd, d), exist_ok=True)
+            else:
+                r = subprocess.run(line, shell=True, cwd=cwd, capture_output=True, text=True, timeout=900)
+                if r.returncode != 0:
+                    ok = False
+                    log.append(f"$ {line}\n  ! exit {r.returncode}: {(r.stderr or r.stdout).strip()[-200:]}")
+                elif r.stdout.strip():
+                    log.append(f"$ {line}\n  {r.stdout.strip()[-200:]}")
+        except Exception as e:  # noqa: BLE001
+            ok = False
+            log.append(f"! {line[:60]} -> {e}")
+    return ok, "\n".join(log)
+
+
 def analyze_script(name):
     """Scan an installed script for its dependency surface (heal-on-install mapping)."""
     full, name = safe_script_dir(name)
@@ -217,11 +281,8 @@ class H(http.server.SimpleHTTPRequestHandler):
                 inst = os.path.join(full, "lib", "install.sh")
                 if not os.path.isfile(inst):
                     return self._json({"error": f"{name} has no lib/install.sh to run"}, 404)
-                patch = ensure_home_dust()          # make /home/we/dust valid so hardcoded paths work
-                os.chmod(inst, 0o755)
-                r = subprocess.run(["bash", inst], cwd=full, capture_output=True, text=True, timeout=1200)
-                tail = patch + (r.stdout + "\n" + r.stderr)[-1500:]
-                return self._json({"ok": r.returncode == 0, "name": name, "code": r.returncode, "log": tail})
+                ok, log = run_install(full)         # interpret install.sh ourselves (port-proof downloads/extracts)
+                return self._json({"ok": ok, "name": name, "log": log[-2000:]})
             if path == "/api/install":
                 full, name = safe_script_dir(b.get("name"))
                 url = (b.get("url") or "").strip()
