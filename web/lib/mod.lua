@@ -6,7 +6,7 @@ local moddir = _path.code .. 'ingenue/'
 
 mod.hook.register("system_post_startup", "ingenue", function()
   os.execute(
-    "pkill -f 'ingenue/server.py' 2>/dev/null; " ..
+    "pkill -f 'server.py 7777' 2>/dev/null; " ..
     "(cd " .. moddir .. " && setsid python3 server.py 7777 " ..
     ">" .. moddir .. "server.log 2>&1 </dev/null &)"
   )
