@@ -279,6 +279,15 @@ button{font-family:inherit}
 .eng-rename-input{flex:1;min-width:140px;background:var(--bg);border:1px solid var(--accent2);border-radius:7px;
   color:var(--fg);font-family:ui-monospace,monospace;font-size:13px;padding:7px 10px;outline:none}
 .eng-hint{font-size:12px;color:var(--muted);line-height:1.45;margin:0 0 16px}
+.dep-row{display:flex;align-items:flex-start;gap:10px;padding:9px 0;border-bottom:1px solid color-mix(in srgb,var(--trim) 55%,transparent);font-size:13px}
+.dep-row:last-child{border-bottom:0}
+.dep-row .dep-ic{flex:0 0 auto;font-size:15px;line-height:1.3}
+.dep-row .k{font-weight:600;color:var(--fg)}
+.dep-row .d{color:var(--muted);font-size:12px;margin-top:2px;line-height:1.45;word-break:break-word}
+.dep-row .d a{color:var(--accent2);text-decoration:none}
+.reqs-btn{font-size:11.5px;color:var(--accent2);background:transparent;border:1px solid color-mix(in srgb,var(--accent2) 38%,transparent);
+  border-radius:7px;padding:3px 9px;cursor:pointer}
+.reqs-btn:hover{background:color-mix(in srgb,var(--accent2) 14%,transparent)}
 
 /* collapsible / auto-hiding repo toolbar */
 .rd-toggle{margin-left:auto;width:30px;height:30px;display:grid;place-items:center;border:0;background:transparent;
@@ -625,6 +634,22 @@ button{font-family:inherit}
      </div>
    </div>
 
+   <!-- B4: dependency / heal-on-install plan -->
+   <div class="overlay" id="dep-overlay">
+     <div class="modal">
+       <div class="modal-head"><div class="t" id="dep-title">this script needs setup</div><button class="x" id="dep-close">✕</button></div>
+       <div class="modal-body">
+         <p class="trust-msg" id="dep-intro"></p>
+         <div id="dep-plan"></div>
+         <div class="trust-warn" id="dep-warn" style="margin-top:14px">Setup runs the script's own installer (<span class="mono">lib/install.sh</span>) and fetches the downloads above. It can take several minutes and runs commands on your device.</div>
+         <div class="trust-actions">
+           <button class="btn btn-remove" id="dep-skip">Skip for now</button>
+           <button class="btn btn-install" id="dep-go">Set up everything</button>
+         </div>
+       </div>
+     </div>
+   </div>
+
    <!-- generic confirm dialog -->
    <div class="overlay" id="confirm-overlay">
      <div class="modal trust-modal">
@@ -672,7 +697,7 @@ button{font-family:inherit}
 </div>
 
 <script>
-const BUILD='b21 · 2026-06-03 · portable norns mod + real install/remove/reinstall';
+const BUILD='b22 · 2026-06-03 · B4 dependency mapping + heal-on-install';
 console.log('%cmaiden redesign build: '+BUILD,'color:#DEB887;font-weight:bold');
 const LS={
   get(k,d){try{const v=localStorage.getItem('maiden.'+k);return v==null?d:JSON.parse(v);}catch(e){return d;}},
@@ -1099,7 +1124,7 @@ function enqueueInstall(p,btn,note,opts){
       body:JSON.stringify({name:p.dir||p.n, url:p.proj, force:opts.force?1:0})})
       .then(r=>r.json()).then(j=>{ const ok=!j.error;
         jobDone(job,btn,ok, ok?((j.log||'cloned')+'\n✓ installed — run SYSTEM > RESTART'):(j.error+(j.log?'\n'+j.log:'')), 'installed');
-        if(ok) refreshInstalled(); })
+        if(ok){ refreshInstalled(); fetchDeps(p.dir||p.n).then(rep=>{ if(rep && rep.needs_setup) openDepPlan(rep,p); }); } })   // heal-on-install
       .catch(e=>jobDone(job,btn,false,e.message,''));
     return;
   }
@@ -1118,6 +1143,53 @@ function removeScript(p,btn){
       .catch(e=>jobDone(job,btn,false,e.message,''));
   }, true);
 }
+/* ===== B4: dependency mapping + heal-on-install ===== */
+async function fetchDeps(name){
+  try{ const r=await fetch('api/deps?name='+encodeURIComponent(name)); if(!r.ok) return null;
+    const j=await r.json(); return j.error?null:j; }catch(_){ return null; }
+}
+let depPending=null;
+function depPlanHTML(rep){
+  const R=(ic,k,d)=>`<div class="dep-row"><span class="dep-ic">${ic}</span><div><div class="k">${k}</div>${d?`<div class="d">${d}</div>`:''}</div></div>`;
+  const rows=[];
+  if(rep.requires_scripts.length) rows.push(R('📦','other scripts',
+    'installed first: '+rep.requires_scripts.map(n=>{const c=REPO.available.find(p=>norm(p.n)===norm(n));return n+(c?'':' <span style="color:var(--err)">(not in catalog)</span>');}).join(', ')));
+  if(rep.nb) rows.push(R('🎹','nb voices','routes notes via nb — nb and the voices it uses must be installed'));
+  if(rep.needs_sc_ext) rows.push(R('🔌','SuperCollider engine extension',(rep.sc_extensions.join(', ')||'extension')+' — installed if missing'));
+  if(rep.downloads.length) rows.push(R('⬇','downloads ('+rep.downloads.length+')',
+    rep.downloads.map(u=>`<a href="${u}" target="_blank" rel="noopener">${u.split('/').slice(-1)[0]}</a>`).join('<br>')));
+  if(rep.native.length) rows.push(R('🛠','native tools',rep.native.join(', ')+' — used by the installer'));
+  if(rep.install_script) rows.push(R('▶','installer','lib/install.sh sets up the above on device'));
+  return rows.join('')||'<div class="dep-row">no extra setup detected — a plain clone is enough.</div>';
+}
+function openDepPlan(rep,p){
+  depPending={rep,p};
+  document.getElementById('dep-title').textContent = rep.needs_setup?'this script needs setup':'requirements';
+  document.getElementById('dep-intro').innerHTML = rep.needs_setup
+    ? `<b>${rep.name}</b> needs more than a clone to run:` : `<b>${rep.name}</b> requirements:`;
+  document.getElementById('dep-plan').innerHTML=depPlanHTML(rep);
+  document.getElementById('dep-warn').style.display = rep.install_script?'block':'none';
+  document.getElementById('dep-go').style.display = rep.needs_setup?'':'none';
+  document.getElementById('dep-overlay').classList.add('on');
+}
+async function runHeal(rep){
+  for(const reqn of (rep.requires_scripts||[])){          // install required scripts first (one level)
+    const dep=REPO.available.find(x=>norm(x.n)===norm(reqn));
+    if(dep && !REPO.installed.some(x=>norm(x.n)===norm(reqn)) && isUrl(dep.proj)){
+      const job=mkJob(reqn,'dependency'); job.querySelector('.ilog').textContent='installing dependency '+reqn+'…';
+      try{ const j=await (await fetch('api/install',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:dep.dir||dep.n,url:dep.proj})})).json();
+        jobDone(job,null,!j.error,j.error?j.error:'installed '+reqn,'installed'); }catch(e){ jobDone(job,null,false,e.message,''); }
+    }
+  }
+  if(rep.install_script){                                  // run the script's own installer
+    const job=mkJob(rep.name,'setting up'); job.querySelector('.ilog').textContent='running lib/install.sh — builds + downloads, can take several minutes…';
+    try{ const j=await (await fetch('api/heal',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:rep.name})})).json();
+      jobDone(job,null,!!j.ok,(j.log||j.error||'')+'\n'+(j.ok?'✓ setup complete — run SYSTEM > RESTART':'✗ setup failed'),'set up'); }
+    catch(e){ jobDone(job,null,false,e.message,''); }
+  }
+  refreshInstalled();
+}
+function showRequirements(p){ fetchDeps(p.dir||p.n).then(rep=>{ if(rep) openDepPlan(rep,p); }); }
 /* demo embed helpers */
 function isUrl(u){ return typeof u==='string' && /^https?:\/\//i.test(u.trim()); }
 function ytId(u){ if(!u)return''; const m=u.match(/(?:youtu\.be\/|youtube\.com\/(?:watch\?v=|embed\/|v\/|shorts\/))([\w-]{11})/); return m?m[1]:''; }
@@ -1218,6 +1290,7 @@ function wireCards(v,list,tab){
     const ins=card.querySelector('.btn-install'); if(ins) ins.onclick=e=>{e.stopPropagation();requestInstall(p,ins,tab);};
     const up=card.querySelector('.btn-update'); if(up) up.onclick=e=>{e.stopPropagation();doInstall(p,up,'',{force:1});};   // Reinstall = force re-clone
     const rm=card.querySelector('.btn-remove'); if(rm) rm.onclick=e=>{e.stopPropagation();removeScript(p,rm);};
+    const rq=card.querySelector('[data-reqs]'); if(rq) rq.onclick=e=>{e.stopPropagation();showRequirements(p);};
     card.querySelectorAll('.pill[data-tag]').forEach(tg=>tg.onclick=e=>{e.stopPropagation();
       repoQuery=tg.dataset.tag; const q=document.getElementById('rd-q'); if(q) q.value=repoQuery; updateGrid();});
     card.querySelectorAll('a,.demo-btn,.lnk,.csel').forEach(el=>el.addEventListener('click',e=>e.stopPropagation()));
@@ -1257,7 +1330,7 @@ function repoCard(p,tab){
       ? `<a class="demo-ext" href="${p.demo.trim()}" target="_blank" rel="noopener">▶ ${dk==='instagram'?'watch on Instagram':'open demo'} ↗</a>`
       : `<button class="demo-btn">▶ load ${dk} demo</button>`;
   const more=`<div class="card-more">
-      <div class="more-meta">${p.upd?`updated ${p.upd}`:'last-updated unknown'} · via ${srcNames(p)}</div>
+      <div class="more-meta">${p.upd?`updated ${p.upd}`:'last-updated unknown'} · via ${srcNames(p)}${p.inst?` · <button class="reqs-btn" data-reqs="1">⚙ requirements</button>`:''}</div>
       ${hasLinks?`<div class="more-links">${L(p.proj,'code')}${L(p.docU,'docs')}${L(p.discU,'discuss')}${L(p.comm,'norns.community')}</div>`:''}
       <div class="more-demo">${demoSlot}</div>
     </div>`;
@@ -1715,6 +1788,11 @@ function boot(){
     if(enginePending) proceedInstall(enginePending.p,enginePending.btn); enginePending=null; };
   document.getElementById('eng-link').onclick=()=>{ document.getElementById('eng-overlay').classList.remove('on');
     if(enginePending) proceedInstall(enginePending.p,enginePending.btn,null,true); enginePending=null; };
+  // dependency / heal (B4) modal wiring
+  document.getElementById('dep-skip').onclick=()=>{document.getElementById('dep-overlay').classList.remove('on');depPending=null;};
+  document.getElementById('dep-close').onclick=()=>{document.getElementById('dep-overlay').classList.remove('on');depPending=null;};
+  document.getElementById('dep-overlay').addEventListener('click',e=>{if(e.target.id==='dep-overlay'){e.currentTarget.classList.remove('on');depPending=null;}});
+  document.getElementById('dep-go').onclick=()=>{document.getElementById('dep-overlay').classList.remove('on'); if(depPending) runHeal(depPending.rep); depPending=null;};
   document.getElementById('eng-rename-go').onclick=()=>{ document.getElementById('eng-overlay').classList.remove('on');
     const nm=(document.getElementById('eng-rename').value||'').trim().replace(/[^A-Za-z0-9_]/g,'')||availableEngineName(shipEngine(enginePending.p));
     if(enginePending) proceedInstall(enginePending.p,enginePending.btn,nm); enginePending=null; };
