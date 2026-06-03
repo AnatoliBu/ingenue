@@ -138,10 +138,29 @@ def run_install(full):
 
 
 def analyze_script(name):
-    """Scan an installed script for its dependency surface (heal-on-install mapping)."""
+    """Scan an INSTALLED script for its dependency surface."""
     full, name = safe_script_dir(name)
     if not os.path.isdir(full):
         raise ValueError("not installed")
+    return analyze_dir(full, name)
+
+
+def analyze_remote(url):
+    """Shallow-clone a repo to a temp dir, analyze, clean up — for tracing un-installed deps."""
+    import tempfile
+    tmp = tempfile.mkdtemp(prefix="ing_dep_")
+    target = os.path.join(tmp, "s")
+    try:
+        r = subprocess.run(["git", "clone", "--depth", "1", url, target],
+                           capture_output=True, text=True, timeout=120)
+        if r.returncode != 0:
+            return {"error": "clone failed", "log": (r.stderr or "")[-300:]}
+        return analyze_dir(target, re.sub(r"\.git$", "", os.path.basename(url.rstrip("/"))))
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def analyze_dir(full, name):
     texts, files = [], []
     for root, dirs, fs in os.walk(full):
         if ".git" in root:
@@ -232,7 +251,8 @@ class H(http.server.SimpleHTTPRequestHandler):
                                          if os.path.isdir(os.path.join(CODE, d))
                                          and not d.startswith(".") and d != "ingenue"))
             if path == "/api/deps":
-                return self._json(analyze_script(self._q().get("name", [""])[0]))
+                q = self._q(); url = q.get("url", [""])[0]
+                return self._json(analyze_remote(url) if url else analyze_script(q.get("name", [""])[0]))
             if path == "/api/ls":
                 return self._json(listing(safe(self._q().get("path", [""])[0])))
             if path == "/api/read":

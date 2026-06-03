@@ -697,7 +697,7 @@ button{font-family:inherit}
 </div>
 
 <script>
-const BUILD='b22 · 2026-06-03 · B4 dependency mapping + heal-on-install';
+const BUILD='b23 · 2026-06-03 · B4 recursive dependency tracing + graph heal';
 console.log('%cmaiden redesign build: '+BUILD,'color:#DEB887;font-weight:bold');
 const LS={
   get(k,d){try{const v=localStorage.getItem('maiden.'+k);return v==null?d:JSON.parse(v);}catch(e){return d;}},
@@ -1124,7 +1124,7 @@ function enqueueInstall(p,btn,note,opts){
       body:JSON.stringify({name:p.dir||p.n, url:p.proj, force:opts.force?1:0})})
       .then(r=>r.json()).then(j=>{ const ok=!j.error;
         jobDone(job,btn,ok, ok?((j.log||'cloned')+'\n✓ installed — run SYSTEM > RESTART'):(j.error+(j.log?'\n'+j.log:'')), 'installed');
-        if(ok){ refreshInstalled(); fetchDeps(p.dir||p.n).then(rep=>{ if(rep && rep.needs_setup) openDepPlan(rep,p); }); } })   // heal-on-install
+        if(ok){ refreshInstalled(); traceDeps(p).then(tree=>{ if(tree && treeNeedsAction(tree)) openDepPlan(tree,p); }); } })   // heal-on-install: offer to set up the whole graph
       .catch(e=>jobDone(job,btn,false,e.message,''));
     return;
   }
@@ -1148,48 +1148,112 @@ async function fetchDeps(name){
   try{ const r=await fetch('api/deps?name='+encodeURIComponent(name)); if(!r.ok) return null;
     const j=await r.json(); return j.error?null:j; }catch(_){ return null; }
 }
+async function fetchDepsUrl(url){
+  try{ const r=await fetch('api/deps?url='+encodeURIComponent(url)); if(!r.ok) return null;
+    const j=await r.json(); return j.error?null:j; }catch(_){ return null; }
+}
+const DEP_MAX_DEPTH=4;
+function depStub(name,extra){ return Object.assign({name,requires_scripts:[],nb:false,needs_sc_ext:false,sc_extensions:[],downloads:[],native:[],install_script:false,needs_setup:false,children:[],installed:false},extra||{}); }
+// Recursively analyze a script AND every script it requires, down the line — cycle-safe, depth-limited.
+// installed deps → analyzed by name on device; not-yet-installed → cloned + analyzed remotely via its catalog url.
+async function traceDeps(p, depth, seen){
+  if(depth==null) depth=DEP_MAX_DEPTH;
+  seen=seen||new Set();
+  const key=norm(p.n); seen.add(key);
+  const installed=REPO.installed.some(x=>norm(x.n)===key);
+  let rep = installed ? await fetchDeps(p.dir||p.n)
+          : isUrl(p.proj) ? await fetchDepsUrl(p.proj) : null;
+  if(!rep) return depStub(p.n, {installed, unresolved:!installed && !isUrl(p.proj),
+                                error:(!installed && isUrl(p.proj))?'analyze failed':null});
+  rep.installed=installed; rep.children=[];
+  if(depth>0) for(const reqn of (rep.requires_scripts||[])){
+    if(seen.has(norm(reqn))) continue;                     // cycle / already in the plan
+    const dep=REPO.available.find(x=>norm(x.n)===norm(reqn));
+    if(dep) rep.children.push(await traceDeps(dep, depth-1, seen));
+    else { seen.add(norm(reqn)); rep.children.push(depStub(reqn,{missing:true})); }
+  }
+  return rep;
+}
 let depPending=null;
-function depPlanHTML(rep){
+function depNodeRows(rep){
   const R=(ic,k,d)=>`<div class="dep-row"><span class="dep-ic">${ic}</span><div><div class="k">${k}</div>${d?`<div class="d">${d}</div>`:''}</div></div>`;
   const rows=[];
-  if(rep.requires_scripts.length) rows.push(R('📦','other scripts',
-    'installed first: '+rep.requires_scripts.map(n=>{const c=REPO.available.find(p=>norm(p.n)===norm(n));return n+(c?'':' <span style="color:var(--err)">(not in catalog)</span>');}).join(', ')));
   if(rep.nb) rows.push(R('🎹','nb voices','routes notes via nb — nb and the voices it uses must be installed'));
-  if(rep.needs_sc_ext) rows.push(R('🔌','SuperCollider engine extension',(rep.sc_extensions.join(', ')||'extension')+' — installed if missing'));
-  if(rep.downloads.length) rows.push(R('⬇','downloads ('+rep.downloads.length+')',
+  if(rep.needs_sc_ext) rows.push(R('🔌','SuperCollider engine extension',((rep.sc_extensions||[]).join(', ')||'extension')+' — installed if missing'));
+  if((rep.downloads||[]).length) rows.push(R('⬇','downloads ('+rep.downloads.length+')',
     rep.downloads.map(u=>`<a href="${u}" target="_blank" rel="noopener">${u.split('/').slice(-1)[0]}</a>`).join('<br>')));
-  if(rep.native.length) rows.push(R('🛠','native tools',rep.native.join(', ')+' — used by the installer'));
+  if((rep.native||[]).length) rows.push(R('🛠','native tools',rep.native.join(', ')+' — used by the installer'));
   if(rep.install_script) rows.push(R('▶','installer','lib/install.sh sets up the above on device'));
-  return rows.join('')||'<div class="dep-row">no extra setup detected — a plain clone is enough.</div>';
+  return rows.join('');
 }
+function depTreeHTML(node, level){
+  level=level||0;
+  const pad=level>0?` style="margin-left:${level*14}px;border-left:2px solid var(--trim,#444);padding-left:10px"`:'';
+  let html='';
+  if(level>0){
+    const status = node.missing ? '<span style="color:var(--err)">not in catalog</span>'
+      : node.installed ? '<span style="color:#5c5">already installed</span>'
+      : node.unresolved ? '<span style="color:var(--err)">no source url</span>'
+      : node.error ? '<span style="color:var(--err)">'+node.error+'</span>'
+      : 'will be installed';
+    html += `<div class="dep-row"${pad}><span class="dep-ic">↳</span><div><div class="k">requires <b>${node.name}</b> &middot; <span style="font-weight:400">${status}</span></div></div></div>`;
+  }
+  const body=depNodeRows(node);
+  if(body) html += `<div${pad}>${body}</div>`;
+  (node.children||[]).forEach(c=>{ html += depTreeHTML(c, level+1); });
+  return html;
+}
+function depPlanHTML(rep){ const h=depTreeHTML(rep,0); return h.trim()?h:'<div class="dep-row">no extra setup detected — a plain clone is enough.</div>'; }
+function anyInstallScript(n){ return !!n.install_script || (n.children||[]).some(anyInstallScript); }
+// the tree needs action if anything needs setup, or a dependency still has to be installed
+function treeNeedsAction(n){ return !!n.needs_setup || (n.children||[]).some(c=>!c.installed && !c.missing) || (n.children||[]).some(treeNeedsAction); }
 function openDepPlan(rep,p){
   depPending={rep,p};
-  document.getElementById('dep-title').textContent = rep.needs_setup?'this script needs setup':'requirements';
-  document.getElementById('dep-intro').innerHTML = rep.needs_setup
-    ? `<b>${rep.name}</b> needs more than a clone to run:` : `<b>${rep.name}</b> requirements:`;
+  const act=treeNeedsAction(rep), n=(rep.children||[]).length;
+  document.getElementById('dep-title').textContent = act?'this script needs setup':'requirements';
+  document.getElementById('dep-intro').innerHTML = act
+    ? `<b>${rep.name}</b> needs more than a clone to run${n?` — and pulls in ${n} other script${n>1?'s':''} down the line`:''}:`
+    : `<b>${rep.name}</b> requirements:`;
   document.getElementById('dep-plan').innerHTML=depPlanHTML(rep);
-  document.getElementById('dep-warn').style.display = rep.install_script?'block':'none';
-  document.getElementById('dep-go').style.display = rep.needs_setup?'':'none';
+  document.getElementById('dep-warn').style.display = anyInstallScript(rep)?'block':'none';
+  document.getElementById('dep-go').style.display = act?'':'none';
   document.getElementById('dep-overlay').classList.add('on');
 }
-async function runHeal(rep){
-  for(const reqn of (rep.requires_scripts||[])){          // install required scripts first (one level)
-    const dep=REPO.available.find(x=>norm(x.n)===norm(reqn));
-    if(dep && !REPO.installed.some(x=>norm(x.n)===norm(reqn)) && isUrl(dep.proj)){
-      const job=mkJob(reqn,'dependency'); job.querySelector('.ilog').textContent='installing dependency '+reqn+'…';
-      try{ const j=await (await fetch('api/install',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:dep.dir||dep.n,url:dep.proj})})).json();
-        jobDone(job,null,!j.error,j.error?j.error:'installed '+reqn,'installed'); }catch(e){ jobDone(job,null,false,e.message,''); }
+// install + heal the whole graph, deepest-first: a script's required scripts are present (and set up) before its own installer runs.
+async function runHeal(root){
+  async function heal(node){
+    for(const child of (node.children||[])){
+      if(child.missing || child.unresolved) continue;
+      if(!child.installed){                                // clone the dependency from its catalog url
+        const dep=REPO.available.find(x=>norm(x.n)===norm(child.name));
+        if(dep && isUrl(dep.proj)){
+          const job=mkJob(child.name,'dependency'); job.querySelector('.ilog').textContent='installing dependency '+child.name+'…';
+          try{ const j=await (await fetch('api/install',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:dep.dir||dep.n,url:dep.proj})})).json();
+            jobDone(job,null,!j.error,j.error?j.error:'installed '+child.name,'installed'); }catch(e){ jobDone(job,null,false,e.message,''); }
+        }
+      }
+      await heal(child);                                   // recurse: the dependency's own deps + installer
+    }
+    if(node.install_script){                               // run this node's installer (downloads/builds, port-proofed)
+      const job=mkJob(node.name,'setting up'); job.querySelector('.ilog').textContent='running '+node.name+' lib/install.sh — builds + downloads, can take several minutes…';
+      try{ const j=await (await fetch('api/heal',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:node.name})})).json();
+        jobDone(job,null,!!j.ok,(j.log||j.error||'')+'\n'+(j.ok?'✓ '+node.name+' set up — run SYSTEM > RESTART':'✗ '+node.name+' setup failed'),'set up'); }
+      catch(e){ jobDone(job,null,false,e.message,''); }
     }
   }
-  if(rep.install_script){                                  // run the script's own installer
-    const job=mkJob(rep.name,'setting up'); job.querySelector('.ilog').textContent='running lib/install.sh — builds + downloads, can take several minutes…';
-    try{ const j=await (await fetch('api/heal',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:rep.name})})).json();
-      jobDone(job,null,!!j.ok,(j.log||j.error||'')+'\n'+(j.ok?'✓ setup complete — run SYSTEM > RESTART':'✗ setup failed'),'set up'); }
-    catch(e){ jobDone(job,null,false,e.message,''); }
-  }
+  await heal(root);
   refreshInstalled();
 }
-function showRequirements(p){ fetchDeps(p.dir||p.n).then(rep=>{ if(rep) openDepPlan(rep,p); }); }
+async function showRequirements(p){
+  document.getElementById('dep-title').textContent='requirements';
+  document.getElementById('dep-intro').innerHTML=`<b>${p.n}</b> — tracing dependencies…`;
+  document.getElementById('dep-plan').innerHTML='<div class="dep-row"><span class="dep-ic">⏳</span><div><div class="k">analyzing the dependency graph…</div><div class="d">cloning required scripts to inspect them — a moment.</div></div></div>';
+  document.getElementById('dep-warn').style.display='none';
+  document.getElementById('dep-go').style.display='none';
+  document.getElementById('dep-overlay').classList.add('on');
+  const tree=await traceDeps(p);
+  if(tree && document.getElementById('dep-overlay').classList.contains('on')) openDepPlan(tree,p);
+}
 /* demo embed helpers */
 function isUrl(u){ return typeof u==='string' && /^https?:\/\//i.test(u.trim()); }
 function ytId(u){ if(!u)return''; const m=u.match(/(?:youtu\.be\/|youtube\.com\/(?:watch\?v=|embed\/|v\/|shorts\/))([\w-]{11})/); return m?m[1]:''; }

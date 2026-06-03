@@ -40,10 +40,16 @@ The build stamp (config panel header, `bN · date · summary`) identifies the lo
 
 ## Backlog
 
-- **B4 — Patches & dependency handling.** Optional port-specific patches (e.g. AmenBreak),
-  Linux-installer-style dependency resolution (a script declaring it needs other scripts /
-  sample downloads / nb voices → one confirm installs the graph; each external dep still
-  trust-gated; per-dep progress in the install dock).
+- **B4 — Patches & dependency handling.** ✅ **Shipped (b20–b23).** Dependency analyzer
+  (`/api/deps`, by name for installed or by url via shallow clone for un-installed) detects
+  install scripts, sample/audio downloads, SC-engine extensions, required scripts, nb voices,
+  and native build tools. **Recursive tracing** (`traceDeps`, depth ≤ 4, cycle-safe) walks the
+  whole require graph — a script → the scripts it needs → *their* needs — and renders it as a
+  nested plan. **Heal** runs the graph **deepest-first**: each dependency is cloned and its own
+  installer run before the parent's, so e.g. amenbreak's downloads land via a port-proofed
+  Python interpreter of `install.sh` (native tar/zip, `/home/we/dust`→real-dust translation,
+  BusyBox-safe). Heal is also offered automatically right after install when the graph needs it.
+  *Remaining:* per-dep trust-gating in the recursive path, optional curated port patches.
 - **B5 — Rich detail from norns.community.** Pull README description + an image gallery into
   the expanded card; hide the gallery if no/only-generic images; **album-style left/right
   carousel** for multiples. (`nornslist` scraper can be extended to capture these.)
