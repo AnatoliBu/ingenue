@@ -38,6 +38,33 @@ The build stamp (config panel header, `bN · date · summary`) identifies the lo
     Install renamed [prefilled free name] / **Use existing** [dedupe]); **B3 — MCP server** ✅.
 13. **Help (?)** modal — shortcuts + doc links + build stamp.
 
+## Port codec/UGen health — "fix missing requirements for the install architecture" (b24)
+
+Many scripts play through **SuperCollider engines** built on community **UGen plugins**
+(PortedPlugins, mi-UGens, f0plugins, …), distributed as precompiled **32-bit ARM** `.so`.
+On a **64-bit (aarch64) norns port** scsynth silently rejects the wrong-arch binaries, so an
+engine's *class* loads (its name appears in the engine list) but its UGens are "not installed"
+→ SynthDefs fail to build → **the script loads but is silent** (e.g. amenbreak's AnalogTape/Fverb).
+PanicOS ships a *half-implemented* state: PortedPlugins `.sc` **classes** present, **zero** compiled
+`.so`. ingenue now:
+
+- **Ships the fix.** Bundles aarch64 UGen binaries in `web/vendor/sc-plugins-arm64-*.tar.gz`
+  ([seajaysec/sc-plugins-arm64](https://github.com/seajaysec/sc-plugins-arm64), 68 `.so` × 10
+  collections) — so a port that includes ingenue gets them with **no extra dependency**, installable **offline**.
+- **Silently checks on every launch** (`/api/scplugins`, not tied to installing any script). Reads the
+  host arch + the `.so` arch across the SC Extensions dirs; detects *missing* and *wrong-arch* binaries
+  and the *classes-but-no-binaries* half-state. Surfaces a dismissable banner only when a 64-bit host
+  actually needs it.
+- **Heals** (`/api/scplugins/heal`) into a **binary-only** dir (`…/Extensions/ingenue-ugens/`) —
+  `.so` need not sit next to `.sc`, so no duplicate-class breakage. Idempotent (skips correct-arch
+  binaries already present). Offline by default; if GitHub is reachable and a **newer** release exists,
+  offers to fetch it instead. **Always recommends a full device power-cycle** (scsynth loads plugins
+  only at boot). Self-healing: if a reboot/OS-update ever wipes them, the next launch re-detects + re-offers.
+
+> Diagnostic note: the silence was first mis-attributed to a FLAC/libsndfile codec gap (off a bad `ldd`
+> read); a `ctypes` functional probe disproved it before any system change. The real class was the
+> SC-UGen arch mismatch above. Verify codec/arch claims functionally before touching system files.
+
 ## Backlog
 
 - **B4 — Patches & dependency handling.** ✅ **Shipped (b20–b23).** Dependency analyzer

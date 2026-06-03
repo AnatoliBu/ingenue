@@ -215,6 +215,208 @@ def listing(full):
     return out
 
 
+# ---------------------------------------------------------------------------
+# SuperCollider UGen plugin health (the "silent engine on 64-bit norns" class)
+# ---------------------------------------------------------------------------
+# Community SC UGen plugins ship as precompiled 32-bit ARM .so. On a 64-bit
+# (aarch64) port scsynth silently rejects wrong-arch .so, so engine *classes*
+# load but their UGens are "not installed" -> SynthDefs fail -> script is silent.
+# ingenue ships matching 64-bit binaries (web/vendor) and, if it detects a
+# 64-bit host missing/half-installed UGens, offers to drop them where scsynth
+# scans. .so (server) need NOT sit next to .sc (lang) -> we install binary-only
+# (no duplicate-class breakage). Always recommend a FULL DEVICE REBOOT after.
+
+ELF_MACHINE = {0x28: "arm", 0xB7: "aarch64", 0x3E: "x86_64", 0x103: "loongarch"}
+# host arch (uname) -> the ELF e_machine that scsynth here can actually load
+ARCH_ELF = {"aarch64": "aarch64", "arm64": "aarch64", "x86_64": "x86_64", "amd64": "x86_64"}
+
+
+def elf_arch(path):
+    """('64','aarch64') etc. from an ELF header, or None if not an ELF."""
+    try:
+        with open(path, "rb") as f:
+            h = f.read(20)
+    except OSError:
+        return None
+    if len(h) < 20 or h[:4] != b"\x7fELF":
+        return None
+    bits = "64" if h[4] == 2 else "32"
+    little = h[5] == 1
+    e_machine = int.from_bytes(h[18:20], "little" if little else "big")
+    return bits, ELF_MACHINE.get(e_machine, f"machine:0x{e_machine:x}")
+
+
+def host_arch():
+    m = os.uname().machine
+    return m, m in ("aarch64", "arm64", "x86_64", "amd64")
+
+
+def sc_ext_dirs():
+    """Existing SuperCollider Extensions dirs scsynth may scan (system first)."""
+    cands = ["/usr/share/SuperCollider/Extensions",
+             "/usr/local/share/SuperCollider/Extensions",
+             os.path.expanduser("~/.local/share/SuperCollider/Extensions")]
+    # norns process HOME variants (port may set HOME elsewhere)
+    for h in (os.environ.get("HOME"), os.path.join(DUST, "..")):
+        if h:
+            cands.append(os.path.join(os.path.realpath(h), ".local/share/SuperCollider/Extensions"))
+    seen, out = set(), []
+    for d in cands:
+        rd = os.path.realpath(d)
+        if rd not in seen and os.path.isdir(rd):
+            seen.add(rd); out.append(rd)
+    return out
+
+
+def bundle_path():
+    import glob
+    g = sorted(glob.glob(os.path.join(HERE, "vendor", "sc-plugins-arm64-*.tar.gz")))
+    return g[-1] if g else None
+
+
+def bundle_info():
+    import tarfile
+    p = bundle_path()
+    if not p:
+        return {"present": False, "so_names": []}
+    m = re.search(r"-(v[\d.]+)\.tar\.gz$", os.path.basename(p))
+    names = []
+    try:
+        with tarfile.open(p, "r:gz") as tf:
+            names = sorted({os.path.basename(n) for n in tf.getnames() if n.endswith(".so")})
+    except Exception:  # noqa: BLE001
+        pass
+    return {"present": True, "path": p, "version": m.group(1) if m else "?",
+            "elf": "aarch64", "so_count": len(names), "so_names": names}
+
+
+def _so_basenames_in_ext_dirs():
+    """{basename: arch_machine} for every .so under the Extensions dirs."""
+    found = {}
+    for d in sc_ext_dirs():
+        for root, _dirs, files in os.walk(d):
+            for f in files:
+                if f.endswith(".so"):
+                    a = elf_arch(os.path.join(root, f))
+                    if a:
+                        found.setdefault(f, a[1])  # first/system copy wins
+    return found
+
+
+def scplugins_status():
+    machine, is64 = host_arch()
+    binf = bundle_info()
+    want_elf = ARCH_ELF.get(machine)                       # what scsynth here loads
+    present = _so_basenames_in_ext_dirs()
+    right = {n: a for n, a in present.items() if a == want_elf}
+    wrong = {n: a for n, a in present.items() if a != want_elf}
+    # "half-implemented": plugin .sc classes present (e.g. PanicOS ships PortedPlugins
+    # classes) but no/too-few correct-arch binaries to back them.
+    PLUGIN_HINT = re.compile(r"ported|ugens|plugins|f0plugins|mi-?ugens", re.I)
+    classes = 0
+    for d in sc_ext_dirs():
+        for root, _dirs, files in os.walk(d):
+            if PLUGIN_HINT.search(root):
+                classes += sum(1 for f in files if f.endswith(".sc"))
+    bundled_can_fix = binf.get("present") and binf.get("elf") == want_elf
+    # measure the gap against exactly what we can supply: bundled UGens that have
+    # no correct-arch copy present yet (wrong-arch copies don't count as present).
+    bundled_names = set(binf.get("so_names") or [])
+    right_names = set(right)
+    missing = sorted(bundled_names - right_names) if bundled_names else []
+    if not is64:
+        status = "unsupported_arch"      # 32-bit host: stock plugins are fine
+    elif not bundled_can_fix:
+        status = "no_bundle"              # 64-bit but we ship no matching arch
+    elif len(missing) > 2:
+        status = "needs_install"          # enough bundled UGens are missing to matter
+    else:
+        status = "ok"                     # binaries are in place + correct arch
+    return {
+        "host_arch": machine, "is_64bit": is64, "scsynth_wants": want_elf,
+        "ugen_so_total": len(present), "ugen_so_correct_arch": len(right),
+        "ugen_so_wrong_arch": len(wrong), "wrong_arch_machines": sorted(set(wrong.values())),
+        "bundled_total": len(bundled_names), "missing_count": len(missing),
+        "missing_sample": missing[:8],
+        "half_implemented": bool(classes and len(missing) > 5 and is64),
+        "bundle": {k: v for k, v in binf.items() if k != "so_names"},
+        "status": status, "can_heal": status == "needs_install", "reboot_required": True,
+    }
+
+
+def scplugins_online_version():
+    """Best-effort newest release tag of the upstream aarch64 repo (short timeout)."""
+    try:
+        req = urllib.request.Request(
+            "https://api.github.com/repos/seajaysec/sc-plugins-arm64/releases/latest",
+            headers={"User-Agent": "ingenue"})
+        with urllib.request.urlopen(req, timeout=5) as r:
+            j = json.loads(r.read())
+        tag = j.get("tag_name")
+        asset = next((a["browser_download_url"] for a in j.get("assets", [])
+                      if a["name"].endswith(".tar.gz")), None)
+        return {"version": tag, "url": asset} if tag and asset else None
+    except Exception:  # noqa: BLE001 — offline is fine, we fall back to bundled
+        return None
+
+
+def scplugins_heal(source="bundled", url=""):
+    """Install correct-arch UGen .so (binary-only) where scsynth scans. Idempotent."""
+    import tempfile, tarfile, glob
+    machine, is64 = host_arch()
+    want_elf = ARCH_ELF.get(machine)
+    if not is64 or not want_elf:
+        return {"ok": False, "error": f"host arch {machine} is not a supported 64-bit target"}
+    dirs = sc_ext_dirs()
+    if not dirs:
+        return {"ok": False, "error": "no SuperCollider Extensions dir found on this system"}
+    # choose the first writable scanned dir (system preferred), else create user dir
+    target_root = next((d for d in dirs if os.access(d, os.W_OK)), None)
+    if not target_root:
+        target_root = os.path.expanduser("~/.local/share/SuperCollider/Extensions")
+        os.makedirs(target_root, exist_ok=True)
+    target = os.path.join(target_root, "ingenue-ugens")     # binary-only dir, no .sc
+    os.makedirs(target, exist_ok=True)
+    already = {n for n, a in _so_basenames_in_ext_dirs().items() if a == want_elf}
+
+    tmp = tempfile.mkdtemp(prefix="ing_ugen_")
+    log = []
+    try:
+        if source == "online":
+            if not url.startswith("https://"):
+                return {"ok": False, "error": "online heal needs a release url"}
+            tgz = os.path.join(tmp, "pack.tar.gz")
+            urllib.request.urlretrieve(url, tgz)
+            log.append(f"downloaded {url}")
+        else:
+            tgz = bundle_path()
+            if not tgz:
+                return {"ok": False, "error": "no bundled plugin pack found in vendor/"}
+            log.append(f"using bundled {os.path.basename(tgz)}")
+        with tarfile.open(tgz, "r:gz") as tf:
+            tf.extractall(tmp)                               # nosec: our own bundle
+        installed, skipped, badarch = [], [], []
+        for so in glob.glob(os.path.join(tmp, "**", "*.so"), recursive=True):
+            name = os.path.basename(so)
+            a = elf_arch(so)
+            if not a or a[1] != want_elf:
+                badarch.append(name); continue
+            if name in already:
+                skipped.append(name); continue              # correct-arch copy already loadable
+            shutil.copy2(so, os.path.join(target, name))
+            installed.append(name)
+        log.append(f"installed {len(installed)} .so -> {target}")
+        if skipped:
+            log.append(f"skipped {len(skipped)} already-correct (e.g. {', '.join(sorted(skipped)[:3])})")
+        if badarch:
+            log.append(f"ignored {len(badarch)} non-{want_elf} binaries in pack")
+        return {"ok": bool(installed) or bool(skipped), "installed": sorted(installed),
+                "skipped": sorted(skipped), "dir": target,
+                "count": len(installed), "reboot_required": True, "log": "\n".join(log)}
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 class H(http.server.SimpleHTTPRequestHandler):
     def __init__(self, *a, **k):
         super().__init__(*a, directory=HERE, **k)
@@ -253,6 +455,11 @@ class H(http.server.SimpleHTTPRequestHandler):
             if path == "/api/deps":
                 q = self._q(); url = q.get("url", [""])[0]
                 return self._json(analyze_remote(url) if url else analyze_script(q.get("name", [""])[0]))
+            if path == "/api/scplugins":
+                rep = scplugins_status()
+                if self._q().get("online", ["0"])[0] == "1":   # opt-in network check
+                    rep["online"] = scplugins_online_version()
+                return self._json(rep)
             if path == "/api/ls":
                 return self._json(listing(safe(self._q().get("path", [""])[0])))
             if path == "/api/read":
@@ -296,6 +503,8 @@ class H(http.server.SimpleHTTPRequestHandler):
                     return self._json({"error": f"{name} is not installed"}, 404)
                 shutil.rmtree(full)
                 return self._json({"ok": True, "removed": name})
+            if path == "/api/scplugins/heal":
+                return self._json(scplugins_heal(b.get("source", "bundled"), (b.get("url") or "").strip()))
             if path == "/api/heal":
                 full, name = safe_script_dir(b.get("name"))
                 inst = os.path.join(full, "lib", "install.sh")

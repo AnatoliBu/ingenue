@@ -7,9 +7,10 @@ the dust tree relative to itself, and runs its web service on **:7777** alongsid
 ## Install on a device
 ```bash
 DEST=<dust>/code/ingenue          # e.g. /storage/roms/ports/norns/data/dust/code/ingenue (PanicOS)
-ssh <host> "mkdir -p $DEST/lib"
+ssh <host> "mkdir -p $DEST/lib $DEST/vendor"
 scp web/index.html web/community.json web/enriched.json web/server.py <host>:$DEST/
 scp web/lib/mod.lua <host>:$DEST/lib/
+scp web/vendor/sc-plugins-arm64-*.tar.gz <host>:$DEST/vendor/   # bundled 64-bit SC UGen binaries
 # VERIFY transfer (this device's link corrupts files — see gotcha):
 ssh <host> "cd $DEST && python3 -c 'import json;json.load(open(\"community.json\"));json.load(open(\"enriched.json\"));compile(open(\"server.py\").read(),\"s\",\"exec\");print(\"OK\")'"
 ```

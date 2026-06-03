@@ -501,6 +501,14 @@ button{font-family:inherit}
   <div class="maiden" id="maiden" data-view="edit">
    <div class="app-header"></div>
 
+   <!-- SC-plugin health banner (64-bit ports missing UGen binaries) -->
+   <div id="scp-banner" style="display:none;align-items:center;gap:10px;padding:8px 14px;background:color-mix(in srgb,var(--warn,#c80) 22%,var(--bg));border-bottom:1px solid color-mix(in srgb,var(--warn,#c80) 50%,var(--bg));font-size:13px">
+     <span style="font-size:15px">🔌</span>
+     <span id="scp-banner-msg" style="flex:1">This 64-bit norns is missing its SuperCollider plugin binaries — some scripts' engines stay silent.</span>
+     <button class="btn btn-install" id="scp-banner-fix" style="padding:4px 12px">Fix it</button>
+     <button class="x" id="scp-banner-x" title="dismiss" style="background:none;border:0;cursor:pointer;font-size:15px">✕</button>
+   </div>
+
    <!-- mobile top bar -->
    <div class="mtop">
      <button class="hbtn" id="m-menu" title="files"><svg viewBox="0 0 32 32"><path d="M14 4l4 4h14v22h-32v-26z"/></svg></button>
@@ -650,6 +658,22 @@ button{font-family:inherit}
      </div>
    </div>
 
+   <!-- SC-plugin heal modal (64-bit UGen binaries) -->
+   <div class="overlay" id="scp-overlay">
+     <div class="modal">
+       <div class="modal-head"><div class="t" id="scp-title">SuperCollider plugins</div><button class="x" id="scp-close">✕</button></div>
+       <div class="modal-body">
+         <p class="trust-msg" id="scp-intro"></p>
+         <div id="scp-detail"></div>
+         <div class="trust-warn" id="scp-reboot" style="margin-top:14px;display:none">After installing, you must <b>fully reboot the whole device</b> (not just restart the norns app) — SuperCollider only loads plugin binaries at boot.</div>
+         <div class="trust-actions">
+           <button class="btn btn-remove" id="scp-skip">Not now</button>
+           <button class="btn btn-install" id="scp-go">Install plugins</button>
+         </div>
+       </div>
+     </div>
+   </div>
+
    <!-- generic confirm dialog -->
    <div class="overlay" id="confirm-overlay">
      <div class="modal trust-modal">
@@ -697,7 +721,7 @@ button{font-family:inherit}
 </div>
 
 <script>
-const BUILD='b23 · 2026-06-03 · B4 recursive dependency tracing + graph heal';
+const BUILD='b24 · 2026-06-03 · SC-plugin health: bundled 64-bit UGen auto-heal';
 console.log('%cmaiden redesign build: '+BUILD,'color:#DEB887;font-weight:bold');
 const LS={
   get(k,d){try{const v=localStorage.getItem('maiden.'+k);return v==null?d:JSON.parse(v);}catch(e){return d;}},
@@ -889,6 +913,56 @@ async function refreshInstalled(){
   const real=await fetchInstalled(); if(!real) return;
   applyRealInstalled(real, REPO.available.filter(p=>p.srcs.includes('community')||p.srcs.includes('kalium')));
   if(document.getElementById('repoview').classList.contains('on')) renderRepo();
+}
+
+/* ===== SC-plugin health: silent startup check + bundled heal (64-bit ports) ===== */
+let SCP=null;                                       // last status report
+// Runs on every launch, transparently. Only surfaces if a 64-bit norns is
+// missing its UGen binaries (incl. the "classes but no binaries" half-state).
+async function checkScPlugins(){
+  try{ const r=await fetch('api/scplugins',{cache:'no-store'}); if(!r.ok) return; SCP=await r.json(); }
+  catch(_){ return; }                              // off-device / no backend → silent
+  const b=document.getElementById('scp-banner'); if(!b) return;
+  if(SCP.status!=='needs_install' || LS.get('scpDismiss',0)>Date.now()){ b.style.display='none'; return; }
+  const n=SCP.ugen_so_wrong_arch||0;
+  document.getElementById('scp-banner-msg').innerHTML = SCP.half_implemented
+    ? `This 64-bit norns ships SuperCollider engine <b>classes but no matching binaries</b> — affected scripts load but stay silent.`
+    : `This 64-bit norns is missing its SuperCollider plugin binaries${n?` (${n} are the wrong architecture)`:''} — some scripts' engines stay silent.`;
+  b.style.display='flex';
+}
+function scpDetailHTML(){
+  const R=(k,d)=>`<div class="dep-row"><span class="dep-ic">•</span><div><div class="k">${k}</div>${d?`<div class="d">${d}</div>`:''}</div></div>`;
+  const rows=[];
+  rows.push(R(`detected: ${SCP.host_arch} · 64-bit`, `scsynth here loads <span class="mono">${SCP.scsynth_wants}</span> plugins`));
+  if(SCP.half_implemented) rows.push(R('engine classes present, binaries missing', 'the <span class="mono">.sc</span> classes ship with this port but the compiled <span class="mono">.so</span> UGens don\'t — so engines fail to build and scripts are silent'));
+  if(SCP.ugen_so_wrong_arch) rows.push(R(`${SCP.ugen_so_wrong_arch} wrong-architecture binaries found`, `built for ${SCP.wrong_arch_machines.join(', ')} — this device can\'t load them`));
+  const bv=SCP.bundle&&SCP.bundle.version;
+  rows.push(R(`ingenue bundles ${bv||'a'} matching ${SCP.scsynth_wants} build`, SCP.online&&SCP.online.version&&SCP.online.version!==bv ? `a newer build (${SCP.online.version}) is available online and will be used` : 'installs offline — no internet needed'));
+  return rows.join('');
+}
+function openScp(){
+  document.getElementById('scp-intro').innerHTML = `Install the correct 64-bit SuperCollider UGen plugins for this device. ingenue carries its own copy, so this works offline.`;
+  document.getElementById('scp-detail').innerHTML = scpDetailHTML();
+  document.getElementById('scp-reboot').style.display='block';
+  document.getElementById('scp-go').disabled=false;
+  document.getElementById('scp-go').textContent='Install plugins';
+  document.getElementById('scp-overlay').classList.add('on');
+  // best-effort: see if a newer build is online, refresh detail when it lands
+  fetch('api/scplugins?online=1',{cache:'no-store'}).then(r=>r.ok&&r.json()).then(j=>{ if(j){ SCP=j; if(document.getElementById('scp-overlay').classList.contains('on')) document.getElementById('scp-detail').innerHTML=scpDetailHTML(); }}).catch(()=>{});
+}
+async function runScpHeal(){
+  const go=document.getElementById('scp-go'); go.disabled=true; go.textContent='Installing…';
+  const job=mkJob('SuperCollider plugins','installing'); job.querySelector('.ilog').textContent='installing 64-bit UGen binaries…';
+  const useOnline = SCP.online && SCP.online.version && SCP.bundle && SCP.online.version!==SCP.bundle.version && SCP.online.url;
+  try{
+    const body = useOnline ? {source:'online', url:SCP.online.url} : {source:'bundled'};
+    const j=await (await fetch('api/scplugins/heal',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})).json();
+    const okmsg = `${j.log||''}\n✓ installed ${j.count} plugin binaries → ${j.dir}\n\n⚠ REBOOT THE WHOLE DEVICE (not just the norns app) to load them.`;
+    jobDone(job,null,!!j.ok,(j.ok?okmsg:(j.error||'install failed')),'installed');
+    document.getElementById('scp-overlay').classList.remove('on');
+    document.getElementById('scp-banner').style.display='none';
+    if(j.ok) confirmDialog('Reboot the whole device','The 64-bit SuperCollider plugins are installed (<b>'+j.count+'</b> binaries). Now <b>power-cycle the entire device</b> — not just a norns restart — so SuperCollider loads them at boot. Then your engine scripts will make sound.', ()=>{});
+  }catch(e){ jobDone(job,null,false,e.message,''); go.disabled=false; go.textContent='Install plugins'; }
 }
 
 /* ============ theme engine ============ */
@@ -1832,7 +1906,15 @@ function boot(){
   maiden.dataset.edit = LS.get('editview','combo');
   const rh=LS.get('replh',null); if(rh) document.documentElement.style.setProperty('--repl-h',rh);
   initSplit();
-  loadCatalog();   // pull the real 350-script community catalog
+  loadCatalog().then(checkScPlugins);   // pull the real catalog, then silently check SC-plugin health
+  // SC-plugin (64-bit UGen) banner + modal wiring
+  document.getElementById('scp-banner-fix').onclick=openScp;
+  document.getElementById('scp-banner-x').onclick=()=>{ document.getElementById('scp-banner').style.display='none'; LS.set('scpDismiss',Date.now()+7*24*3600*1000); };
+  document.getElementById('scp-banner-msg').onclick=openScp;
+  document.getElementById('scp-close').onclick=()=>document.getElementById('scp-overlay').classList.remove('on');
+  document.getElementById('scp-skip').onclick=()=>document.getElementById('scp-overlay').classList.remove('on');
+  document.getElementById('scp-overlay').addEventListener('click',e=>{if(e.target.id==='scp-overlay')e.currentTarget.classList.remove('on');});
+  document.getElementById('scp-go').onclick=runScpHeal;
   // trust-gate modal wiring
   document.getElementById('trust-cancel').onclick=()=>{document.getElementById('trust-overlay').classList.remove('on');trustPending=null;};
   document.getElementById('trust-overlay').addEventListener('click',e=>{if(e.target.id==='trust-overlay'){e.currentTarget.classList.remove('on');trustPending=null;}});
