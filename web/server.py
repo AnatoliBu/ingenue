@@ -59,6 +59,20 @@ def safe_script_dir(name):
     return full, name
 
 
+def ensure_home_dust():
+    """Many scripts' install.sh hardcode /home/we/dust. On ports where dust lives
+    elsewhere, symlink it so those installers work — a general port patch."""
+    hw = "/home/we/dust"
+    if os.path.exists(hw) or os.path.realpath(DUST) == os.path.realpath(hw):
+        return ""
+    try:
+        os.makedirs("/home/we", exist_ok=True)
+        os.symlink(os.path.realpath(DUST), hw)
+        return f"port patch: symlinked {hw} -> {DUST}\n"
+    except OSError as e:
+        return f"warn: could not create {hw} symlink: {e}\n"
+
+
 def analyze_script(name):
     """Scan an installed script for its dependency surface (heal-on-install mapping)."""
     full, name = safe_script_dir(name)
@@ -203,9 +217,10 @@ class H(http.server.SimpleHTTPRequestHandler):
                 inst = os.path.join(full, "lib", "install.sh")
                 if not os.path.isfile(inst):
                     return self._json({"error": f"{name} has no lib/install.sh to run"}, 404)
+                patch = ensure_home_dust()          # make /home/we/dust valid so hardcoded paths work
                 os.chmod(inst, 0o755)
-                r = subprocess.run(["bash", inst], cwd=full, capture_output=True, text=True, timeout=900)
-                tail = (r.stdout + "\n" + r.stderr)[-1500:]
+                r = subprocess.run(["bash", inst], cwd=full, capture_output=True, text=True, timeout=1200)
+                tail = patch + (r.stdout + "\n" + r.stderr)[-1500:]
                 return self._json({"ok": r.returncode == 0, "name": name, "code": r.returncode, "log": tail})
             if path == "/api/install":
                 full, name = safe_script_dir(b.get("name"))
