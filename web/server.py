@@ -16,7 +16,7 @@ API (confined to the dust tree):
   POST /api/install  {name,url,force} -> git clone url into dust/code/name
   POST /api/remove   {name}           -> delete dust/code/name
 """
-import http.server, socketserver, os, sys, json, re, shutil, subprocess, urllib.parse, datetime
+import http.server, socketserver, os, sys, json, re, shutil, subprocess, urllib.parse, urllib.request, datetime
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 
