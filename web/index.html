@@ -672,7 +672,7 @@ button{font-family:inherit}
 </div>
 
 <script>
-const BUILD='b20 · 2026-06-03 · real installed-detection + device backend (:7777)';
+const BUILD='b21 · 2026-06-03 · portable norns mod + real install/remove/reinstall';
 console.log('%cmaiden redesign build: '+BUILD,'color:#DEB887;font-weight:bold');
 const LS={
   get(k,d){try{const v=localStorage.getItem('maiden.'+k);return v==null?d:JSON.parse(v);}catch(e){return d;}},
@@ -842,21 +842,28 @@ async function loadCatalog(){
     if(document.getElementById('repoview').classList.contains('on')) renderRepo();
   }catch(err){ console.warn('catalog load failed — using built-in fallback list', err); }
 }
+let HAS_BACKEND=false;             // true when the device API is reachable (real install/remove)
 async function fetchInstalled(){   // real installed scripts from the ingenue backend (dust/code)
   try{ const r=await fetch('api/installed',{cache:'no-store'}); if(!r.ok) return null;
-    const j=await r.json(); return Array.isArray(j)?j:(j.scripts||null); }
+    const j=await r.json(); HAS_BACKEND=true; return Array.isArray(j)?j:(j.scripts||null); }
   catch(_){ return null; }
 }
 function norm(s){ return (s||'').toLowerCase().replace(/[\s.-]+/g,'_'); }
 function applyRealInstalled(names, entries){
+  REPO.available.forEach(e=>{ e.inst=0; });        // reset, then mark what's actually on device
   const byNorm={}; entries.forEach(e=>{ byNorm[norm(e.n)]=e; });
   REPO.installed = names.slice().sort().map(nm=>{
     const e=byNorm[norm(nm)];
-    if(e){ e.inst=1; return {...e, inst:1}; }     // mark the catalog entry installed (badge + hide-known)
-    return { n:nm, a:'(on device)', d:'installed script — not in the community catalog', tags:[], srcs:['community'], inst:1, local:1 };
+    if(e){ e.inst=1; e.dir=nm; return {...e, inst:1, dir:nm}; }   // dir = the real on-disk folder name
+    return { n:nm, a:'(on device)', d:'installed script — not in the community catalog', tags:[], srcs:['community'], inst:1, local:1, dir:nm };
   });
   INSTALLED_ENGINES={};                            // engines actually present, derived from installed scripts
   names.forEach(nm=>{ const eng=SHIP_ENGINE[norm(nm)]; if(eng && !INSTALLED_ENGINES[eng]) INSTALLED_ENGINES[eng]=norm(nm); });
+}
+async function refreshInstalled(){
+  const real=await fetchInstalled(); if(!real) return;
+  applyRealInstalled(real, REPO.available.filter(p=>p.srcs.includes('community')||p.srcs.includes('kalium')));
+  if(document.getElementById('repoview').classList.contains('on')) renderRepo();
 }
 
 /* ============ theme engine ============ */
@@ -1068,27 +1075,48 @@ function updateGrid(){
 function isTrusted(p){ return (p.srcs||[]).includes('community'); }
 function snoozeActive(){ const e=LS.get('trustSnooze',0); return e && Date.now()<e; }
 let trustPending=null;
-function doInstall(p,btn,note){ if(btn){btn.textContent='queued…';btn.disabled=true;} enqueueInstall(p,btn,note); }
-function enqueueInstall(p,btn,note){
+function doInstall(p,btn,note,opts){ if(btn){btn.textContent='queued…';btn.disabled=true;} enqueueInstall(p,btn,note,opts||{}); }
+function mkJob(name,verb){
   const dock=document.getElementById('install-dock');
   const job=document.createElement('div'); job.className='ijob';
-  job.innerHTML=`<div class="ihead"><span class="ispin"></span><span>${p.n}</span><span class="istatus">installing</span><button class="iclose" title="dismiss">✕</button></div><div class="ilog"></div>`;
-  dock.appendChild(job);
-  job.querySelector('.iclose').onclick=()=>job.remove();
-  const log=job.querySelector('.ilog'), status=job.querySelector('.istatus');
+  job.innerHTML=`<div class="ihead"><span class="ispin"></span><span>${name}</span><span class="istatus">${verb}</span><button class="iclose" title="dismiss">✕</button></div><div class="ilog"></div>`;
+  dock.appendChild(job); job.querySelector('.iclose').onclick=()=>job.remove(); return job;
+}
+function jobDone(job,btn,ok,finalLog,doneLabel){
+  job.classList.add(ok?'ok':'err'); const sp=job.querySelector('.ispin'); if(sp) sp.style.display='none';
+  job.querySelector('.istatus').textContent=ok?('✓ '+doneLabel):'✗ error';
+  const log=job.querySelector('.ilog'); log.textContent+='\n'+finalLog; log.scrollTop=log.scrollHeight;
+  if(btn){ btn.textContent=ok?doneLabel:'retry'; btn.disabled=false; }
+  if(ok) setTimeout(()=>{ job.style.transition='opacity .4s'; job.style.opacity='0'; setTimeout(()=>job.remove(),450); }, 5000);
+}
+function enqueueInstall(p,btn,note,opts){
+  opts=opts||{};
+  const job=mkJob(p.n, opts.force?'reinstalling':'installing'); const log=job.querySelector('.ilog');
+  if(HAS_BACKEND){                                  // REAL install — git clone into dust/code on the device
+    if(!isUrl(p.proj)){ jobDone(job,btn,false,'no git url known for this script',''); return; }
+    log.textContent=`${opts.force?'reinstalling':'installing'} ${p.n}\n$ git clone ${p.proj}`+(note?'\n'+note:'');
+    fetch('api/install',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({name:p.dir||p.n, url:p.proj, force:opts.force?1:0})})
+      .then(r=>r.json()).then(j=>{ const ok=!j.error;
+        jobDone(job,btn,ok, ok?((j.log||'cloned')+'\n✓ installed — run SYSTEM > RESTART'):(j.error+(j.log?'\n'+j.log:'')), 'installed');
+        if(ok) refreshInstalled(); })
+      .catch(e=>jobDone(job,btn,false,e.message,''));
+    return;
+  }
   const steps=[`cloning ${p.proj||('github.com/…/'+p.n)} …`,'resolving dependencies…',`copying to ~/dust/code/${p.n}…`,'scanning for engines…',...(note?[note]:[])];
-  let i=0;
-  const tick=()=>{
-    if(i<steps.length){ log.textContent+=(i?'\n':'')+steps[i]; log.scrollTop=log.scrollHeight; i++; setTimeout(tick,340+Math.random()*240); return; }
-    const ok=!/err|fail/i.test(p.n);
-    job.classList.add(ok?'ok':'err');
-    job.querySelector('.ispin').style.display='none';
-    status.textContent=ok?'✓ installed':'✗ errors';
-    log.textContent+='\n'+(ok?`✓ ${p.n} installed successfully — run SYSTEM > RESTART`:`✗ ${p.n} installed with errors`);
-    if(btn){ btn.textContent=ok?'installed':'retry'; btn.disabled=false; }
-    if(ok) setTimeout(()=>{ job.style.transition='opacity .4s'; job.style.opacity='0'; setTimeout(()=>job.remove(),450); }, 4500);
-  };
+  let i=0; const tick=()=>{ if(i<steps.length){ log.textContent+=(i?'\n':'')+steps[i]; log.scrollTop=log.scrollHeight; i++; setTimeout(tick,340+Math.random()*240); return; }
+    jobDone(job,btn,!/err|fail/i.test(p.n), `${p.n} installed successfully — run SYSTEM > RESTART`, 'installed'); };
   setTimeout(tick,300);
+}
+function removeScript(p,btn){
+  const nm=p.dir||p.n;
+  confirmDialog('remove script?', `Remove <b>${p.n}</b>? This permanently deletes <b>dust/code/${nm}</b> from the device.`, ()=>{
+    if(!HAS_BACKEND){ if(btn){const t=btn.textContent;btn.textContent='removed';setTimeout(()=>btn.textContent=t,900);} return; }
+    const job=mkJob(p.n,'removing'); job.querySelector('.ilog').textContent=`deleting dust/code/${nm}…`;
+    fetch('api/remove',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:nm})})
+      .then(r=>r.json()).then(j=>{ const ok=!j.error; jobDone(job,btn,ok, ok?`removed ${nm}`:j.error, 'removed'); if(ok) refreshInstalled(); })
+      .catch(e=>jobDone(job,btn,false,e.message,''));
+  }, true);
 }
 /* demo embed helpers */
 function isUrl(u){ return typeof u==='string' && /^https?:\/\//i.test(u.trim()); }
@@ -1188,8 +1216,8 @@ function wireCards(v,list,tab){
   cards.forEach((card,i)=>{
     const p=list[i]; if(!p) return;
     const ins=card.querySelector('.btn-install'); if(ins) ins.onclick=e=>{e.stopPropagation();requestInstall(p,ins,tab);};
-    const up=card.querySelector('.btn-update'); if(up) up.onclick=e=>{e.stopPropagation();requestInstall(p,up,tab);};
-    const rm=card.querySelector('.btn-remove'); if(rm) rm.onclick=e=>{e.stopPropagation();const t=rm.textContent;rm.textContent='removed';setTimeout(()=>{rm.textContent=t;},900);};
+    const up=card.querySelector('.btn-update'); if(up) up.onclick=e=>{e.stopPropagation();doInstall(p,up,'',{force:1});};   // Reinstall = force re-clone
+    const rm=card.querySelector('.btn-remove'); if(rm) rm.onclick=e=>{e.stopPropagation();removeScript(p,rm);};
     card.querySelectorAll('.pill[data-tag]').forEach(tg=>tg.onclick=e=>{e.stopPropagation();
       repoQuery=tg.dataset.tag; const q=document.getElementById('rd-q'); if(q) q.value=repoQuery; updateGrid();});
     card.querySelectorAll('a,.demo-btn,.lnk,.csel').forEach(el=>el.addEventListener('click',e=>e.stopPropagation()));
@@ -1214,8 +1242,7 @@ function repoCard(p,tab){
               : st==='installed'? `<span class="okb"><svg viewBox="0 0 32 32"><path d="${I.check}"/></svg>installed</span>` : '';
   const lock=p.priv?`<span class="lock">private</span>`:'';
   const actions = (tab==='installed')
-    ? (p.upd_avail?`<button class="btn btn-update">Update</button><button class="btn btn-remove">Remove</button>`
-                  :`<button class="btn btn-remove">Remove</button>`)
+    ? `<button class="btn btn-update">Reinstall</button><button class="btn btn-remove">Remove</button>`
     : (p.inst?`<button class="btn btn-remove">Remove</button>`:`<button class="btn btn-install">${tab==='discover'?'Clone':'Install'}</button>`);
   const pills=(p.tags||[]).map(t=>`<span class="pill" data-tag="${t}">${t}</span>`).join('');
   const doc=(p.doc||p.docU)?`<span class="lnk" title="documentation"><svg viewBox="0 0 32 32"><path d="${I.book}"/></svg></span>`:'';
