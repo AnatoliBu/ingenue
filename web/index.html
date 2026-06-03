@@ -278,6 +278,7 @@ button{font-family:inherit}
 .eng-rename-row{display:flex;align-items:center;gap:9px;flex-wrap:wrap;font-size:13px;color:var(--muted);margin-bottom:16px}
 .eng-rename-input{flex:1;min-width:140px;background:var(--bg);border:1px solid var(--accent2);border-radius:7px;
   color:var(--fg);font-family:ui-monospace,monospace;font-size:13px;padding:7px 10px;outline:none}
+.eng-hint{font-size:12px;color:var(--muted);line-height:1.45;margin:0 0 16px}
 
 /* collapsible / auto-hiding repo toolbar */
 .rd-toggle{margin-left:auto;width:30px;height:30px;display:grid;place-items:center;border:0;background:transparent;
@@ -613,8 +614,10 @@ button{font-family:inherit}
          <div class="trust-warn">SuperCollider registers each engine by class name. A duplicate makes one engine fail to load — and it's invisible until a script runs.</div>
          <label class="eng-rename-row">install with engine renamed to
            <input id="eng-rename" class="eng-rename-input" spellcheck="false"></label>
+         <p class="eng-hint" id="eng-hint">If this script ships the <b>same</b> engine, reuse the installed one — no duplicate (verified identical on device before linking).</p>
          <div class="trust-actions">
            <button class="btn btn-remove" id="eng-cancel">Cancel</button>
+           <button class="btn btn-update" id="eng-link">Use existing</button>
            <button class="btn btn-update" id="eng-anyway">Install anyway</button>
            <button class="btn btn-install" id="eng-rename-go">Install renamed</button>
          </div>
@@ -669,7 +672,7 @@ button{font-family:inherit}
 </div>
 
 <script>
-const BUILD='b18 · 2026-06-03 · B2 deconfliction + B3 mcp + split-upload option';
+const BUILD='b19 · 2026-06-03 · ingenue repo + engine dedup option · on-device';
 console.log('%cmaiden redesign build: '+BUILD,'color:#DEB887;font-weight:bold');
 const LS={
   get(k,d){try{const v=localStorage.getItem('maiden.'+k);return v==null?d:JSON.parse(v);}catch(e){return d;}},
@@ -1149,9 +1152,11 @@ function requestInstall(p,btn,tab){
   }
 }
 function afterTrust(p,btn){ const c=engineConflict(p); if(c) openEngineModal(p,c,btn); else proceedInstall(p,btn); }
-function proceedInstall(p,btn,renamed){ const e=shipEngine(p);
-  if(e) registerEngine(p, renamed||e);
-  doInstall(p,btn, renamed?`engine renamed: ${e} → ${renamed}`:'');
+function proceedInstall(p,btn,renamed,linkExisting){ const e=shipEngine(p);
+  let note='';
+  if(linkExisting) note=`reused existing ${e} engine — no duplicate installed`;   // dedupe: point script at the installed engine
+  else if(e){ registerEngine(p, renamed||e); note = renamed?`engine renamed: ${e} → ${renamed}`:''; }
+  doInstall(p,btn,note);
 }
 function openEngineModal(p,c,btn){
   enginePending={p,btn};
@@ -1663,6 +1668,8 @@ function boot(){
   document.getElementById('eng-overlay').addEventListener('click',e=>{ if(e.target.id==='eng-overlay'){ e.currentTarget.classList.remove('on'); enginePending=null; } });
   document.getElementById('eng-anyway').onclick=()=>{ document.getElementById('eng-overlay').classList.remove('on');
     if(enginePending) proceedInstall(enginePending.p,enginePending.btn); enginePending=null; };
+  document.getElementById('eng-link').onclick=()=>{ document.getElementById('eng-overlay').classList.remove('on');
+    if(enginePending) proceedInstall(enginePending.p,enginePending.btn,null,true); enginePending=null; };
   document.getElementById('eng-rename-go').onclick=()=>{ document.getElementById('eng-overlay').classList.remove('on');
     const nm=(document.getElementById('eng-rename').value||'').trim().replace(/[^A-Za-z0-9_]/g,'')||availableEngineName(shipEngine(enginePending.p));
     if(enginePending) proceedInstall(enginePending.p,enginePending.btn,nm); enginePending=null; };
