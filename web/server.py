@@ -16,7 +16,7 @@ API (confined to the dust tree):
   POST /api/install  {name,url,force} -> git clone url into dust/code/name
   POST /api/remove   {name}           -> delete dust/code/name
 """
-import http.server, socketserver, os, sys, json, shutil, subprocess, urllib.parse, datetime
+import http.server, socketserver, os, sys, json, re, shutil, subprocess, urllib.parse, datetime
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 
@@ -57,6 +57,52 @@ def safe_script_dir(name):
     if os.path.dirname(full) != os.path.realpath(CODE):
         raise ValueError("script escapes dust/code")
     return full, name
+
+
+def analyze_script(name):
+    """Scan an installed script for its dependency surface (heal-on-install mapping)."""
+    full, name = safe_script_dir(name)
+    if not os.path.isdir(full):
+        raise ValueError("not installed")
+    texts, files = [], []
+    for root, dirs, fs in os.walk(full):
+        if ".git" in root:
+            continue
+        for f in fs:
+            rel = os.path.relpath(os.path.join(root, f), full)
+            files.append(rel)
+            if f.endswith((".lua", ".sh", ".sc")):
+                try:
+                    with open(os.path.join(root, f), "r", encoding="utf-8", errors="ignore") as fh:
+                        texts.append(fh.read())
+                except OSError:
+                    pass
+    blob = "\n".join(texts)
+    urls = re.findall(r"https?://[^\s'\")]+", blob)
+    downloads = sorted(set(u for u in urls
+                           if re.search(r"\.(tar\.gz|tgz|zip|tar\.xz)|/releases/download/|archive\.org", u)))
+    sc_ext = sorted(set(re.findall(r"([A-Za-z0-9_]+_scsynth\.so)", blob)))
+    reqs = sorted(set(r for r in re.findall(r"require[\s(]+['\"]([A-Za-z0-9_]+)/lib", blob)
+                      if r not in (name, "core")))
+    native = []
+    if any(f.endswith("go.mod") for f in files): native.append("go")
+    if any(f.endswith("Makefile") for f in files): native.append("make")
+    if re.search(r"\baubio|aubiogo", blob): native.append("aubio")
+    if re.search(r"soxgo|\bsox\b", blob): native.append("sox")
+    if re.search(r"audiowaveform", blob): native.append("audiowaveform")
+    rep = {
+        "name": name,
+        "install_script": any(f.endswith("install.sh") for f in files),
+        "downloads": downloads[:12],
+        "sc_extensions": sc_ext,
+        "needs_sc_ext": bool(sc_ext) or "Extensions/" in blob,
+        "requires_scripts": reqs,
+        "nb": bool(re.search(r"require[\s(]+['\"]nb/|/nb/lib|nb_voice|nb:add", blob)),
+        "native": sorted(set(native)),
+    }
+    rep["needs_setup"] = bool(rep["install_script"] or rep["downloads"] or rep["needs_sc_ext"]
+                              or rep["nb"] or rep["requires_scripts"])
+    return rep
 
 
 def listing(full):
@@ -107,6 +153,8 @@ class H(http.server.SimpleHTTPRequestHandler):
                 return self._json(sorted(d for d in os.listdir(CODE)
                                          if os.path.isdir(os.path.join(CODE, d))
                                          and not d.startswith(".") and d != "ingenue"))
+            if path == "/api/deps":
+                return self._json(analyze_script(self._q().get("name", [""])[0]))
             if path == "/api/ls":
                 return self._json(listing(safe(self._q().get("path", [""])[0])))
             if path == "/api/read":
@@ -150,6 +198,15 @@ class H(http.server.SimpleHTTPRequestHandler):
                     return self._json({"error": f"{name} is not installed"}, 404)
                 shutil.rmtree(full)
                 return self._json({"ok": True, "removed": name})
+            if path == "/api/heal":
+                full, name = safe_script_dir(b.get("name"))
+                inst = os.path.join(full, "lib", "install.sh")
+                if not os.path.isfile(inst):
+                    return self._json({"error": f"{name} has no lib/install.sh to run"}, 404)
+                os.chmod(inst, 0o755)
+                r = subprocess.run(["bash", inst], cwd=full, capture_output=True, text=True, timeout=900)
+                tail = (r.stdout + "\n" + r.stderr)[-1500:]
+                return self._json({"ok": r.returncode == 0, "name": name, "code": r.returncode, "log": tail})
             if path == "/api/install":
                 full, name = safe_script_dir(b.get("name"))
                 url = (b.get("url") or "").strip()
