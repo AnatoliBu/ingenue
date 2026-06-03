@@ -105,7 +105,8 @@ class H(http.server.SimpleHTTPRequestHandler):
         try:
             if path == "/api/installed":
                 return self._json(sorted(d for d in os.listdir(CODE)
-                                         if os.path.isdir(os.path.join(CODE, d)) and not d.startswith(".")))
+                                         if os.path.isdir(os.path.join(CODE, d))
+                                         and not d.startswith(".") and d != "ingenue"))
             if path == "/api/ls":
                 return self._json(listing(safe(self._q().get("path", [""])[0])))
             if path == "/api/read":
