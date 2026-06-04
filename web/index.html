@@ -189,6 +189,7 @@ button{font-family:inherit}
 .rd-pill-btn svg{width:14px;height:14px;fill:currentColor}
 .rd-filtertoggle{display:none;border:1px solid var(--trim);background:var(--panel);color:var(--fg);font-size:13px;padding:7px 12px;border-radius:9px;cursor:pointer;align-items:center;gap:6px;white-space:nowrap}
 .rd-filtertoggle .fct{background:var(--accent,#8af);color:#000;border-radius:9px;padding:0 6px;font-size:11px}
+.rd-pill-btn.on{border-color:var(--accent);color:var(--accent)}
 .rd-sort{appearance:none;-webkit-appearance:none;border:1px solid var(--trim);background:var(--panel);color:var(--fg);
   font:inherit;font-size:13px;padding:7px 26px 7px 12px;border-radius:9px;cursor:pointer;white-space:nowrap;
   background-image:linear-gradient(45deg,transparent 50%,var(--muted) 50%),linear-gradient(135deg,var(--muted) 50%,transparent 50%);
@@ -602,7 +603,9 @@ button{font-family:inherit}
      <div class="paramsview" id="paramsview">
        <div class="pv-top">
          <div class="pv-title">PARAMS <span id="params-script" style="font-weight:400;color:var(--muted)"></span></div>
-         <button class="rd-pill-btn" id="params-refresh">↻ refresh</button>
+         <button class="rd-pill-btn" id="params-refresh" title="re-read from device">↻</button>
+         <button class="rd-pill-btn" id="params-defaults" title="reset all params to their defaults">↺ defaults</button>
+         <button class="rd-pill-btn" id="params-declutter" title="hide empty MIDI/device slots">declutter</button>
          <button class="rd-pill-btn" id="params-save">save preset</button>
          <button class="rd-pill-btn" id="params-load">load preset</button>
          <span class="v" id="params-status" style="width:auto;color:var(--faint);font-family:inherit;flex:1"></span>
@@ -784,7 +787,7 @@ button{font-family:inherit}
 </div>
 
 <script>
-const BUILD='b31 · 2026-06-03 · mods as a sheet w/ installable community mods + card detail';
+const BUILD='b32 · 2026-06-03 · params: show script groups + declutter + reset defaults · mods top trim';
 console.log('%cmaiden redesign build: '+BUILD,'color:#DEB887;font-weight:bold');
 const LS={
   get(k,d){try{const v=localStorage.getItem('maiden.'+k);return v==null?d:JSON.parse(v);}catch(e){return d;}},
@@ -1171,13 +1174,11 @@ async function renderModsView(){
   // catalog scripts that are mods but aren't installed → installable
   const avail=REPO.available.filter(p=>isModEntry(p)&&!p.inst&&!seen.has(norm(p.n)))
                             .sort((a,b)=>a.n.localeCompare(b.n));
-  view.innerHTML=`<div class="pv-top"><div class="pv-title">mods</div>
-      <span class="v" style="width:auto;flex:1;font-family:inherit;color:var(--faint)">enable/disable installed mods (restart norns after enabling) · tap a card for details · add community mods below</span>
-      <button class="rd-pill-btn" id="mods-refresh" style="margin:0">↻</button></div>
-    <div class="pv-scroll">
-      <div class="pv-banner">installed mods · ${installed.length}</div>
+  view.innerHTML=`<div class="pv-scroll">
+      <div class="pv-head" style="position:sticky"><span>installed mods</span><span class="pv-ct">${installed.length}</span>
+        <button class="rd-pill-btn" id="mods-refresh" style="margin:0 0 0 auto;padding:3px 10px" title="refresh">↻</button></div>
       <div class="rd-grid" id="mods-inst">${installed.map(p=>repoCard(p,'installed')).join('')||'<div class="pv-empty">no mods installed yet — add some below</div>'}</div>
-      <div class="pv-banner">available community mods · ${avail.length}</div>
+      <div class="pv-head" style="position:sticky"><span>available community mods</span><span class="pv-ct">${avail.length}</span></div>
       <div class="rd-grid" id="mods-avail">${avail.map(p=>repoCard(p,'available')).join('')||'<div class="pv-empty">none found in the catalog</div>'}</div>
     </div>`;
   wireCards(view, installed.concat(avail), 'available');     // wires install/remove/demo/readme per card
@@ -1236,19 +1237,26 @@ function paramRow(p){
       <input type="range" class="psld" data-i="${p.i}" data-unit="${esc(unit)}" min="${mn}" max="${mx}" step="${step}" value="${v}"></div>`; }
   return `<div class="pv-row">${lbl}<span class="pv-ro">${esc(p.str||'')}</span></div>`;
 }
+const SYS_GROUPS=new Set(['LEVELS','REVERB','COMPRESSOR','SOFTCUT','CLOCK','AUDIO']);   // collapsed by default; script groups expand
+let pDeclutter=true;
+function isEmptySlot(p){ return /^\s*\d+\.\s*none\s*$/i.test(p.name||''); }   // empty MIDI/device slots
 function paintParams(){
   const list=document.getElementById('params-list'), st=document.getElementById('params-status');
   if(!PARAMS.length){ st.textContent='no params'; list.innerHTML='<div class="pv-empty">no params — load a script on the device, then ↻ refresh</div>'; return; }
-  st.textContent=PARAMS.length+' parameters';
-  const secs=[]; let cur={kind:'top',name:'system parameters',rows:[]}; secs.push(cur);
-  PARAMS.forEach(p=>{ if(p.t===7){ cur={kind:'group',name:p.name,rows:[]}; secs.push(cur); }
-    else if(p.t===0){ cur={kind:'sep',name:p.name,rows:[]}; secs.push(cur); }
-    else cur.rows.push(p); });
-  list.innerHTML=secs.filter(s=>s.rows.length||s.kind==='group').map((s,si)=>{
-    const collap=s.kind==='group';
-    const body=`<div class="pv-rows"${collap?' style="display:none"':''}>${s.rows.map(paramRow).join('')}</div>`;
+  // sectionize; once we pass the first script (non-system) separator/group, groups expand
+  const secs=[]; let cur={kind:'top',name:'system parameters',rows:[]}; secs.push(cur); let inScript=false; let shown=0;
+  PARAMS.forEach(p=>{
+    if(p.t===7){ const sys=SYS_GROUPS.has((p.name||'').toUpperCase()); if(!sys) inScript=true; cur={kind:'group',name:p.name,sys:sys&&!inScript,rows:[]}; secs.push(cur); return; }
+    if(p.t===0){ inScript=true; cur={kind:'sep',name:p.name,rows:[]}; secs.push(cur); return; }
+    if(pDeclutter && isEmptySlot(p)) return;                       // hide empty device slots
+    cur.rows.push(p); shown++;
+  });
+  st.textContent=shown+' parameters'+(pDeclutter?' · decluttered':'');
+  list.innerHTML=secs.filter(s=>s.rows.length||s.kind==='group'||s.kind==='sep').map((s,si)=>{
+    const isGroup=s.kind==='group', closed=isGroup&&s.sys;        // all groups collapsible; system ones start closed
+    const body=`<div class="pv-rows"${closed?' style="display:none"':''}>${s.rows.map(paramRow).join('')}</div>`;
     const hdr = s.kind==='top' ? `<div class="pv-banner">${esc(s.name)}</div>`
-      : `<div class="pv-head${collap?' collap':''}" data-sec="${si}">${collap?'<span class="pv-caret">▸</span>':''}<span>${esc(s.name||'')}</span><span class="pv-ct">${s.rows.length}</span></div>`;
+      : `<div class="pv-head${isGroup?' collap':''}${isGroup&&!closed?' open':''}" data-sec="${si}">${isGroup?'<span class="pv-caret">▸</span>':''}<span>${esc(s.name||'')}</span><span class="pv-ct">${s.rows.length}</span></div>`;
     return `<div class="pv-section">${hdr}${body}</div>`;
   }).join('');
   list.querySelectorAll('.pv-head.collap').forEach(h=>h.onclick=()=>{ const b=h.nextElementSibling; const show=b.style.display==='none';
@@ -2362,6 +2370,13 @@ function boot(){
   document.getElementById('a-mods').onclick=showMods;
   // B9 params editor wiring (its own view)
   document.getElementById('params-refresh').onclick=refreshParams;
+  document.getElementById('params-declutter').onclick=()=>{ pDeclutter=!pDeclutter;
+    document.getElementById('params-declutter').classList.toggle('on',pDeclutter); paintParams(); };
+  document.getElementById('params-declutter').classList.add('on');
+  document.getElementById('params-defaults').onclick=()=>confirmDialog('Reset all params to defaults',
+    'Set every parameter of the running script back to its default value? Your current tweaks will be lost.', ()=>{
+      matronSend("do for i=1,params.count do local p=params:lookup_param(i) local d=p.default if d==nil and p.controlspec then d=p.controlspec.default end if d~=nil then pcall(function() params:set(i,d) end) end end params:bang() end");
+      setTimeout(refreshParams,500); });
   document.getElementById('params-save').onclick=()=>{ const s=+(prompt('save current params to PSET slot (1–9)','1')||0); if(s>=1&&s<=9){ presetSlot=s; matronSend('params:write('+s+')'); document.getElementById('params-status').textContent='saved → PSET slot '+s; } };
   document.getElementById('params-load').onclick=()=>{ const s=+(prompt('load params from PSET slot (1–9)','1')||0); if(s>=1&&s<=9){ presetSlot=s; matronSend('params:read('+s+');params:bang()'); document.getElementById('params-status').textContent='loaded ← PSET slot '+s; setTimeout(refreshParams,400); } };
   // trust-gate modal wiring
