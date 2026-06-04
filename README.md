@@ -25,3 +25,10 @@ Prototype is feature-rich (responsive layout, ~26 themes, editor/console/split +
 file manager, redesigned repo manager with GitHub discovery, install dock, engine
 deconfliction). Not yet wired to a real device — that's the next phase (ship as the
 "ingenue" mod that toggles against system maiden).
+
+## Stretch goals (PRs welcome)
+
+- **Browser → MIDI bridge for PARAMS.** Use the Web MIDI API so a controller plugged
+  into the *computer* running ingenue can MIDI-learn and drive the running script's
+  params over the live matron link — MIDI mapping without the controller on the norns.
+  Prototyped then shelved for scope; would love someone to pick it up.

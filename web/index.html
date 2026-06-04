@@ -357,6 +357,11 @@ button{font-family:inherit}
 /* ============ first-class file manager ============ */
 .filesview{flex:1;min-width:0;min-height:0;display:none;flex-direction:column;background:var(--bg);position:relative;container-type:inline-size}
 .filesview.on{display:flex}
+.paramsview{flex:1;min-width:0;min-height:0;display:none;flex-direction:column;background:var(--bg);container-type:inline-size}
+.paramsview.on{display:flex}
+.pv-top{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:10px 14px;border-bottom:1px solid var(--trim);background:var(--panel2)}
+.pv-title{font-weight:600;font-size:14px;margin-right:6px}
+.pv-scroll{flex:1;min-height:0;overflow:auto;padding:6px 8px}
 .fv-bar{flex:0 0 auto;display:flex;align-items:center;gap:8px;padding:9px 12px;background:var(--panel2);border-bottom:1px solid var(--trim);flex-wrap:wrap}
 .fv-crumbs{display:flex;align-items:center;gap:1px;flex:1;min-width:120px;overflow:auto;font-size:13px}
 .fv-crumb{color:var(--accent2);cursor:pointer;white-space:nowrap;padding:3px 7px;border-radius:6px;background:transparent;border:0;font:inherit;font-size:13px}
@@ -475,7 +480,7 @@ button{font-family:inherit}
   /* phone: src + tag filter bars collapse behind a "filters" toggle to save vertical space */
   .rd-filtertoggle{display:inline-flex}
   .rd-filters{display:none}
-  .rd-filters.open{display:block;border-top:1px solid var(--trim)}
+  .rd-filters.open{display:block;border-top:1px solid var(--trim);max-height:46vh;overflow-y:auto;-webkit-overflow-scrolling:touch}
   .card .head{flex-direction:column}.act-row{width:100%}.act-row .btn{flex:1;text-align:center}
   .theme-grid{grid-template-columns:repeat(auto-fill,minmax(108px,1fr))}
   /* config becomes a full-screen sheet — never floats or clips */
@@ -568,6 +573,18 @@ button{font-family:inherit}
 
      <!-- first-class file manager -->
      <div class="filesview" id="filesview"></div>
+
+     <!-- live PARAMS editor (its own sheet — lists can be huge) -->
+     <div class="paramsview" id="paramsview">
+       <div class="pv-top">
+         <div class="pv-title">PARAMS <span id="params-script" style="font-weight:400;color:var(--muted)"></span></div>
+         <button class="rd-pill-btn" id="params-refresh">↻ refresh</button>
+         <button class="rd-pill-btn" id="params-save">save preset</button>
+         <button class="rd-pill-btn" id="params-load">load preset</button>
+         <span class="v" id="params-status" style="width:auto;color:var(--faint);font-family:inherit;flex:1"></span>
+       </div>
+       <div class="pv-scroll"><div id="params-list"></div></div>
+     </div>
      <input type="file" id="file-input" multiple style="display:none">
      <input type="file" id="dir-input" webkitdirectory directory multiple style="display:none">
 
@@ -637,22 +654,6 @@ button{font-family:inherit}
    </div>
 
    <!-- B9: live PARAMS editor -->
-   <div class="overlay" id="params-overlay">
-     <div class="modal">
-       <div class="modal-head"><div class="t">PARAMS · <span id="params-script" style="font-weight:400;color:var(--muted)">live</span></div><button class="x" id="params-close">✕</button></div>
-       <div class="modal-body">
-         <div class="trust-actions" style="margin:0 0 10px;justify-content:flex-start;gap:8px;flex-wrap:wrap">
-           <button class="rd-pill-btn" id="params-refresh" style="margin:0">↻ refresh</button>
-           <button class="rd-pill-btn" id="params-save" style="margin:0">save preset</button>
-           <button class="rd-pill-btn" id="params-load" style="margin:0">load preset</button>
-           <button class="rd-pill-btn" id="params-midi" style="margin:0">🎹 enable MIDI</button>
-           <span class="v" id="params-status" style="width:auto;color:var(--faint);font-family:inherit;flex:1"></span>
-         </div>
-         <div id="params-list" style="max-height:52vh;overflow:auto"></div>
-       </div>
-     </div>
-   </div>
-
    <!-- untrusted-source install confirmation -->
    <div class="overlay" id="trust-overlay">
      <div class="modal trust-modal">
@@ -770,7 +771,7 @@ button{font-family:inherit}
 </div>
 
 <script>
-const BUILD='b27 · 2026-06-03 · mods/params nav icons · phone render fix · filter dropdown';
+const BUILD='b28 · 2026-06-03 · params sheet+matron link · readme/img fix · gh search · phone fixes';
 console.log('%cmaiden redesign build: '+BUILD,'color:#DEB887;font-weight:bold');
 const LS={
   get(k,d){try{const v=localStorage.getItem('maiden.'+k);return v==null?d:JSON.parse(v);}catch(e){return d;}},
@@ -1065,9 +1066,10 @@ function paintMods(mods){
     }catch(e){ } b.disabled=false; });
 }
 
-/* ===== B9 live PARAMS editor (matron ws) + presets + Web MIDI ===== */
-let PARAMS=[], paramBuf='', midiAccess=null, midiLearn=null, midiMap={}, presetSlot=1;
-function openParams(){ document.getElementById('params-overlay').classList.add('on'); refreshParams(); }
+/* ===== B9 live PARAMS editor (matron ws) + presets =====
+   (Web-MIDI bridge is a post-release stretch goal — see README.) */
+let PARAMS=[], paramBuf='', presetSlot=1;
+function openParams(){ showParams(); }
 function refreshParams(){
   const status=document.getElementById('params-status');
   if(!matronReady){ status.textContent='no live link to matron — open ingenue on the device (port 7777) to use this'; document.getElementById('params-list').innerHTML=''; return; }
@@ -1087,31 +1089,12 @@ function paintParams(){
   const list=document.getElementById('params-list'); document.getElementById('params-status').textContent=PARAMS.length+' params';
   if(!PARAMS.length){ list.innerHTML='<div class="cfg-row"><span class="v" style="font-family:inherit">no params — load a script on the device, then ↻ refresh</span></div>'; return; }
   list.innerHTML=PARAMS.map(p=>{
-    const sep=(isNaN(p.min)||isNaN(p.max)); const bound=midiMap[p.i]!=null;
+    const sep=(isNaN(p.min)||isNaN(p.max));
     if(sep) return `<div class="cfg-sec" style="margin:10px 0 4px">${esc(p.name)}</div>`;
     return `<div class="cfg-row"><span class="k" style="font-family:inherit;flex:1">${esc(p.name)}</span>
-      <input class="pval" data-i="${p.i}" data-min="${p.min}" data-max="${p.max}" type="number" step="any" value="${parseFloat(p.val)||p.val||0}" style="width:90px">
-      <button class="rd-pill-btn plearn" data-i="${p.i}" style="margin:0;${bound?'border-color:var(--ok,#5c5)':''}" title="MIDI learn">${bound?'CC'+midiMap[p.i+'_cc']:'learn'}</button></div>`;
+      <input class="pval" data-i="${p.i}" data-min="${p.min}" data-max="${p.max}" type="number" step="any" value="${parseFloat(p.val)||p.val||0}" style="width:110px"></div>`;
   }).join('');
   list.querySelectorAll('.pval').forEach(inp=>inp.onchange=()=>matronSend('params:set('+inp.dataset.i+','+(parseFloat(inp.value)||0)+')'));
-  list.querySelectorAll('.plearn').forEach(b=>b.onclick=()=>{ if(!midiAccess){ document.getElementById('params-status').textContent='enable MIDI first (🎹)'; return; }
-    midiLearn=+b.dataset.i; document.getElementById('params-status').textContent='move a MIDI control to bind it to "'+(PARAMS.find(x=>x.i===midiLearn)||{}).name+'"'; });
-}
-async function enableMidi(){
-  const status=document.getElementById('params-status');
-  if(!navigator.requestMIDIAccess){ status.textContent='Web MIDI not supported in this browser (try Chrome)'; return; }
-  try{ midiAccess=await navigator.requestMIDIAccess(); }catch(e){ status.textContent='MIDI permission denied'; return; }
-  for(const inp of midiAccess.inputs.values()) inp.onmidimessage=onMidi;
-  document.getElementById('params-midi').textContent='🎹 MIDI on';
-  status.textContent='MIDI on — click "learn" on a param, then move a knob/fader';
-}
-function onMidi(e){ const [st,d1,d2]=e.data; if((st&0xf0)!==0xb0) return;   // CC messages only
-  if(midiLearn!=null){ midiMap[midiLearn]=d1; midiMap[midiLearn+'_cc']=d1; midiLearn=null; paintParams(); return; }
-  for(const k in midiMap){ if(String(k).endsWith('_cc')) continue; if(midiMap[k]===d1){
-    const p=PARAMS.find(x=>x.i===+k); if(!p||isNaN(p.min)||isNaN(p.max)) continue;
-    const v=p.min+(d2/127)*(p.max-p.min); matronSend('params:set('+k+','+v+')');
-    const inp=document.querySelector('.pval[data-i="'+k+'"]'); if(inp) inp.value=Math.round(v*1000)/1000;
-  }}
 }
 
 /* ============ theme engine ============ */
@@ -1242,17 +1225,24 @@ function replPrint(html){ const o=out(); o.innerHTML+=html+'\n'; o.scrollTop=o.s
 let target='matron';
 
 /* ===== live matron link (real REPL + params channel over ws://<host>:5555) ===== */
-let matronWS=null, matronReady=false, matronOnData=null;
+let matronWS=null, matronReady=false, matronOnData=null, matronRetryT=null;
+// matron's repl socket is nanomsg (nng) over websocket — it REQUIRES the
+// 'bus.sp.nanomsg.org' subprotocol (same as maiden). A plain WebSocket gets
+// "400 Incompatible Socket Type". It's a bus socket, so we join alongside maiden.
 function matronConnect(){
-  let host=location.hostname; if(!host||location.protocol==='file:') return;   // off-device demo → stay mocked
-  try{ matronWS=new WebSocket('ws://'+host+':5555'); }catch(_){ return; }
-  matronWS.onopen=()=>{ matronReady=true; replPrint('<span class="sys"># live link to matron @ '+host+':5555</span>'); };
-  matronWS.onmessage=ev=>{ const t=(typeof ev.data==='string')?ev.data:''; if(!t) return;
+  const host=location.hostname; if(!host||location.protocol==='file:') return;   // off-device demo → stay mocked
+  try{ matronWS=new WebSocket('ws://'+host+':5555',['bus.sp.nanomsg.org']); }catch(_){ matronRetry(); return; }
+  matronWS.binaryType='arraybuffer';
+  matronWS.onopen=()=>{ matronReady=true; if(matronRetryT){clearTimeout(matronRetryT);matronRetryT=null;}
+    replPrint('<span class="sys"># live link to matron @ '+host+':5555</span>');
+    const pv=document.getElementById('paramsview'); if(pv&&pv.classList.contains('on')) refreshParams(); };
+  matronWS.onmessage=ev=>{ let t=(typeof ev.data==='string')?ev.data:(ev.data?new TextDecoder().decode(ev.data):''); if(!t) return;
     if(matronOnData) matronOnData(t);                       // params/preset channel may consume markers
     if(!/@@ING_/.test(t)) replPrint('<span class="ok">'+esc(t).replace(/\n$/,'')+'</span>'); };
-  matronWS.onclose=()=>{ matronReady=false; };
-  matronWS.onerror=()=>{ matronReady=false; };
+  matronWS.onclose=()=>{ matronReady=false; matronRetry(); };
+  matronWS.onerror=()=>{ try{ matronWS.close(); }catch(_){ } };
 }
+function matronRetry(){ if(matronRetryT) return; matronRetryT=setTimeout(()=>{ matronRetryT=null; if(!matronReady) matronConnect(); }, 4000); }
 function matronSend(lua){ if(matronReady){ try{ matronWS.send(lua+'\n'); return true; }catch(_){ } } return false; }
 
 function replSubmit(){
@@ -1549,27 +1539,49 @@ function loadDemo(card,p){
   else slot.innerHTML='<span class="more-nodemo">no playable demo</span>';
 }
 /* live GitHub search for the discover tab (paged, search on Enter/button only) */
-let _discLoaded=false, _discQuery='', _discPage=1, _discTotal=0, discHideKnown=false;
+let _discLoaded=false, _discQuery='', _discPage=1, _discTotal=0, discHideKnown=true, discMineOnly=false;
 const DISC_PER=24;
+// never surface these — norns infra / lists / hardware, not installable scripts
+const GH_BLOCK=new Set(['monome/norns','monome/norns-shield','okyeron/shieldxl','p3r7/awesome-monome-norns',
+  'monome/norns-image','monome/dust','monome/norns-community','figrhed/norns-on-raspberry-pi','jguzak/shieldxl_battery']);
+let GH_LOGIN=null;
+function ghHeaders(){ const h={'Accept':'application/vnd.github+json'}; const g=LS.get('gh',{})||{}; if(g.t) h['Authorization']='token '+g.t; return h; }
+async function ghWhoami(){ if(GH_LOGIN) return GH_LOGIN; try{ const r=await fetch('https://api.github.com/user',{headers:ghHeaders()}); if(r.ok) GH_LOGIN=(await r.json()).login; }catch(_){ } return GH_LOGIN; }
+const _validCache={};
+async function validNorns(owner,name){   // structure check: a top-level .lua file (the norns script pattern)
+  const key=(owner+'/'+name).toLowerCase(); if(key in _validCache) return _validCache[key];
+  try{ const r=await fetch(`https://api.github.com/repos/${owner}/${name}/contents`,{headers:ghHeaders()});
+    if(!r.ok) return _validCache[key]=true;            // can't inspect (rate/redirect) → don't over-filter
+    const items=await r.json();
+    return _validCache[key]= Array.isArray(items) && items.some(f=>f.type==='file' && /\.lua$/i.test(f.name));
+  }catch(_){ return _validCache[key]=true; }
+}
 async function ghSearch(query,page){
   _discQuery=(query!=null?query:_discQuery); _discPage=page||1;
   const v=document.getElementById('repoview'); const grid=v.querySelector('.rd-grid');
-  if(grid) grid.innerHTML=`<div class="gh-empty"><p>searching GitHub for “${(_discQuery||'norns').trim()}” (page ${_discPage})…</p></div>`;
+  const base=(_discQuery||'').trim();
+  const label=discMineOnly?'your repos':(base?'“'+base+'”':'norns scripts');
+  if(grid) grid.innerHTML=`<div class="gh-empty"><p>searching GitHub for ${label} (page ${_discPage})…</p></div>`;
   try{
-    const headers={'Accept':'application/vnd.github+json'};
-    const g=LS.get('gh',{})||{}; if(g.t) headers['Authorization']='token '+g.t;
-    const q=encodeURIComponent(((_discQuery||'').trim()+' norns').trim());
-    const r=await fetch(`https://api.github.com/search/repositories?q=${q}&sort=stars&order=desc&per_page=${DISC_PER}&page=${_discPage}`,{headers});
+    let qstr;
+    if(discMineOnly){ const me=await ghWhoami(); if(!me) throw new Error('connect a token in settings to see your repos');
+      qstr=(base?base+' ':'')+'user:'+me+' language:lua'; }                 // your own — public + private the token sees
+    else qstr=(base?base+' norns':'norns script')+' language:lua';          // default: norns scripts, not "sequencer"
+    const r=await fetch(`https://api.github.com/search/repositories?q=${encodeURIComponent(qstr)}&sort=${discMineOnly?'updated':'stars'}&order=desc&per_page=${DISC_PER}&page=${_discPage}`,{headers:ghHeaders()});
     if(!r.ok) throw new Error('HTTP '+r.status+(r.status===403?' (rate limit — add a token in settings)':''));
     const j=await r.json();
     _discTotal=Math.min(j.total_count||0,1000);   // GitHub caps search at 1000 results
-    const comm=new Set(REPO.available.filter(p=>p.srcs.includes('community')).map(p=>p.n.toLowerCase()));
-    REPO.discover=(j.items||[]).map(it=>{
+    const me=GH_LOGIN, comm=new Set(REPO.available.filter(p=>p.srcs.includes('community')).map(p=>p.n.toLowerCase()));
+    let items=(j.items||[]).filter(it=>it.owner && !GH_BLOCK.has((it.owner.login+'/'+it.name).toLowerCase()));
+    // validate structure (top-level .lua) before showing — drop non-scripts upstream
+    const checks=await Promise.all(items.map(it=>validNorns(it.owner.login,it.name)));
+    items=items.filter((it,i)=>checks[i]);
+    REPO.discover=items.map(it=>{
       const srcs=['github']; if(comm.has((it.name||'').toLowerCase())) srcs.push('community');
-      if(it.owner&&it.owner.login===GHUSER) srcs.push('mine');
+      if(it.owner&&me&&it.owner.login===me) srcs.push('mine');
       return { n:it.name, a:it.owner?it.owner.login:'?', d:it.description||'(no description)', v:'',
         tags:(it.topics||[]).slice(0,5), stars:it.stargazers_count, upd:(it.pushed_at||'').slice(0,10),
-        proj:it.html_url, srcs, gh:1 };
+        proj:it.html_url, priv:!!it.private, srcs, gh:1 };
     });
     _discLoaded=true; if(repoTab==='discover') renderRepo();
   }catch(err){ if(grid) grid.innerHTML=`<div class="gh-empty"><p>GitHub search failed: ${err.message}</p></div>`; }
@@ -1663,11 +1675,18 @@ function carouselHTML(imgs){
 function wireCarousel(root){
   const car=root.querySelector('.carousel'); if(!car) return;
   const img=car.querySelector('.cimg'); let imgs; try{ imgs=JSON.parse(img.dataset.imgs);}catch(_){ return; }
-  const go=d=>{ const i=((+car.dataset.idx)+d+imgs.length)%imgs.length; car.dataset.idx=i; img.src=imgs[i];
-    const dot=car.querySelector('.cdot'); if(dot) dot.textContent=(i+1)+' / '+imgs.length; };
+  const dot=car.querySelector('.cdot');
+  function render(){ if(!imgs.length){ car.style.display='none'; return; }
+    let i=((+car.dataset.idx)%imgs.length+imgs.length)%imgs.length; car.dataset.idx=i;
+    if(img.src!==imgs[i]) img.src=imgs[i];
+    if(dot) dot.textContent=(i+1)+' / '+imgs.length; }
+  img.onerror=()=>{ const i=((+car.dataset.idx)%imgs.length+imgs.length)%imgs.length;  // drop a broken image, advance
+    imgs.splice(i,1); car.dataset.idx=i; render(); };
+  const go=d=>{ car.dataset.idx=(+car.dataset.idx)+d; render(); };
   const pv=car.querySelector('.cprev'), nx=car.querySelector('.cnext');
   if(pv) pv.onclick=e=>{e.stopPropagation();go(-1);};
   if(nx) nx.onclick=e=>{e.stopPropagation();go(1);};
+  render();
 }
 function availSources(){ return SRC_ORDER.filter(id=>SRC_ON[id] && (!SRC[id].auth || ghConnected)); }
 function srcTagsHTML(p){
@@ -1702,7 +1721,7 @@ function repoCard(p,tab){
       <div class="more-meta">${p.upd?`updated ${p.upd}`:'last-updated unknown'} · via ${srcNames(p)}${p.inst?` · <button class="reqs-btn" data-reqs="1">⚙ requirements</button>`:''}</div>
       ${hasLinks?`<div class="more-links">${L(p.proj,'code')}${L(p.docU,'docs')}${L(p.discU,'discuss')}${L(p.comm,'norns.community')}</div>`:''}
       <div class="more-demo">${demoSlot}</div>
-      <div class="more-readme" data-readme>${isUrl(p.proj)?'<button class="readme-btn">📖 load README &amp; images</button>':''}</div>
+      <div class="more-readme" data-readme>${isUrl(p.proj)?'<button class="readme-btn">📖 load README</button>':''}</div>
     </div>`;
   return `<div class="card open${p.gh?' gh':''}" ${p.gh?`style="--srcc:${SRC[(p.srcs||[])[0]]?SRC[(p.srcs||[])[0]].color:'var(--trim)'}"`:''}>
     <div class="head"><label class="csel" title="select for bulk install"><input type="checkbox" data-sel ${selection.has(p.n)?'checked':''}></label><div class="id">
@@ -1721,7 +1740,8 @@ function srcBar(tab){
     return `<span class="srcchip ${on?'on':'off'}" data-src="${id}" style="--c:${c}"><i></i>${SRC[id].name}</span>`;
   }).join('');
   const extra = tab==='discover'
-    ? `<span class="srcchip ${discHideKnown?'on':''}" data-hideknown="1" style="--c:var(--accent)"><i></i>${discHideKnown?'hiding ':'hide '}already in catalog/installed</span>` : '';
+    ? `<span class="srcchip ${discMineOnly?'on':''}" data-minerepos="1" style="--c:#7fbfff"><i></i>${discMineOnly?'only your repos':'only my repos'}</span>`
+     +`<span class="srcchip ${discHideKnown?'on':''}" data-hideknown="1" style="--c:var(--accent)"><i></i>${discHideKnown?'hiding ':'hide '}already in catalog/installed</span>` : '';
   return `<div class="srcbar"><span class="lbl">sources</span>${chips}<span class="srcchip add" data-addsrc="1">+ add</span>${extra}</div>`;
 }
 function renderRepo(){
@@ -1794,9 +1814,10 @@ function renderRepo(){
     else { const t=b.innerHTML; b.innerHTML='✓ done'; setTimeout(()=>{b.innerHTML=t;},900); }
   });
   v.querySelectorAll('[data-hideknown]').forEach(c=>c.onclick=()=>{ discHideKnown=!discHideKnown; renderRepo(); });
+  v.querySelectorAll('[data-minerepos]').forEach(c=>c.onclick=()=>{ discMineOnly=!discMineOnly; _discLoaded=false; ghSearch('',1); });
   v.querySelectorAll('[data-page]').forEach(b=>b.onclick=()=>{ const p=+b.dataset.page; if(p>=1 && !b.disabled) ghSearch(_discQuery,p); });
   wireCards(v,list,tab); updateBulkBar();
-  if(tab==='discover' && ghConnected && !_discLoaded) ghSearch('sequencer');   // live results on first open
+  if(tab==='discover' && ghConnected && !_discLoaded) ghSearch('');   // default: "norns script", not "sequencer"
   const tg=document.getElementById('rd-toggle'); if(tg) tg.onclick=()=>v.classList.toggle('collapsed');
   const sc=v.querySelector('.rd-scroll'); let lst=0;
   if(sc) sc.addEventListener('scroll',()=>{ const t=sc.scrollTop;
@@ -1805,23 +1826,34 @@ function renderRepo(){
 
 /* ============ navigation ============ */
 function setAct(which){ document.getElementById('a-files').classList.toggle('on',which==='files');
-  document.getElementById('a-proj').classList.toggle('on',which==='proj'); }
-function showMain(){document.getElementById('main').style.display='flex';
-  document.getElementById('repoview').classList.remove('on');document.getElementById('filesview').classList.remove('on');setAct('');}
-function showRepo(){document.getElementById('main').style.display='none';document.getElementById('filesview').classList.remove('on');
+  document.getElementById('a-proj').classList.toggle('on',which==='proj');
+  const ap=document.getElementById('a-params'); if(ap) ap.classList.toggle('on',which==='params'); }
+function hideViews(){ document.getElementById('repoview').classList.remove('on');
+  document.getElementById('filesview').classList.remove('on');
+  const pv=document.getElementById('paramsview'); if(pv) pv.classList.remove('on'); }
+// the mobile top bar (script name + folder icon) is editor-local — it must not bleed into other views
+function setMtop(label, showFileIcon){ const t=document.getElementById('m-title'); if(t&&label!=null) t.textContent=label;
+  const m=document.getElementById('m-menu'); if(m) m.style.display=showFileIcon?'':'none'; }
+function showMain(){document.getElementById('main').style.display='flex'; hideViews(); setAct('');
+  setMtop(activeFile?fileName(activeFile):'editor', true);}
+function showRepo(){document.getElementById('main').style.display='none'; hideViews();
   document.getElementById('repoview').classList.add('on');
   document.getElementById('maiden').classList.remove('drawer-open');   // tree hides in the repository manager
-  setAct('proj');renderRepo();}
-function showFiles(){document.getElementById('main').style.display='none';document.getElementById('repoview').classList.remove('on');
+  setAct('proj');setMtop('scripts',false);renderRepo();}
+function showFiles(){document.getElementById('main').style.display='none'; hideViews();
   document.getElementById('filesview').classList.add('on');
   document.getElementById('maiden').classList.remove('drawer-open');
-  setAct('files');renderFiles();}
+  setAct('files');setMtop('files',false);renderFiles();}
+function showParams(){document.getElementById('main').style.display='none'; hideViews();
+  document.getElementById('paramsview').classList.add('on');
+  document.getElementById('maiden').classList.remove('drawer-open');
+  setAct('params');setMtop('params',false); refreshParams();}
 const maiden=document.getElementById('maiden');
 function setMobileView(v){
   maiden.classList.remove('drawer-open');
-  if(v==='mods'){ openMods(); return; }        // overlays — don't change the underlying tab highlight
-  if(v==='params'){ openParams(); return; }
-  if(v==='repo'){ showRepo(); }
+  if(v==='mods'){ openMods(); return; }         // mods stays an overlay — don't change the tab highlight
+  if(v==='params'){ showParams(); }
+  else if(v==='repo'){ showRepo(); }
   else if(v==='files'){ showFiles(); }
   else { showMain(); maiden.dataset.view=v; }
   document.querySelectorAll('.mtab').forEach(t=>t.classList.toggle('on',t.dataset.mv===v));
@@ -2168,15 +2200,12 @@ function boot(){
   document.getElementById('scp-overlay').addEventListener('click',e=>{if(e.target.id==='scp-overlay')e.currentTarget.classList.remove('on');});
   document.getElementById('scp-go').onclick=runScpHeal;
   // mods + params now have their own nav icons (out of config)
-  document.getElementById('a-params').onclick=openParams;
+  document.getElementById('a-params').onclick=showParams;
   document.getElementById('a-mods').onclick=openMods;
   document.getElementById('mods-close').onclick=()=>document.getElementById('mods-overlay').classList.remove('on');
   document.getElementById('mods-overlay').addEventListener('click',e=>{if(e.target.id==='mods-overlay')e.currentTarget.classList.remove('on');});
-  // B9 params editor wiring
-  document.getElementById('params-close').onclick=()=>document.getElementById('params-overlay').classList.remove('on');
-  document.getElementById('params-overlay').addEventListener('click',e=>{if(e.target.id==='params-overlay')e.currentTarget.classList.remove('on');});
+  // B9 params editor wiring (its own view)
   document.getElementById('params-refresh').onclick=refreshParams;
-  document.getElementById('params-midi').onclick=enableMidi;
   document.getElementById('params-save').onclick=()=>{ const s=+(prompt('save current params to PSET slot (1–9)','1')||0); if(s>=1&&s<=9){ presetSlot=s; matronSend('params:write('+s+')'); document.getElementById('params-status').textContent='saved → PSET slot '+s; } };
   document.getElementById('params-load').onclick=()=>{ const s=+(prompt('load params from PSET slot (1–9)','1')||0); if(s>=1&&s<=9){ presetSlot=s; matronSend('params:read('+s+');params:bang()'); document.getElementById('params-status').textContent='loaded ← PSET slot '+s; setTimeout(refreshParams,400); } };
   // trust-gate modal wiring

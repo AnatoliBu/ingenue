@@ -562,40 +562,59 @@ def _gh_owner_repo(url):
     return (m.group(1), m.group(2)) if m else (None, None)
 
 
+def _gh_default_branch(owner, repo):
+    try:
+        req = urllib.request.Request(f"https://api.github.com/repos/{owner}/{repo}",
+                                     headers={"User-Agent": "ingenue"})
+        with urllib.request.urlopen(req, timeout=6) as r:
+            return json.loads(r.read()).get("default_branch") or "main"
+    except Exception:  # noqa: BLE001
+        return "main"
+
+
 def fetch_readme(url):
     owner, repo = _gh_owner_repo(url)
     if not owner:
-        return {"error": "not a github url"}
+        return {"error": "not a github url", "images": [], "text": "", "has_images": False}
     try:
         req = urllib.request.Request(
             f"https://api.github.com/repos/{owner}/{repo}/readme",
             headers={"User-Agent": "ingenue", "Accept": "application/vnd.github.raw"})
         with urllib.request.urlopen(req, timeout=8) as r:
-            raw_base = r.headers.get("X-Ingenue", "")  # unused; placeholder
             md = r.read().decode("utf-8", "replace")
     except Exception as e:  # noqa: BLE001
-        return {"error": f"no README ({e.__class__.__name__})", "images": [], "text": ""}
-    # raw base for resolving relative image paths (try main then master)
-    base_main = f"https://raw.githubusercontent.com/{owner}/{repo}/main/"
-    imgs = []
-    for m in re.findall(r'!\[[^\]]*\]\(([^)\s]+)', md) + re.findall(r'<img[^>]+src=["\']([^"\']+)', md):
-        u = m.strip()
+        return {"error": f"no README ({e.__class__.__name__})", "images": [], "text": "", "has_images": False}
+    branch = _gh_default_branch(owner, repo)            # resolve master-vs-main so relative images load
+    base = f"https://raw.githubusercontent.com/{owner}/{repo}/{branch}/"
+    raw = []
+    for u in re.findall(r'!\[[^\]]*\]\(([^)\s]+)', md) + re.findall(r'<img[^>]+src=["\']([^"\']+)', md):
+        u = u.strip()
+        if u.startswith("data:"):
+            continue
         if u.startswith("http"):
-            imgs.append(u)
-        elif not u.startswith("data:"):
-            imgs.append(base_main + u.lstrip("./"))
-    # description = first non-heading, non-image prose paragraph
+            # convert github blob/raw page URLs to raw content
+            u = re.sub(r"https?://github\.com/([^/]+/[^/]+)/(?:blob|raw)/",
+                       r"https://raw.githubusercontent.com/\1/", u)
+        else:
+            u = base + u.lstrip("./")
+        raw.append(u)
+    # description = first real prose paragraph
     desc = ""
     for para in re.split(r"\n\s*\n", md):
         s = re.sub(r"`{1,3}", "", para).strip()
         if s and not s.startswith(("#", "!", "<", "|", "-", "*", "[![")) and len(s) > 30:
             desc = re.sub(r"\s+", " ", s)[:600]
             break
-    seen, uniq = set(), []
-    for u in imgs:
-        if u not in seen and re.search(r"\.(png|jpe?g|gif|webp)(\?|$)", u, re.I):
-            seen.add(u); uniq.append(u)
-    return {"owner": owner, "repo": repo, "text": desc, "images": uniq[:12]}
+    seen, imgs = set(), []
+    for u in raw:
+        if u in seen:
+            continue
+        if re.search(r"shields\.io|/badge/|badgen\.net|travis-ci|circleci|githubusercontent\.com/.*\b(badge)\b", u, re.I):
+            continue                                    # drop CI/badges, not real screenshots
+        if re.search(r"\.(png|jpe?g|gif|webp)(\?|$)", u, re.I):
+            seen.add(u); imgs.append(u)
+    return {"owner": owner, "repo": repo, "branch": branch, "text": desc,
+            "images": imgs[:12], "has_images": bool(imgs), "has_readme": bool(md.strip())}
 
 
 class H(http.server.SimpleHTTPRequestHandler):
