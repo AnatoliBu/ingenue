@@ -2117,14 +2117,45 @@ async function loadReadme(card,p){
     slot.innerHTML=h; wireCarousel(slot); return;
   }
   slot.innerHTML='<span class="more-nodemo">loading README…</span>';
-  try{ const j=await (await fetch('api/readme?url='+encodeURIComponent(p.proj),{cache:'no-store'})).json();
-    if(j.error){ slot.innerHTML='<span class="more-nodemo">no README found ('+esc(j.error)+')</span>'; return; }
-    let html='';
-    if(j.text) html+=`<div class="readme-text" style="font-size:12px;color:var(--muted);line-height:1.5;margin:6px 0">${esc(j.text)}</div>`;
-    if(j.images&&j.images.length) html+=carouselHTML(j.images);
-    slot.innerHTML=html||'<span class="more-nodemo">no README details</span>';
-    wireCarousel(slot);
-  }catch(e){ slot.innerHTML='<span class="more-nodemo">README unavailable</span>'; }
+  // Fetch from GitHub in the BROWSER (with the user's token if connected → 5000/hr), not via
+  // the server: the device's shared unauthenticated budget is only 60/hr and exhausts fast,
+  // and the token must never reach the server. Same transport as live discovery.
+  const j=await ghReadme(p.proj);
+  if(j.error){ slot.innerHTML='<span class="more-nodemo">no README found ('+esc(j.error)+')</span>'; return; }
+  let html='';
+  if(j.text) html+=`<div class="readme-text" style="font-size:12px;color:var(--muted);line-height:1.5;margin:6px 0">${esc(j.text)}</div>`;
+  if(j.images&&j.images.length) html+=carouselHTML(j.images);
+  slot.innerHTML=html||'<span class="more-nodemo">no README details</span>';
+  wireCarousel(slot);
+}
+// Read a repo's README straight from the GitHub API in the browser. /readme auto-resolves the
+// file wherever/however it's named; raw images are resolved relative to its download_url.
+async function ghReadme(proj){
+  const m=/github\.com\/([^/]+)\/([^/#?]+)/i.exec(proj||'');
+  if(!m) return {error:'not a github url'};
+  const owner=m[1], repo=m[2].replace(/\.git$/,'');
+  let r;
+  try{ r=await fetch(`https://api.github.com/repos/${owner}/${repo}/readme`,{headers:ghHeaders(),cache:'no-store'}); }
+  catch(_){ return {error:'network'}; }
+  if(!r.ok) return {error:'HTTP '+r.status+(r.status===403?' — rate limit, add a token in settings':'')};
+  let j; try{ j=await r.json(); }catch(_){ return {error:'bad response'}; }
+  let md='';
+  try{ md=new TextDecoder('utf-8').decode(Uint8Array.from(atob((j.content||'').replace(/\s/g,'')),c=>c.charCodeAt(0))); }
+  catch(_){ return {error:'decode'}; }
+  const base=(j.download_url||'').replace(/[^/]*$/,'');     // directory of the README, for relative images
+  const seen=new Set(), imgs=[];
+  const push=u=>{ u=(u||'').trim(); if(!u||u.startsWith('data:')) return;
+    if(/^https?:/i.test(u)) u=u.replace(/https?:\/\/github\.com\/([^/]+\/[^/]+)\/(?:blob|raw)\//i,'https://raw.githubusercontent.com/$1/');
+    else u=base+u.replace(/^\.?\//,'');
+    if(seen.has(u)) return;
+    if(/shields\.io|\/badge\/|badgen\.net|travis-ci|circleci/i.test(u)) return;   // drop CI badges, not screenshots
+    if(/\.(png|jpe?g|gif|webp)(\?|$)/i.test(u)){ seen.add(u); imgs.push(u); } };
+  (md.match(/!\[[^\]]*\]\(([^)\s]+)/g)||[]).forEach(s=>push(s.replace(/^!\[[^\]]*\]\(/,'')));
+  (md.match(/<img[^>]+src=["']([^"']+)/gi)||[]).forEach(s=>push(s.replace(/.*src=["']/i,'')));
+  let text='';
+  for(const para of md.split(/\n\s*\n/)){ const s=para.replace(/`{1,3}/g,'').trim();
+    if(s && !/^[#!<|*-]/.test(s) && !s.startsWith('[![') && s.length>30){ text=s.replace(/\s+/g,' ').slice(0,600); break; } }
+  return {text, images:imgs.slice(0,12)};
 }
 function carouselHTML(imgs){
   const multi=imgs.length>1;
