@@ -7,11 +7,12 @@
 -- install from maiden:
 --   ;install https://github.com/seajaysec/ingenue
 -- then SELECT > ingenue and run this once.
--- it stands up an always-on service and
--- shows you the URL to open in any browser.
+-- it ensures python is present, stands up
+-- an always-on service, and shows you the
+-- URL to open in any browser.
 
-local WEB = _path.code .. "ingenue/web"
 local PORT = 7777
+local DIR = _path.code .. "ingenue"
 local state, ip = "starting…", "?"
 
 local function sh(cmd)
@@ -24,35 +25,24 @@ local function get_ip()
   return r:match("(%d+%.%d+%.%d+%.%d+)") or "your-norns-ip"
 end
 
-local function has(cmd) return sh("command -v "..cmd.." 2>/dev/null") ~= "" end
-
-local function install_service()
-  if not util.file_exists(WEB .. "/server.py") then
-    state = "error: server.py not found"; return
-  end
-  if has("systemctl") then
-    local unit = "/tmp/ingenue.service"
-    local f = io.open(unit, "w")
-    f:write("[Unit]\nDescription=ingenue web editor for norns\nAfter=network.target\n")
-    f:write("[Service]\nType=simple\nWorkingDirectory="..WEB.."\n")
-    f:write("ExecStart=/usr/bin/python3 server.py "..PORT.."\nRestart=always\nRestartSec=3\n")
-    f:write("[Install]\nWantedBy=multi-user.target\n")
-    f:close()
-    -- try with sudo (standard norns), then without (already root, e.g. some ports)
-    os.execute("(sudo -n cp "..unit.." /etc/systemd/system/ || cp "..unit.." /etc/systemd/system/) 2>/dev/null")
-    os.execute("(sudo -n systemctl daemon-reload || systemctl daemon-reload) 2>/dev/null")
-    os.execute("(sudo -n systemctl enable --now ingenue || systemctl enable --now ingenue) 2>/dev/null")
-    os.execute("(sudo -n systemctl restart ingenue || systemctl restart ingenue) 2>/dev/null")
-    state = "installed · always on"
-  else
-    os.execute("pkill -f 'server.py "..PORT.."' 2>/dev/null; (cd "..WEB.." && setsid python3 server.py "..PORT.." >server.log 2>&1 &)")
-    state = "running (add to boot for persistence)"
-  end
+local function run_installer()
+  local script = DIR .. "/install.sh"
+  if not util.file_exists(script) then state = "error: install.sh missing"; return end
+  -- reuse the unified installer: files are already here (NO_FETCH); it ensures python3
+  -- (installing it if the OS lacks it) and sets up the persistent service.
+  local cmd = string.format(
+    "INGENUE_NO_FETCH=1 INGENUE_DUST=%q INGENUE_PORT=%d bash %q >/tmp/ingenue-install.log 2>&1",
+    _path.dust, PORT, script)
+  local rc = os.execute(cmd)
+  if rc == true or rc == 0 then state = "installed · always on :" .. PORT
+  else state = "see /tmp/ingenue-install.log" end
 end
 
 function init()
   ip = get_ip()
-  install_service()
+  state = "installing… (a minute the first time)"
+  redraw()
+  run_installer()
   redraw()
 end
 
@@ -60,7 +50,7 @@ function redraw()
   screen.clear()
   screen.level(15); screen.move(64, 18); screen.font_size(8); screen.text_center("ingenue")
   screen.level(3);  screen.move(64, 30); screen.text_center("web editor for norns")
-  screen.level(15); screen.move(64, 46); screen.text_center("http://"..ip..":"..PORT)
+  screen.level(15); screen.move(64, 46); screen.text_center("http://" .. ip .. ":" .. PORT)
   screen.level(4);  screen.move(64, 58); screen.text_center(state)
   screen.update()
 end
