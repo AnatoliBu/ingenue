@@ -15,13 +15,27 @@ scp web/vendor/sc-plugins-arm64-*.tar.gz <host>:$DEST/vendor/   # bundled 64-bit
 ssh <host> "cd $DEST && python3 -c 'import json;json.load(open(\"community.json\"));json.load(open(\"enriched.json\"));compile(open(\"server.py\").read(),\"s\",\"exec\");print(\"OK\")'"
 ```
 
-## Autostart (on at boot, the norns-native way)
-- Enable **ingenue** in **SYSTEM > MODS** on the device, then restart norns. The mod's
-  `system_post_startup` hook launches the server every boot — portable to any norns.
-- To run it immediately without a restart:
-  ```bash
-  ssh <host> "pkill -f 'server.py 7777'; cd $DEST && nohup setsid python3 server.py 7777 >server.log 2>&1 </dev/null & disown"
-  ```
+## Autostart (persistent systemd service — always on, like matron)
+ingenue is **not** a toggleable mod (that path was unreliable — `setsid` launches got
+reaped, and it showed up confusingly in SYSTEM > MODS). It runs as a persistent service
+that survives reboots and auto-restarts on crash:
+```bash
+ssh <host> "cat > /etc/systemd/system/ingenue.service <<EOF
+[Unit]
+Description=ingenue web editor for norns
+After=network.target
+[Service]
+Type=simple
+WorkingDirectory=$DEST
+ExecStart=/usr/bin/python3 server.py 7777
+Restart=always
+RestartSec=3
+[Install]
+WantedBy=multi-user.target
+EOF
+systemctl daemon-reload && systemctl enable --now ingenue"
+```
+After updating `server.py`: `ssh <host> "systemctl restart ingenue"`.
 
 Then open `http://<device-ip>:7777/`.
 
