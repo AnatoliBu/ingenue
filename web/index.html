@@ -4,8 +4,11 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
 <meta name="theme-color" content="#1D1F21" id="metaTheme" />
-<title>ingenue</title>
-<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='7' fill='%231D1F21'/><circle cx='16' cy='16' r='8.5' fill='none' stroke='%23DEB887' stroke-width='2.6'/><line x1='16' y1='16' x2='16' y2='8.5' stroke='%23CC9999' stroke-width='2.8' stroke-linecap='round'/><circle cx='16' cy='16' r='1.7' fill='%23DEB887'/></svg>" />
+<title>ingenue · norns</title>
+<link rel="icon" href="favicon-32.png" sizes="32x32" type="image/png" />
+<link rel="icon" href="favicon.svg" type="image/svg+xml" />
+<link rel="apple-touch-icon" href="favicon-180.png" />
+<link rel="mask-icon" href="favicon.svg" color="#DEB887" />
 
 <!-- Ace editor (maiden's real editor component) -->
 <script src="https://cdn.jsdelivr.net/npm/ace-builds@1.32.6/src-min-noconflict/ace.js"></script>
@@ -792,8 +795,9 @@ button{font-family:inherit}
 </div>
 
 <script>
-const BUILD='b41 · 2026-06-04 · ingenue branding (title+favicon) + browser param presets + JSON export/import';
+const BUILD='b42 · 2026-06-04 · real favicon files (Safari) + title ingenue·norns';
 console.log('%cingenue build: '+BUILD,'color:#DEB887;font-weight:bold');
+try{ document.title='ingenue · norns'; }catch(e){}   // force-correct any stale tab title
 const LS={
   get(k,d){try{const v=localStorage.getItem('maiden.'+k);return v==null?d:JSON.parse(v);}catch(e){return d;}},
   set(k,v){try{localStorage.setItem('maiden.'+k,JSON.stringify(v));}catch(e){}}
