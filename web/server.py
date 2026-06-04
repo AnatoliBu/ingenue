@@ -25,14 +25,18 @@ def find_dust():
     env = os.environ.get("INGENUE_DUST")
     if env and os.path.isdir(os.path.join(env, "code")):
         return os.path.realpath(env)
-    up = os.path.realpath(os.path.join(HERE, "..", ".."))      # dust/code/ingenue -> dust
-    if os.path.isdir(os.path.join(up, "code")):
-        return up
-    for d in (os.path.expanduser("~/dust"), "/home/we/dust",
-              "/storage/roms/ports/norns/data/dust"):
-        if os.path.isdir(os.path.join(d, "code")):
+    # climb parents looking for the dust signature (a dir with code/ AND audio/) —
+    # works whether we live at dust/code/ingenue/ (installer) or dust/code/ingenue/web/ (;install)
+    d = HERE
+    for _ in range(6):
+        if os.path.isdir(os.path.join(d, "code")) and os.path.isdir(os.path.join(d, "audio")):
             return os.path.realpath(d)
-    return up
+        d = os.path.dirname(d)
+    for cand in (os.path.expanduser("~/dust"), "/home/we/dust",
+                 "/storage/roms/ports/norns/data/dust"):
+        if os.path.isdir(os.path.join(cand, "code")):
+            return os.path.realpath(cand)
+    return os.path.realpath(os.path.join(HERE, "..", ".."))
 
 
 DUST = find_dust()

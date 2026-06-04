@@ -175,6 +175,13 @@ button{font-family:inherit}
 .rd-filtertoggle{display:none;border:1px solid var(--trim);background:var(--panel);color:var(--fg);font-size:13px;padding:7px 12px;border-radius:9px;cursor:pointer;align-items:center;gap:6px;white-space:nowrap}
 .rd-filtertoggle .fct{background:var(--accent,#8af);color:#000;border-radius:9px;padding:0 6px;font-size:11px}
 .rd-pill-btn.on{border-color:var(--accent);color:var(--accent)}
+#upload-toast{position:fixed;bottom:16px;left:50%;transform:translate(-50%,20px);z-index:300;background:var(--panel2);
+  border:1px solid var(--trim);border-radius:12px;padding:9px 15px;font-size:13px;color:var(--fg);box-shadow:0 8px 30px rgba(0,0,0,.35);
+  opacity:0;pointer-events:none;transition:opacity .2s ease,transform .2s ease;max-width:min(420px,92vw)}
+#upload-toast.show{opacity:1;transform:translate(-50%,0)}
+#upload-toast .ub{height:3px;border-radius:2px;background:var(--trim);margin-top:7px;overflow:hidden}
+#upload-toast .uf{height:100%;background:var(--accent);transition:width .2s ease}
+@container (max-width:640px){ #upload-toast{left:8px;right:8px;bottom:70px;transform:translateY(20px);max-width:none;text-align:center} #upload-toast.show{transform:translateY(0)} }
 .rd-sort{appearance:none;-webkit-appearance:none;border:1px solid var(--trim);background:var(--panel);color:var(--fg);
   font:inherit;font-size:13px;padding:7px 26px 7px 12px;border-radius:9px;cursor:pointer;white-space:nowrap;
   background-image:linear-gradient(45deg,transparent 50%,var(--muted) 50%),linear-gradient(135deg,var(--muted) 50%,transparent 50%);
@@ -644,6 +651,11 @@ button{font-family:inherit}
          <div class="cfg-row" id="audio-row" style="display:none"><span class="k">audio server</span>
            <span class="v" id="audio-state" style="width:auto;flex:1;font-family:inherit">checking…</span>
            <button class="rd-pill-btn" id="audio-restart" style="display:none;margin:0">restart audio</button></div>
+
+         <div class="cfg-foot" style="margin-top:24px;padding-top:14px;border-top:1px solid var(--trim);display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;font-size:12px;color:var(--muted)">
+           <span>ingenue — a modern editor for norns</span>
+           <a href="https://github.com/seajaysec/ingenue" target="_blank" rel="noopener" style="color:var(--accent);text-decoration:none">github.com/seajaysec/ingenue ↗</a>
+         </div>
        </div>
      </div>
    </div>
@@ -767,7 +779,7 @@ button{font-family:inherit}
 </div>
 
 <script>
-const BUILD='b36 · 2026-06-03 · mods toggle/checkbox polish + wide-range number entry (B11)';
+const BUILD='b38 · 2026-06-03 · upload toast · ;install · repo link in config';
 console.log('%cmaiden redesign build: '+BUILD,'color:#DEB887;font-weight:bold');
 const LS={
   get(k,d){try{const v=localStorage.getItem('maiden.'+k);return v==null?d:JSON.parse(v);}catch(e){return d;}},
@@ -1723,7 +1735,9 @@ let _discLoaded=false, _discQuery='', _discPage=1, _discTotal=0, discHideKnown=t
 const DISC_PER=24;
 // never surface these — norns infra / lists / hardware, not installable scripts
 const GH_BLOCK=new Set(['monome/norns','monome/norns-shield','okyeron/shieldxl','p3r7/awesome-monome-norns',
-  'monome/norns-image','monome/dust','monome/norns-community','figrhed/norns-on-raspberry-pi','jguzak/shieldxl_battery']);
+  'monome/norns-image','monome/dust','monome/norns-community','figrhed/norns-on-raspberry-pi','jguzak/shieldxl_battery',
+  'seajaysec/ingenue']);   // you're literally in ingenue — no need to surface it
+const GH_BLOCK_NAMES=new Set(['ingenue']);   // also hide any repo named exactly "ingenue"
 let GH_LOGIN=null;
 function ghHeaders(){ const h={'Accept':'application/vnd.github+json'}; const g=LS.get('gh',{})||{}; if(g.t) h['Authorization']='token '+g.t; return h; }
 async function ghWhoami(){ if(GH_LOGIN) return GH_LOGIN; try{ const r=await fetch('https://api.github.com/user',{headers:ghHeaders()}); if(r.ok) GH_LOGIN=(await r.json()).login; }catch(_){ } return GH_LOGIN; }
@@ -1752,7 +1766,7 @@ async function ghSearch(query,page){
     const j=await r.json();
     _discTotal=Math.min(j.total_count||0,1000);   // GitHub caps search at 1000 results
     const me=GH_LOGIN, comm=new Set(REPO.available.filter(p=>p.srcs.includes('community')).map(p=>p.n.toLowerCase()));
-    let items=(j.items||[]).filter(it=>it.owner && !GH_BLOCK.has((it.owner.login+'/'+it.name).toLowerCase()));
+    let items=(j.items||[]).filter(it=>it.owner && !GH_BLOCK.has((it.owner.login+'/'+it.name).toLowerCase()) && !GH_BLOCK_NAMES.has((it.name||'').toLowerCase()));
     // validate structure (top-level .lua) before showing — drop non-scripts upstream
     const checks=await Promise.all(items.map(it=>validNorns(it.owner.login,it.name)));
     items=items.filter((it,i)=>checks[i]);
@@ -2150,15 +2164,20 @@ function deleteSelected(){
     if(HAS_BACKEND){ for(const nm of names){ await fvApi('rm',{path:fvRel(nm)}); } fvSel.clear(); fvReload(); }
     else { node.children=(node.children||[]).filter(c=>!fvSel.has(c.name)); fvSel.clear(); renderFiles(); } },true);
 }
+function uploadToast(html,done){
+  let t=document.getElementById('upload-toast');
+  if(!t){ t=document.createElement('div'); t.id='upload-toast'; (document.getElementById('device')||document.body).appendChild(t); }
+  t.innerHTML=html; t.classList.add('show');
+  if(done){ clearTimeout(t._h); t._h=setTimeout(()=>t.classList.remove('show'),2400); }
+}
 async function realUpload(fileList){
-  const files=[...fileList]; if(!files.length) return;
-  const prog=document.getElementById('fv-prog');
+  const files=[...fileList]; if(!files.length) return; let okc=0;
   for(let i=0;i<files.length;i++){ const f=files[i]; const rel=f.webkitRelativePath||f.name;
-    if(prog){ prog.classList.add('show'); prog.innerHTML=`<div class="pt"><span class="ispin"></span> uploading ${i+1}/${files.length}: ${esc(f.name)}</div><div class="pbar"><div class="pfill" style="width:${Math.round((i/files.length)*100)}%"></div></div>`; }
+    uploadToast(`↑ uploading <b>${i+1}/${files.length}</b> · ${esc(f.name)}<div class="ub"><div class="uf" style="width:${Math.round((i/files.length)*100)}%"></div></div>`);
     try{ const buf=await f.arrayBuffer();
-      await fetch('api/write?path='+encodeURIComponent(fvRel(rel)),{method:'PUT',headers:{'Content-Type':'application/octet-stream'},body:buf}); }catch(_){ }
+      const r=await fetch('api/write?path='+encodeURIComponent(fvRel(rel)),{method:'PUT',headers:{'Content-Type':'application/octet-stream'},body:buf}); if(r.ok) okc++; }catch(_){ }
   }
-  if(prog) prog.classList.remove('show');
+  uploadToast(`✓ uploaded <b>${okc}</b> file${okc!==1?'s':''}${okc<files.length?` · ${files.length-okc} failed`:''}`, true);
   fvReload();
 }
 /* one upload path for files AND folders (+ multiple of each). items: [{name,size,rel}] */
