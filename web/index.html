@@ -41,9 +41,11 @@ button{font-family:inherit}
   background:var(--bg);border:1px solid var(--trim);border-radius:10px;box-shadow:0 14px 44px rgba(0,0,0,.3);overflow:hidden;
   container-type:inline-size;position:relative;transition:max-width .25s ease,height .25s ease}
 @media(max-width:760px){
-  .stage{padding:0}
+  .stage{padding:0;height:100dvh}
   .sim-bar{display:none}                       /* dev-only chrome; full screen to the app on phones */
-  .device{height:100dvh;border:0;border-radius:0;box-shadow:none;max-width:100%}
+  /* full viewport on a real phone — clear the desktop-preview 96px clamp that left the
+     stage background showing through the bottom of the screen */
+  .device{height:100dvh;max-height:100dvh;border:0;border-radius:0;box-shadow:none;max-width:100%}
 }
 
 /* ===================== maiden ===================== */
@@ -185,6 +187,8 @@ button{font-family:inherit}
 .rd-pill-btn{border:1px solid var(--trim);background:var(--panel);color:var(--fg);font-size:13px;padding:7px 12px;
   border-radius:9px;cursor:pointer;display:inline-flex;align-items:center;gap:7px;white-space:nowrap}
 .rd-pill-btn svg{width:14px;height:14px;fill:currentColor}
+.rd-filtertoggle{display:none;border:1px solid var(--trim);background:var(--panel);color:var(--fg);font-size:13px;padding:7px 12px;border-radius:9px;cursor:pointer;align-items:center;gap:6px;white-space:nowrap}
+.rd-filtertoggle .fct{background:var(--accent,#8af);color:#000;border-radius:9px;padding:0 6px;font-size:11px}
 .rd-sort{appearance:none;-webkit-appearance:none;border:1px solid var(--trim);background:var(--panel);color:var(--fg);
   font:inherit;font-size:13px;padding:7px 26px 7px 12px;border-radius:9px;cursor:pointer;white-space:nowrap;
   background-image:linear-gradient(45deg,transparent 50%,var(--muted) 50%),linear-gradient(135deg,var(--muted) 50%,transparent 50%);
@@ -468,6 +472,10 @@ button{font-family:inherit}
   .rd-toolbar{flex-wrap:wrap;padding:7px 12px}
   .rd-search{flex-basis:100%;order:-1}
   .rd-pill-btn{flex:1;justify-content:center}
+  /* phone: src + tag filter bars collapse behind a "filters" toggle to save vertical space */
+  .rd-filtertoggle{display:inline-flex}
+  .rd-filters{display:none}
+  .rd-filters.open{display:block;border-top:1px solid var(--trim)}
   .card .head{flex-direction:column}.act-row{width:100%}.act-row .btn{flex:1;text-align:center}
   .theme-grid{grid-template-columns:repeat(auto-fill,minmax(108px,1fr))}
   /* config becomes a full-screen sheet — never floats or clips */
@@ -522,6 +530,8 @@ button{font-family:inherit}
        <button class="act on" id="a-files" title="toggle file viewer"><svg viewBox="0 0 32 32"><path d="M28.681 7.159c-.694-.947-1.662-2.053-2.724-3.116s-2.169-2.030-3.116-2.724c-1.612-1.182-2.393-1.319-2.841-1.319h-15.5c-1.378 0-2.5 1.121-2.5 2.5v27c0 1.378 1.122 2.5 2.5 2.5h23c1.378 0 2.5-1.122 2.5-2.5v-19.5c0-.448-.137-1.23-1.319-2.841zM24.543 5.457c.959.959 1.712 1.825 2.268 2.543h-4.811v-4.811c.718.556 1.584 1.309 2.543 2.268zM28 29.5c0 .271-.229.5-.5.5h-23c-.271 0-.5-.229-.5-.5v-27c0-.271.229-.5.5-.5 0 0 15.499-0 15.5 0v7c0 .552.448 1 1 1h7v19.5zM23 26h-14c-.552 0-1-.448-1-1s.448-1 1-1h14c.552 0 1 .448 1 1s-.448 1-1 1zM23 22h-14c-.552 0-1-.448-1-1s.448-1 1-1h14c.552 0 1 .448 1 1s-.448 1-1 1zM23 18h-14c-.552 0-1-.448-1-1s.448-1 1-1h14c.552 0 1 .448 1 1s-.448 1-1 1z"/></svg></button>
        <button class="act" id="a-repl" title="toggle repl"><svg viewBox="0 0 32 32"><path d="M0 2v28h32v-28h-32zM30 28h-28v-24h28v24zM28 6h-24v20h24v-20zM14 16h-2v2h-2v2h-2v-2h2v-2h2v-2h-2v-2h-2v-2h2v2h2v2h2v2zM22 20h-6v-2h6v2z"/></svg></button>
        <button class="act" id="a-proj" title="project / repository manager"><svg viewBox="0 0 32 32"><path d="M7 4h-6c-.55 0-1 .45-1 1v22c0 .55.45 1 1 1h6c.55 0 1-.45 1-1v-22c0-.55-.45-1-1-1zM6 10h-4v-2h4v2zM17 4h-6c-.55 0-1 .45-1 1v22c0 .55.45 1 1 1h6c.55 0 1-.45 1-1v-22c0-.55-.45-1-1-1zM16 10h-4v-2h4v2zM23.909 5.546l-5.358 2.7c-.491.247-.691.852-.443 1.343l8.999 17.861c.247.491.852.691 1.343.443l5.358-2.7c.491-.247.691-.852.443-1.343l-8.999-17.861c-.247-.491-.852-.691-1.343-.443z"/></svg></button>
+       <button class="act" id="a-params" title="live params editor"><svg viewBox="0 0 32 32"><path d="M0 6h18v2h-18zM26 4h2v6h-2zM22 6h10v2h-10zM0 14h8v2h-8zM12 12h2v6h-2zM12 14h20v2h-20zM0 22h22v2h-22zM30 20h2v6h-2zM26 22h6v2h-6z"/></svg></button>
+       <button class="act" id="a-mods" title="mods — enable / disable"><svg viewBox="0 0 32 32"><path d="M16 1l15 8.5v13L16 31 1 22.5v-13zM16 4.3L5 10.5 16 16.7l11-6.2zM4 13v8l11 6.2v-8zM28 13l-11 6.2v8L28 21z"/></svg></button>
        <button class="act grow" id="a-help" title="help"><svg viewBox="0 0 32 32"><path d="M14 24h4v4h-4zM22.667 11.333c0-3.682-2.985-6.667-6.667-6.667s-6.667 2.985-6.667 6.667h4c0-1.473 1.194-2.667 2.667-2.667s2.667 1.194 2.667 2.667c0 1.473-1.146 1.871-2.319 3.044-1.115 1.115-1.681 2.292-1.681 4.623v.667h4c0-2.667.099-2.948 1.681-4.623 1.262-1.34 2.319-2.477 2.319-4.041z"/></svg></button>
        <button class="act" id="a-cfg" title="configuration"><svg viewBox="0 0 32 32"><path d="M29.181 19.070c-1.679-2.908-.669-6.634 2.255-8.328l-3.145-5.447c-.898.527-1.943.829-3.058.829-3.361 0-6.085-2.742-6.085-6.125h-6.289c.008 1.044-.252 2.103-.811 3.070-1.679 2.908-5.411 3.897-8.339 2.211l-3.144 5.447c.905.515 1.689 1.268 2.246 2.234 1.676 2.903.672 6.623-2.241 8.319l3.145 5.447c.895-.522 1.935-.82 3.044-.82 3.35 0 6.067 2.725 6.084 6.092h6.289c-.003-1.034.259-2.080.811-3.038 1.676-2.903 5.399-3.894 8.325-2.219l3.145-5.447c-.899-.515-1.678-1.266-2.232-2.226zM16 22.479c-3.578 0-6.479-2.901-6.479-6.479s2.901-6.479 6.479-6.479c3.578 0 6.479 2.901 6.479 6.479s-2.901 6.479-6.479 6.479z"/></svg></button>
      </div>
@@ -572,6 +582,8 @@ button{font-family:inherit}
      <button class="mtab on" data-mv="edit"><svg viewBox="0 0 32 32"><path d="M27 0c2.761 0 5 2.239 5 5 0 1.126-.372 2.164-1 3l-2 2-7-7 2-2c.836-.628 1.874-1 3-1zM2 23l-2 9 9-2 18.5-18.5-7-7-18.5 18.5zM22.362 11.362l-14 14-1.724-1.724 14-14 1.724 1.724z"/></svg>editor</button>
      <button class="mtab" data-mv="repl"><svg viewBox="0 0 32 32"><path d="M0 2v28h32v-28h-32zM30 28h-28v-24h28v24zM28 6h-24v20h24v-20zM14 16h-2v2h-2v2h-2v-2h2v-2h2v-2h-2v-2h-2v-2h2v2h2v2h2v2zM22 20h-6v-2h6v2z"/></svg>repl</button>
      <button class="mtab" data-mv="repo"><svg viewBox="0 0 32 32"><path d="M7 4h-6c-.55 0-1 .45-1 1v22c0 .55.45 1 1 1h6c.55 0 1-.45 1-1v-22c0-.55-.45-1-1-1zM23.909 5.546l-5.358 2.7c-.491.247-.691.852-.443 1.343l8.999 17.861c.247.491.852.691 1.343.443l5.358-2.7c.491-.247.691-.852.443-1.343l-8.999-17.861c-.247-.491-.852-.691-1.343-.443z"/></svg>scripts</button>
+     <button class="mtab" data-mv="params"><svg viewBox="0 0 32 32"><path d="M0 6h18v2h-18zM26 4h2v6h-2zM22 6h10v2h-10zM0 14h8v2h-8zM12 12h2v6h-2zM12 14h20v2h-20zM0 22h22v2h-22zM30 20h2v6h-2zM26 22h6v2h-6z"/></svg>params</button>
+     <button class="mtab" data-mv="mods"><svg viewBox="0 0 32 32"><path d="M16 1l15 8.5v13L16 31 1 22.5v-13zM16 4.3L5 10.5 16 16.7l11-6.2zM4 13v8l11 6.2v-8zM28 13l-11 6.2v8L28 21z"/></svg>mods</button>
    </div>
 
    <!-- config modal -->
@@ -608,13 +620,18 @@ button{font-family:inherit}
          <div class="cfg-row" id="audio-row" style="display:none"><span class="k">audio server</span>
            <span class="v" id="audio-state" style="width:auto;flex:1;font-family:inherit">checking…</span>
            <button class="rd-pill-btn" id="audio-restart" style="display:none;margin:0">restart audio</button></div>
-         <div id="mods-box" style="display:none">
-           <div class="cfg-row"><span class="k">mods</span><span class="v" id="mods-hint" style="width:auto;flex:1;font-family:inherit;color:var(--faint)">enable/disable norns mods — restart norns after enabling</span></div>
-           <div id="mods-list" style="margin-bottom:6px"></div>
-         </div>
-         <div class="cfg-row" id="params-row" style="display:none"><span class="k">parameters</span>
-           <button class="rd-pill-btn" id="open-params" style="margin:0">open live PARAMS editor →</button>
-           <span class="v" style="width:auto;color:var(--faint);font-family:inherit">edit the running script's params live; presets; MIDI-learn</span></div>
+       </div>
+     </div>
+   </div>
+
+   <!-- B8: mods manager (own view) -->
+   <div class="overlay" id="mods-overlay">
+     <div class="modal">
+       <div class="modal-head"><div class="t">mods</div><button class="x" id="mods-close">✕</button></div>
+       <div class="modal-body">
+         <p class="trust-msg">Enable or disable norns mods. Mods load at startup — <b>restart norns</b> after enabling one.</p>
+         <div id="mods-list" style="margin-top:8px"></div>
+         <div id="mods-empty" style="display:none;color:var(--faint);font-size:13px;margin-top:8px">no mods installed (scripts with a <span class="mono">lib/mod.lua</span>).</div>
        </div>
      </div>
    </div>
@@ -753,7 +770,7 @@ button{font-family:inherit}
 </div>
 
 <script>
-const BUILD='b26 · 2026-06-03 · B5 readme · B6 tags · B7 feed · sysinfo';
+const BUILD='b27 · 2026-06-03 · mods/params nav icons · phone render fix · filter dropdown';
 console.log('%cmaiden redesign build: '+BUILD,'color:#DEB887;font-weight:bold');
 const LS={
   get(k,d){try{const v=localStorage.getItem('maiden.'+k);return v==null?d:JSON.parse(v);}catch(e){return d;}},
@@ -1030,14 +1047,15 @@ function renderAudio(a){
     catch(e){ st.textContent=e.message; } btn.disabled=false; btn.textContent='restart audio'; };
 }
 
-/* ===== B8 mods manager (config) ===== */
-async function renderMods(){ try{ const r=await fetch('api/mods',{cache:'no-store'}); if(!r.ok) return; paintMods((await r.json()).mods); }catch(_){ } }
+/* ===== B8 mods manager (own overlay) ===== */
+function openMods(){ document.getElementById('mods-overlay').classList.add('on'); renderMods(); }
+async function renderMods(){ try{ const r=await fetch('api/mods',{cache:'no-store'}); if(!r.ok){ paintMods(null); return; } paintMods((await r.json()).mods); }catch(_){ paintMods(null); } }
 function paintMods(mods){
-  const box=document.getElementById('mods-box'), list=document.getElementById('mods-list');
-  if(!mods||!mods.length){ box.style.display='none'; return; }
-  box.style.display=''; document.getElementById('dev-sec').style.display='';
-  list.innerHTML=mods.map(m=>`<div class="cfg-row"><span class="k" style="font-family:inherit">${m.name}${m.self?' <span style="color:var(--faint)">(ingenue itself)</span>':''}</span>
-    <button class="rd-pill-btn modtog" data-mod="${m.name}" data-on="${m.enabled?1:0}" style="margin:0;min-width:84px;${m.enabled?'border-color:var(--ok,#5c5)':''}">${m.enabled?'✓ enabled':'disabled'}</button></div>`).join('');
+  const list=document.getElementById('mods-list'), empty=document.getElementById('mods-empty');
+  if(!mods||!mods.length){ list.innerHTML=''; if(empty) empty.style.display=''; return; }
+  if(empty) empty.style.display='none';
+  list.innerHTML=mods.map(m=>`<div class="cfg-row"><span class="k" style="font-family:inherit">${m.name}</span>
+    <button class="rd-pill-btn modtog" data-mod="${m.name}" data-on="${m.enabled?1:0}" style="margin:0;min-width:90px;${m.enabled?'border-color:var(--ok,#5c5)':''}">${m.enabled?'✓ enabled':'disabled'}</button></div>`).join('');
   list.querySelectorAll('.modtog').forEach(b=>b.onclick=async()=>{
     const name=b.dataset.mod, on=b.dataset.on!=='1';
     b.disabled=true;
@@ -1316,7 +1334,7 @@ function sortCmp(a,b){
 function knownNames(){ const s=new Set(); REPO.installed.forEach(p=>s.add(p.n.toLowerCase()));
   REPO.available.forEach(p=>{ if(p.srcs.includes('community')) s.add(p.n.toLowerCase()); }); return s; }
 /* ===== B6: tag filter facet + dynamic "additional voice" (nb) tag ===== */
-let tagFilter=new Set();
+let tagFilter=new Set(), filtersOpen=false;
 const NB_TAG='additional voice';
 function isNbVoice(p){ if(p.nb) return true; const t=(p.tags||[]).map(x=>String(x).toLowerCase());
   return t.includes('nb')||t.includes('n.b.')||/\bnb\b|note ?bridge|nb_|nb\//i.test(((p.d||'')+' '+(p.n||''))); }
@@ -1749,7 +1767,8 @@ function renderRepo(){
       <div class="rd-toolbar">
         <label class="rd-search"><svg viewBox="0 0 32 32"><path d="${I.search}"/></svg><input id="rd-q" placeholder="${ph}"></label>
         ${sortSel}${allBtn}
-      </div>${tab==='installed'?'':srcBar(tab)}${tab!=='discover'?tagBar(tab):''}</div>
+        ${tab!=='discover'?`<button class="rd-filtertoggle" id="rd-filttog">⚲ filters${(srcFilter.size<SRC_ORDER.length||tagFilter.size)?' <span class="fct">'+(tagFilter.size+(SRC_ORDER.length-srcFilter.size))+'</span>':''}</button>`:''}
+      </div><div class="rd-filters${filtersOpen?' open':''}" id="rd-filters">${tab==='installed'?'':srcBar(tab)}${tab!=='discover'?tagBar(tab):''}</div></div>
     <div class="rd-scroll"><div>${head}<div class="rd-grid">${list.map(p=>repoCard(p,tab)).join('')||`<div class="gh-empty"><p>nothing here yet.</p></div>`}</div>${pager}</div></div>
     <div class="bulkbar" id="bulkbar"></div>`;
   v.querySelectorAll('[data-rt]').forEach(b=>b.onclick=()=>{repoTab=b.dataset.rt;repoQuery='';selection.clear();renderRepo();});
@@ -1762,6 +1781,7 @@ function renderRepo(){
   });
   v.querySelectorAll('[data-tag]').forEach(c=>c.onclick=()=>{ const t=c.dataset.tag; tagFilter.has(t)?tagFilter.delete(t):tagFilter.add(t); renderRepo(); });
   v.querySelectorAll('[data-tagclear]').forEach(c=>c.onclick=()=>{ tagFilter.clear(); renderRepo(); });
+  const ft=document.getElementById('rd-filttog'); if(ft) ft.onclick=()=>{ filtersOpen=!filtersOpen; const f=document.getElementById('rd-filters'); if(f) f.classList.toggle('open',filtersOpen); };
   v.querySelectorAll('[data-addsrc]').forEach(c=>c.onclick=openCfg);
   const q=document.getElementById('rd-q');
   if(q){
@@ -1799,6 +1819,8 @@ function showFiles(){document.getElementById('main').style.display='none';docume
 const maiden=document.getElementById('maiden');
 function setMobileView(v){
   maiden.classList.remove('drawer-open');
+  if(v==='mods'){ openMods(); return; }        // overlays — don't change the underlying tab highlight
+  if(v==='params'){ openParams(); return; }
   if(v==='repo'){ showRepo(); }
   else if(v==='files'){ showFiles(); }
   else { showMain(); maiden.dataset.view=v; }
@@ -2027,8 +2049,7 @@ function renderSrc(){
   });
 }
 function openCfg(){ buildThemeGrid(document.getElementById('theme-filter').value); renderGh(); renderSrc();
-  initSysInfo(); initAudioHealth(); renderMods();           // refresh device section (no-op off-device)
-  if(HAS_BACKEND||matronReady){ document.getElementById('dev-sec').style.display=''; document.getElementById('params-row').style.display=''; }
+  initSysInfo(); initAudioHealth();                          // device-info section (no-op off-device)
   document.getElementById('overlay').classList.add('on'); }
 function closeCfg(){ document.getElementById('overlay').classList.remove('on'); }
 
@@ -2095,7 +2116,7 @@ function boot(){
   document.getElementById('a-help').onclick=helpOpen;
   document.getElementById('help-close').onclick=()=>document.getElementById('help-overlay').classList.remove('on');
   document.getElementById('help-overlay').addEventListener('click',e=>{if(e.target.id==='help-overlay')e.currentTarget.classList.remove('on');});
-  document.getElementById('m-menu').onclick=()=>maiden.classList.add('drawer-open');
+  document.getElementById('m-menu').onclick=showFiles;       // unified: the file icon opens the dedicated Files browser (inline tree is editor-only, via the tab tree toggle)
   document.getElementById('scrim').onclick=()=>maiden.classList.remove('drawer-open');
   document.querySelectorAll('.mtab').forEach(t=>t.onclick=()=>setMobileView(t.dataset.mv));
   // config
@@ -2146,8 +2167,12 @@ function boot(){
   document.getElementById('scp-skip').onclick=()=>document.getElementById('scp-overlay').classList.remove('on');
   document.getElementById('scp-overlay').addEventListener('click',e=>{if(e.target.id==='scp-overlay')e.currentTarget.classList.remove('on');});
   document.getElementById('scp-go').onclick=runScpHeal;
+  // mods + params now have their own nav icons (out of config)
+  document.getElementById('a-params').onclick=openParams;
+  document.getElementById('a-mods').onclick=openMods;
+  document.getElementById('mods-close').onclick=()=>document.getElementById('mods-overlay').classList.remove('on');
+  document.getElementById('mods-overlay').addEventListener('click',e=>{if(e.target.id==='mods-overlay')e.currentTarget.classList.remove('on');});
   // B9 params editor wiring
-  document.getElementById('open-params').onclick=openParams;
   document.getElementById('params-close').onclick=()=>document.getElementById('params-overlay').classList.remove('on');
   document.getElementById('params-overlay').addEventListener('click',e=>{if(e.target.id==='params-overlay')e.currentTarget.classList.remove('on');});
   document.getElementById('params-refresh').onclick=refreshParams;

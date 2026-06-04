@@ -528,10 +528,10 @@ def list_mods():
     enabled = set(read_enabled_mods())
     out = []
     for name in sorted(os.listdir(CODE)):
-        if name.startswith("."):
+        if name.startswith(".") or name == "ingenue":      # ingenue is always-on infra (systemd service), never a toggleable mod
             continue
         if os.path.isfile(os.path.join(CODE, name, "lib", "mod.lua")):
-            out.append({"name": name, "enabled": name in enabled, "self": name == "ingenue"})
+            out.append({"name": name, "enabled": name in enabled})
     return {"mods": out, "enabled": sorted(enabled),
             "state_file": os.path.relpath(mods_state_file(), DUST)}
 
