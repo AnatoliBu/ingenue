@@ -69,9 +69,11 @@ PanicOS ships a *half-implemented* state: PortedPlugins `.sc` **classes** presen
 
 > **Shipped b25–b26:** B5 (README + carousel), B6 (tag filter + nb "additional voice"),
 > B7 (ingenue consumes a nightly `feed.json` — scraper-side generator still TODO in nornslist),
-> B8 (mods manager), B9 (live params + presets + Web-MIDI), B10 (audio health + restart),
-> plus live REPL/files/editor-save and device info. Remaining live-wiring: file-browser
-> *write* ops (mkdir/rename/delete/upload still mock), and the nornslist feed generator.
+> B8 (mods manager), B9 (live params + presets), B10 (audio health + restart), plus live
+> REPL/files/editor-save, device info, and **live file-browser write ops** (mkdir / rename /
+> delete / upload — real `/api/mkdir`,`/api/rename`,`/api/rm`,`/api/write`). B11 (wide-range
+> param number-entry) done. Remaining: per-dep trust-gating in the recursive heal, and the
+> nornslist-side feed generator (the scraper emitting the nightly `feed.json` ingenue consumes).
 
 - **B4 — Patches & dependency handling.** ✅ **Shipped (b20–b23).** Dependency analyzer
   (`/api/deps`, by name for installed or by url via shallow clone for un-installed) detects

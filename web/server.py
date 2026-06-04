@@ -691,7 +691,8 @@ class H(http.server.SimpleHTTPRequestHandler):
             return self._json({"error": "not found"}, 404)
         try:
             full = safe(self._q().get("path", [""])[0])
-            data = self._body().get("_raw", b"")
+            n = int(self.headers.get("Content-Length", 0))      # raw body verbatim (don't json-parse — files may be JSON/binary)
+            data = self.rfile.read(n) if n else b""
             os.makedirs(os.path.dirname(full), exist_ok=True)
             with open(full, "wb") as f:
                 f.write(data)
@@ -717,6 +718,29 @@ class H(http.server.SimpleHTTPRequestHandler):
                 return self._json(audio_restart())
             if path == "/api/mods/toggle":
                 return self._json(toggle_mod(b.get("name"), bool(b.get("on"))))
+            if path == "/api/mkdir":
+                full = safe(b.get("path", ""))
+                os.makedirs(full, exist_ok=True)
+                return self._json({"ok": True})
+            if path == "/api/rename":
+                src = safe(b.get("from", "")); dst = safe(b.get("to", ""))
+                if not os.path.exists(src):
+                    return self._json({"error": "source not found"}, 404)
+                if os.path.exists(dst):
+                    return self._json({"error": "target already exists"}, 409)
+                os.rename(src, dst)
+                return self._json({"ok": True})
+            if path == "/api/rm":
+                full = safe(b.get("path", ""))
+                if full == os.path.realpath(DUST):
+                    return self._json({"error": "refusing to delete the dust root"}, 400)
+                if os.path.isdir(full):
+                    shutil.rmtree(full)
+                elif os.path.isfile(full):
+                    os.remove(full)
+                else:
+                    return self._json({"error": "not found"}, 404)
+                return self._json({"ok": True})
             if path == "/api/heal":
                 full, name = safe_script_dir(b.get("name"))
                 inst = os.path.join(full, "lib", "install.sh")

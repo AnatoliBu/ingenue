@@ -346,8 +346,9 @@ button{font-family:inherit}
 .paramsview,.modsview{flex:1;min-width:0;min-height:0;display:none;flex-direction:column;background:var(--bg);container-type:inline-size}
 .paramsview.on,.modsview.on{display:flex}
 .modsview .rd-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:12px;padding:10px 12px}
-.modsview .mods-toggle{border:1px solid var(--trim);background:var(--panel);color:var(--fg);border-radius:8px;padding:6px 12px;font:inherit;font-size:12px;cursor:pointer}
-.modsview .mods-toggle.on{border-color:var(--ok,#5c5);color:var(--ok,#5c5)}
+.modsview .mods-toggle{border:1px solid var(--accent);background:color-mix(in srgb,var(--accent) 12%,transparent);color:var(--accent);border-radius:8px;padding:6px 12px;font:inherit;font-size:12px;cursor:pointer;white-space:nowrap}
+.modsview .mods-toggle.on{border-color:var(--ok,#5c5);color:var(--ok,#5c5);background:color-mix(in srgb,var(--ok,#5c5) 12%,transparent)}
+.modsview .csel{display:none}   /* mods aren't bulk-installed — hide the select checkbox */
 .pv-top{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:10px 14px;border-bottom:1px solid var(--trim);background:var(--panel2)}
 .pv-title{font-weight:600;font-size:14px;margin-right:6px}
 .pv-scroll{flex:1;min-height:0;overflow:auto}
@@ -369,6 +370,7 @@ button{font-family:inherit}
 .psel{background:var(--panel);color:var(--fg);border:1px solid var(--trim);border-radius:7px;padding:4px 8px;font:inherit;font-size:12px;min-width:130px;cursor:pointer}
 .pbtn{background:var(--panel);color:var(--fg);border:1px solid var(--trim);border-radius:7px;padding:4px 14px;font:inherit;font-size:12px;cursor:pointer}
 .pbtn.on{border-color:var(--ok,#5c5);color:var(--ok,#5c5)}
+.pnum{background:var(--panel);color:var(--fg);border:1px solid var(--trim);border-radius:7px;padding:4px 8px;font:inherit;font-size:12px;width:84px;text-align:right}
 .pv-subhead{font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);padding:9px 14px 3px}
 .pv-group .pv-head{padding-left:calc(14px + var(--ind,0px))}
 .preset{background:none;border:0;color:var(--faint);cursor:pointer;font-size:14px;line-height:1;padding:2px 4px;border-radius:5px;flex:0 0 auto}
@@ -765,7 +767,7 @@ button{font-family:inherit}
 </div>
 
 <script>
-const BUILD='b35 · 2026-06-03 · remove device-size preview switcher (full viewport)';
+const BUILD='b36 · 2026-06-03 · mods toggle/checkbox polish + wide-range number entry (B11)';
 console.log('%cmaiden redesign build: '+BUILD,'color:#DEB887;font-weight:bold');
 const LS={
   get(k,d){try{const v=localStorage.getItem('maiden.'+k);return v==null?d:JSON.parse(v);}catch(e){return d;}},
@@ -1170,7 +1172,7 @@ async function renderModsView(){
         if(j.ok){ b.dataset.on=want?'1':'0'; b.textContent=want?'✓ enabled':'disabled'; b.classList.toggle('on',want);
           if(j.restart_required) confirmDialog('Restart norns','Enabled <b>'+(p.n)+'</b>. Mods only load at startup — do <b>SYSTEM &gt; RESTART</b> (or relaunch norns) to apply.',()=>{}); }
       }catch(_){ } b.disabled=false; };
-    row.prepend(b);
+    row.appendChild(b);   // after Reinstall/Remove — clear of the "installed" badge
   });
   const rf=document.getElementById('mods-refresh'); if(rf) rf.onclick=renderModsView;
 }
@@ -1225,6 +1227,9 @@ function paramRow(p){
     if(!isFinite(mn)) mn=isFinite(mx)?mx-72:-60;       // -inf (e.g. dB) → a usable slider floor; the real value is still clamped by the param
     if(!isFinite(mx)) mx=mn+72;
     v=Math.max(mn,Math.min(mx,v));
+    // B11: wide-range integer params commit a precise number (no twitchy slider that can smear into a script-crashing value)
+    if(p.t===1 && (mx-mn)>64 && !pLabelMap[p.i] && isNaN(parseFloat(p.str))===false){
+      return `<div class="pv-row">${lbl}<input type="number" class="pnum" data-i="${p.i}" min="${mn}" max="${mx}" step="1" value="${Math.round(v)}">${rb}</div>`; }
     const step=p.t===1?1:Math.max((mx-mn)/256,1e-4);   // numbers integer-stepped; controls finely stepped → only valid values sent
     return `<div class="pv-row slider"><div class="pv-srow">${lbl}<span class="pv-val" data-vi="${p.i}">${esc(p.str||fmtNum(v))}</span>${rb}</div>
       <input type="range" class="psld" data-i="${p.i}" data-unit="${esc(unit)}" min="${mn}" max="${mx}" step="${step}" value="${v}"></div>`; }
@@ -1268,10 +1273,12 @@ function wireParamControls(list){
     sl.oninput=()=>{ if(!vi) return; const m=pLabelMap[sl.dataset.i], key=String(Math.round(sl.value));
       vi.textContent = (m&&m[key]!=null) ? m[key] : fmtNum(sl.value)+(sl.dataset.unit?' '+sl.dataset.unit:''); };
     sl.onchange=()=>{ matronSend('params:set('+sl.dataset.i+','+sl.value+')'); pvRequery(sl.dataset.i); }; });   // re-read true formatted value
+  list.querySelectorAll('.pnum').forEach(inp=>inp.onchange=()=>{ const mn=+inp.min, mx=+inp.max;   // clamp to true range, integer, commit deliberately
+    let v=Math.round(Math.max(mn,Math.min(mx,parseFloat(inp.value)||mn))); inp.value=v; matronSend('params:set('+inp.dataset.i+','+v+')'); });
   list.querySelectorAll('.preset').forEach(b=>b.onclick=()=>{ const i=b.dataset.i, d=b.dataset.def, t=+b.dataset.t;
     matronSend('params:set('+i+','+d+')');
     if(t===2){ const s=list.querySelector('.psel[data-i="'+i+'"]'); if(s) s.value=d; }
-    else { const s=list.querySelector('.psld[data-i="'+i+'"]'); if(s){ s.value=d; } pvRequery(i); } });
+    else { const s=list.querySelector('.psld[data-i="'+i+'"]'); if(s) s.value=d; const nu=list.querySelector('.pnum[data-i="'+i+'"]'); if(nu) nu.value=Math.round(d); pvRequery(i); } });
 }
 
 /* ============ theme engine ============ */
@@ -2098,8 +2105,9 @@ function renderFiles(){
   const ud=v.querySelector('[data-uploaddir]'); if(ud) ud.onclick=()=>document.getElementById('dir-input').click();
   v.querySelector('[data-download]').onclick=fvDownload;
   const ds=v.querySelector('[data-delsel]'); if(ds) ds.onclick=deleteSelected;
-  v.querySelector('[data-newdir]').onclick=()=>{ const n=fvNode(fvPath); n.children=n.children||[];
-    let i=1,nm='new_folder'; while(n.children.find(c=>c.name===nm)){nm='new_folder_'+(++i);} n.children.push({name:nm,type:'dir',children:[]}); renderFiles(); };
+  v.querySelector('[data-newdir]').onclick=async()=>{ const nm=(prompt('new folder name','new_folder')||'').trim().replace(/[\/]/g,''); if(!nm) return;
+    if(HAS_BACKEND){ const j=await fvApi('mkdir',{path:fvRel(nm)}); if(j&&j.error){alert(j.error);return;} fvReload(); }
+    else { const n=fvNode(fvPath); n.children=n.children||[]; if(!n.children.find(c=>c.name===nm)) n.children.push({name:nm,type:'dir',children:[]}); renderFiles(); } };
   v.querySelectorAll('.fv-row').forEach(r=>{
     const nm=r.dataset.name, dir=r.dataset.dir==='1';
     const cb=r.querySelector('.fcheck'); cb.onclick=e=>{e.stopPropagation(); cb.checked?fvSel.add(nm):fvSel.delete(nm); renderFiles();};
@@ -2109,13 +2117,19 @@ function renderFiles(){
       else if(/\.(lua|sc|txt|md|pset)$/.test(nm)) openFromFiles(nm); };
   });
 }
+/* real file ops on the device (mock fallback off-device) */
+function fvRel(extra){ const base=fvPath.slice(1).join('/'); return extra?(base?base+'/'+extra:extra):base; }
+async function fvApi(ep,body){ try{ return await (await fetch('api/'+ep,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})).json(); }catch(e){ return {error:e.message}; } }
+function fvReload(){ const node=fvNode(fvPath); node._live=false; renderFiles(); }
 function startRename(r,oldName){
   const span=r.querySelector('.fnm'); if(!span) return;
   const inp=document.createElement('input'); inp.className='fnm-edit'; inp.value=oldName;
   span.replaceWith(inp); inp.focus(); inp.select();
   let done=false;
-  const commit=()=>{ if(done) return; done=true; const nn=inp.value.trim();
-    if(nn && nn!==oldName){ const node=fvNode(fvPath); const it=(node.children||[]).find(c=>c.name===oldName);
+  const commit=async()=>{ if(done) return; done=true; const nn=inp.value.trim();
+    if(nn && nn!==oldName){
+      if(HAS_BACKEND){ const j=await fvApi('rename',{from:fvRel(oldName),to:fvRel(nn)}); if(j&&j.error) alert(j.error); fvReload(); return; }
+      const node=fvNode(fvPath); const it=(node.children||[]).find(c=>c.name===oldName);
       if(it && !(node.children||[]).some(c=>c.name===nn)){ it.name=nn; it.mod='just now'; if(fvSel.has(oldName)){fvSel.delete(oldName);fvSel.add(nn);} } }
     renderFiles(); };
   inp.addEventListener('keydown',e=>{ if(e.key==='Enter'){e.preventDefault();commit();} else if(e.key==='Escape'){done=true;renderFiles();} });
@@ -2124,13 +2138,28 @@ function startRename(r,oldName){
 function deleteEntry(nm,dir){
   const node=fvNode(fvPath); const it=(node.children||[]).find(c=>c.name===nm); const count=it&&it.children?it.children.length:0;
   const msg=dir?`Delete folder <b>${nm}/</b>${count?` and its ${count} item${count>1?'s':''}`:''}? This cannot be undone.`:`Delete <b>${nm}</b>? This cannot be undone.`;
-  confirmDialog('delete '+(dir?'folder':'file')+'?',msg,()=>{ node.children=(node.children||[]).filter(c=>c.name!==nm); fvSel.delete(nm); renderFiles(); },true);
+  confirmDialog('delete '+(dir?'folder':'file')+'?',msg,async()=>{ fvSel.delete(nm);
+    if(HAS_BACKEND){ const j=await fvApi('rm',{path:fvRel(nm)}); if(j&&j.error) alert(j.error); fvReload(); }
+    else { node.children=(node.children||[]).filter(c=>c.name!==nm); renderFiles(); } },true);
 }
 function deleteSelected(){
   const names=[...fvSel]; if(!names.length) return; const node=fvNode(fvPath);
   const dirs=names.filter(nm=>{const it=(node.children||[]).find(c=>c.name===nm); return it&&it.type==='dir';}).length;
   const msg=`Delete <b>${names.length}</b> selected item${names.length>1?'s':''}${dirs?` (${dirs} folder${dirs>1?'s':''} with their contents)`:''}? This cannot be undone.`;
-  confirmDialog('delete selected?',msg,()=>{ node.children=(node.children||[]).filter(c=>!fvSel.has(c.name)); fvSel.clear(); renderFiles(); },true);
+  confirmDialog('delete selected?',msg,async()=>{
+    if(HAS_BACKEND){ for(const nm of names){ await fvApi('rm',{path:fvRel(nm)}); } fvSel.clear(); fvReload(); }
+    else { node.children=(node.children||[]).filter(c=>!fvSel.has(c.name)); fvSel.clear(); renderFiles(); } },true);
+}
+async function realUpload(fileList){
+  const files=[...fileList]; if(!files.length) return;
+  const prog=document.getElementById('fv-prog');
+  for(let i=0;i<files.length;i++){ const f=files[i]; const rel=f.webkitRelativePath||f.name;
+    if(prog){ prog.classList.add('show'); prog.innerHTML=`<div class="pt"><span class="ispin"></span> uploading ${i+1}/${files.length}: ${esc(f.name)}</div><div class="pbar"><div class="pfill" style="width:${Math.round((i/files.length)*100)}%"></div></div>`; }
+    try{ const buf=await f.arrayBuffer();
+      await fetch('api/write?path='+encodeURIComponent(fvRel(rel)),{method:'PUT',headers:{'Content-Type':'application/octet-stream'},body:buf}); }catch(_){ }
+  }
+  if(prog) prog.classList.remove('show');
+  fvReload();
 }
 /* one upload path for files AND folders (+ multiple of each). items: [{name,size,rel}] */
 function insertAt(node,parts,size){
@@ -2306,9 +2335,13 @@ function boot(){
   const fv=document.getElementById('filesview');
   ['dragenter','dragover'].forEach(ev=>fv.addEventListener(ev,e=>{e.preventDefault();fv.classList.add('dragging');}));
   ['dragleave','drop'].forEach(ev=>fv.addEventListener(ev,e=>{e.preventDefault(); if(ev==='drop'||e.target===fv) fv.classList.remove('dragging');}));
-  fv.addEventListener('drop',async e=>{ fv.classList.remove('dragging'); const items=await gatherDrop(e.dataTransfer); doUpload(items); });
-  document.getElementById('file-input').addEventListener('change',e=>{ const items=[...e.target.files].map(f=>({name:f.name,size:f.size,rel:f.name})); e.target.value=''; doUpload(items); });
-  document.getElementById('dir-input').addEventListener('change',e=>{ const items=[...e.target.files].map(f=>({name:f.name,size:f.size,rel:f.webkitRelativePath||f.name})); e.target.value=''; doUpload(items); });
+  fv.addEventListener('drop',async e=>{ fv.classList.remove('dragging');
+    if(HAS_BACKEND && e.dataTransfer.files && e.dataTransfer.files.length){ realUpload(e.dataTransfer.files); return; }
+    const items=await gatherDrop(e.dataTransfer); doUpload(items); });
+  document.getElementById('file-input').addEventListener('change',e=>{ const fl=e.target.files;
+    if(HAS_BACKEND){ realUpload(fl); } else { doUpload([...fl].map(f=>({name:f.name,size:f.size,rel:f.name}))); } e.target.value=''; });
+  document.getElementById('dir-input').addEventListener('change',e=>{ const fl=e.target.files;
+    if(HAS_BACKEND){ realUpload(fl); } else { doUpload([...fl].map(f=>({name:f.name,size:f.size,rel:f.webkitRelativePath||f.name}))); } e.target.value=''; });
   // generic confirm dialog
   document.getElementById('confirm-cancel').onclick=()=>{document.getElementById('confirm-overlay').classList.remove('on');_confirmYes=null;};
   document.getElementById('confirm-overlay').addEventListener('click',e=>{if(e.target.id==='confirm-overlay'){e.currentTarget.classList.remove('on');_confirmYes=null;}});
