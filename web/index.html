@@ -384,6 +384,10 @@ button{font-family:inherit}
 .psel{background:var(--panel);color:var(--fg);border:1px solid var(--trim);border-radius:7px;padding:4px 8px;font:inherit;font-size:12px;min-width:130px;cursor:pointer}
 .pbtn{background:var(--panel);color:var(--fg);border:1px solid var(--trim);border-radius:7px;padding:4px 14px;font:inherit;font-size:12px;cursor:pointer}
 .pbtn.on{border-color:var(--ok,#5c5);color:var(--ok,#5c5)}
+.pv-subhead{font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);padding:9px 14px 3px}
+.pv-group .pv-head{padding-left:calc(14px + var(--ind,0px))}
+.preset{background:none;border:0;color:var(--faint);cursor:pointer;font-size:14px;line-height:1;padding:2px 4px;border-radius:5px;flex:0 0 auto}
+.preset:hover{color:var(--accent);background:color-mix(in srgb,var(--accent) 14%,transparent)}
 .fv-bar{flex:0 0 auto;display:flex;align-items:center;gap:8px;padding:9px 12px;background:var(--panel2);border-bottom:1px solid var(--trim);flex-wrap:wrap}
 .fv-crumbs{display:flex;align-items:center;gap:1px;flex:1;min-width:120px;overflow:auto;font-size:13px}
 .fv-crumb{color:var(--accent2);cursor:pointer;white-space:nowrap;padding:3px 7px;border-radius:6px;background:transparent;border:0;font:inherit;font-size:13px}
@@ -787,7 +791,7 @@ button{font-family:inherit}
 </div>
 
 <script>
-const BUILD='b32 · 2026-06-03 · params: show script groups + declutter + reset defaults · mods top trim';
+const BUILD='b33 · 2026-06-03 · params: true nesting, per-param reset, formatted-on-release, real ranges';
 console.log('%cmaiden redesign build: '+BUILD,'color:#DEB887;font-weight:bold');
 const LS={
   get(k,d){try{const v=localStorage.getItem('maiden.'+k);return v==null?d:JSON.parse(v);}catch(e){return d;}},
@@ -1202,71 +1206,86 @@ async function renderModsView(){
    sub-headers, options → dropdowns, number/control/taper → sliders, binary → toggle,
    trigger → button. (Web-MIDI bridge is a post-release stretch goal — see README.)
    norns types: 0 sep · 1 number · 2 option · 3 control · 4 file · 5 taper · 6 trigger · 7 group · 8 text · 9 binary */
-let PARAMS=[], paramBuf='', presetSlot=1;
+let PARAMS=[], paramBuf='', presetSlot=1, pDeclutter=true, pCollapsed={};
 function openParams(){ showParams(); }
+function isEmptySlot(p){ return /^\s*\d+\.\s*none\s*$/i.test(p.name||''); }   // empty MIDI/device slots
 function refreshParams(){
   const status=document.getElementById('params-status');
   if(!matronReady){ status.textContent='no live link to matron — open ingenue on the device to use this'; document.getElementById('params-list').innerHTML=''; return; }
   status.textContent='reading params from device…'; PARAMS=[]; paramBuf=''; matronOnData=onParamData;
-  matronSend("do print('@@ING_P_BEGIN@@') for i=1,params.count do local p=params:lookup_param(i) local t=p.t or -1 local nm=p.name or p.id or '?' local mn='' local mx='' local opts='' if t==2 and p.options then opts=table.concat(p.options,'\\31') end if p.controlspec then mn=tostring(p.controlspec.minval) mx=tostring(p.controlspec.maxval) elseif p.min~=nil then mn=tostring(p.min) mx=tostring(p.max) end local val='' local str='' pcall(function() val=params:get(i) end) pcall(function() str=params:string(i) end) print('@@ING_P@@'..i..'\\9'..t..'\\9'..tostring(nm)..'\\9'..tostring(mn)..'\\9'..tostring(mx)..'\\9'..tostring(val)..'\\9'..tostring(str)..'\\9'..opts) end print('@@ING_P_END@@') end");
-  setTimeout(()=>{ if(!PARAMS.length && matronReady) status.textContent='waiting for matron — if a script is loaded, hit ↻ refresh'; },1400);
+  // dump per param: i, type, name, min, max, raw value, display string, options(\31), default, group child-count
+  matronSend("do print('@@ING_P_BEGIN@@') for i=1,params.count do local p=params:lookup_param(i) local t=p.t or -1 local nm=p.name or p.id or '?' local mn='' local mx='' local opts='' local nn='' local df='' if t==7 then nn=tostring(p.n or '') end if t==2 and p.options then opts=table.concat(p.options,'\\31') end if p.controlspec then mn=tostring(p.controlspec.minval) mx=tostring(p.controlspec.maxval) elseif p.min~=nil then mn=tostring(p.min) mx=tostring(p.max) end local d=p.default if d==nil and p.controlspec then d=p.controlspec.default end if d~=nil then df=tostring(d) end local val='' local str='' pcall(function() val=params:get(i) end) pcall(function() str=params:string(i) end) print('@@ING_P@@'..i..'\\9'..t..'\\9'..tostring(nm)..'\\9'..mn..'\\9'..mx..'\\9'..tostring(val)..'\\9'..tostring(str)..'\\9'..opts..'\\9'..df..'\\9'..nn) end print('@@ING_P_END@@') end");
+  setTimeout(()=>{ if(!PARAMS.length && matronReady) status.textContent='waiting for matron — if a script is loaded, hit ↻'; },1400);
 }
 function onParamData(t){
   paramBuf+=t; if(paramBuf.indexOf('@@ING_P_END@@')<0) return;
   PARAMS=[]; const US=String.fromCharCode(31);
   paramBuf.split('\n').forEach(ln=>{ const k=ln.indexOf('@@ING_P@@'); if(k<0) return;
-    const a=ln.slice(k+9).split('\t'); if(a.length<7) return;
-    PARAMS.push({i:+a[0],t:+a[1],name:a[2],min:a[3],max:a[4],val:a[5],str:a[6],opts:(a[7]||'')?a[7].split(US):[]}); });
+    const a=ln.slice(k+9).split('\t'); if(a.length<8) return;
+    PARAMS.push({i:+a[0],t:+a[1],name:a[2],min:a[3],max:a[4],val:a[5],str:a[6],opts:(a[7]||'')?a[7].split(US):[],def:(a[8]||''),n:+(a[9]||0)}); });
   paramBuf=''; matronOnData=null; paintParams();
 }
-function fmtNum(v){ v=+v; return Number.isInteger(v)?String(v):(Math.abs(v)>=100?v.toFixed(0):v.toFixed(2)); }
+function fmtNum(v){ v=+v; if(!isFinite(v)) return String(v); return Number.isInteger(v)?String(v):(Math.abs(v)>=100?v.toFixed(0):(Math.abs(v)>=1?v.toFixed(2):v.toFixed(3))); }
+function unitOf(p){ const m=(p.str||'').match(/[a-zA-Z%][a-zA-Z%\/]*\s*$/); return m?m[0].trim():''; }
+function resetBtn(p){ return p.def!=='' ? `<button class="preset" data-i="${p.i}" data-def="${esc(p.def)}" data-t="${p.t}" title="reset to default (${esc(p.def)})">↺</button>` : ''; }
 function paramRow(p){
-  const lbl=`<span class="pv-name">${esc(p.name)}</span>`;
-  if(p.t===2){ const sel=p.opts.map(o=>`<option ${o===p.str?'selected':''}>${esc(o)}</option>`).join('');
-    return `<div class="pv-row"><label>${lbl}<select class="psel" data-i="${p.i}">${sel}</select></label></div>`; }
+  const lbl=`<span class="pv-name">${esc(p.name)}</span>`, rb=resetBtn(p);
+  if(p.t===2){ const sel=p.opts.map((o,idx)=>`<option value="${idx+1}" ${o===p.str?'selected':''}>${esc(o)}</option>`).join('');
+    return `<div class="pv-row">${lbl}<select class="psel" data-i="${p.i}">${sel}</select>${rb}</div>`; }
   if(p.t===6) return `<div class="pv-row">${lbl}<button class="pbtn ptrig" data-i="${p.i}">▸ bang</button></div>`;
   if(p.t===9){ const on=(+p.val)?1:0;
-    return `<div class="pv-row">${lbl}<button class="pbtn ptog${on?' on':''}" data-i="${p.i}" data-on="${on}">${on?'on':'off'}</button></div>`; }
+    return `<div class="pv-row">${lbl}<button class="pbtn ptog${on?' on':''}" data-i="${p.i}" data-on="${on}">${on?'on':'off'}</button>${rb}</div>`; }
   if(p.t===1||p.t===3||p.t===5){
     let mn=parseFloat(p.min), mx=parseFloat(p.max); let v=parseFloat(p.val); if(isNaN(v)) v=isFinite(mn)?mn:0;
-    const unit=((p.str||'').match(/[a-zA-Z%][a-zA-Z%\/]*\s*$/)||[''])[0].trim();
-    if(!isFinite(mn)) mn=isFinite(mx)?mx-72:-60;
+    const unit=unitOf(p);
+    if(!isFinite(mn)) mn=isFinite(mx)?mx-72:-60;       // -inf (e.g. dB) → a usable slider floor; the real value is still clamped by the param
     if(!isFinite(mx)) mx=mn+72;
-    const step=p.t===1?1:((mx-mn)/240||0.01);
-    return `<div class="pv-row slider"><div class="pv-srow">${lbl}<span class="pv-val" data-vi="${p.i}">${esc(p.str||fmtNum(v))}</span></div>
+    v=Math.max(mn,Math.min(mx,v));
+    const step=p.t===1?1:Math.max((mx-mn)/256,1e-4);   // numbers integer-stepped; controls finely stepped → only valid values sent
+    return `<div class="pv-row slider"><div class="pv-srow">${lbl}<span class="pv-val" data-vi="${p.i}">${esc(p.str||fmtNum(v))}</span>${rb}</div>
       <input type="range" class="psld" data-i="${p.i}" data-unit="${esc(unit)}" min="${mn}" max="${mx}" step="${step}" value="${v}"></div>`; }
   return `<div class="pv-row">${lbl}<span class="pv-ro">${esc(p.str||'')}</span></div>`;
 }
-const SYS_GROUPS=new Set(['LEVELS','REVERB','COMPRESSOR','SOFTCUT','CLOCK','AUDIO']);   // collapsed by default; script groups expand
-let pDeclutter=true;
-function isEmptySlot(p){ return /^\s*\d+\.\s*none\s*$/i.test(p.name||''); }   // empty MIDI/device slots
+function renderNodes(children,depth){
+  return children.map(node=>{
+    if(node.kind==='param') return paramRow(node.p);
+    if(node.kind==='sep') return `<div class="pv-subhead" style="padding-left:${14+depth*15}px">${esc(node.name||'')}</div>`;
+    const key='g'+node.gi, closed=pCollapsed[key]!==false;   // groups start collapsed (sub-items hidden until opened)
+    return `<div class="pv-group" style="--ind:${depth*15}px">
+      <div class="pv-head collap${closed?'':' open'}" data-gkey="${key}" style="padding-left:${14+depth*15}px"><span class="pv-caret">▸</span><span>${esc(node.name||'group')}</span><span class="pv-ct">${node.count}</span></div>
+      <div class="pv-rows"${closed?' style="display:none"':''}>${renderNodes(node.children,depth+1)}</div></div>`;
+  }).join('');
+}
 function paintParams(){
   const list=document.getElementById('params-list'), st=document.getElementById('params-status');
-  if(!PARAMS.length){ st.textContent='no params'; list.innerHTML='<div class="pv-empty">no params — load a script on the device, then ↻ refresh</div>'; return; }
-  // sectionize; once we pass the first script (non-system) separator/group, groups expand
-  const secs=[]; let cur={kind:'top',name:'system parameters',rows:[]}; secs.push(cur); let inScript=false; let shown=0;
-  PARAMS.forEach(p=>{
-    if(p.t===7){ const sys=SYS_GROUPS.has((p.name||'').toUpperCase()); if(!sys) inScript=true; cur={kind:'group',name:p.name,sys:sys&&!inScript,rows:[]}; secs.push(cur); return; }
-    if(p.t===0){ inScript=true; cur={kind:'sep',name:p.name,rows:[]}; secs.push(cur); return; }
-    if(pDeclutter && isEmptySlot(p)) return;                       // hide empty device slots
-    cur.rows.push(p); shown++;
+  if(!PARAMS.length){ st.textContent='no params'; list.innerHTML='<div class="pv-empty">no params — load a script on the device, then ↻</div>'; return; }
+  // build a real tree using each group's child-count (n) — true nesting, like the on-device menu
+  const root={children:[]}, stack=[{node:root,rem:Infinity}]; let gi=0, shown=0;
+  PARAMS.forEach(p=>{ const top=stack[stack.length-1];
+    if(p.t===7){ const g={kind:'group',name:p.name,children:[],count:p.n,gi:gi++}; top.node.children.push(g); top.rem--; stack.push({node:g,rem:p.n||0}); }
+    else if(pDeclutter && isEmptySlot(p)){ top.rem--; }
+    else if(p.t===0){ top.node.children.push({kind:'sep',name:p.name}); top.rem--; }
+    else { top.node.children.push({kind:'param',p}); top.rem--; shown++; }
+    while(stack.length>1 && stack[stack.length-1].rem<=0) stack.pop();
   });
   st.textContent=shown+' parameters'+(pDeclutter?' · decluttered':'');
-  list.innerHTML=secs.filter(s=>s.rows.length||s.kind==='group'||s.kind==='sep').map((s,si)=>{
-    const isGroup=s.kind==='group', closed=isGroup&&s.sys;        // all groups collapsible; system ones start closed
-    const body=`<div class="pv-rows"${closed?' style="display:none"':''}>${s.rows.map(paramRow).join('')}</div>`;
-    const hdr = s.kind==='top' ? `<div class="pv-banner">${esc(s.name)}</div>`
-      : `<div class="pv-head${isGroup?' collap':''}${isGroup&&!closed?' open':''}" data-sec="${si}">${isGroup?'<span class="pv-caret">▸</span>':''}<span>${esc(s.name||'')}</span><span class="pv-ct">${s.rows.length}</span></div>`;
-    return `<div class="pv-section">${hdr}${body}</div>`;
-  }).join('');
-  list.querySelectorAll('.pv-head.collap').forEach(h=>h.onclick=()=>{ const b=h.nextElementSibling; const show=b.style.display==='none';
-    b.style.display=show?'':'none'; h.classList.toggle('open',show); });
-  list.querySelectorAll('.psel').forEach(s=>s.onchange=()=>matronSend('params:set('+s.dataset.i+','+(s.selectedIndex+1)+')'));
+  list.innerHTML=renderNodes(root.children,0);
+  list.querySelectorAll('.pv-head.collap').forEach(h=>h.onclick=()=>{ const b=h.nextElementSibling, show=b.style.display==='none';
+    b.style.display=show?'':'none'; h.classList.toggle('open',show); pCollapsed[h.dataset.gkey]=!show; });
+  wireParamControls(list);
+}
+function pvRequery(i){ matronSend("print('@@ING_PV@@'..("+i+")..'\\9'..params:string("+i+"))"); }   // fetch the formatted display after a change
+function wireParamControls(list){
+  list.querySelectorAll('.psel').forEach(s=>s.onchange=()=>matronSend('params:set('+s.dataset.i+','+s.value+')'));
   list.querySelectorAll('.ptrig').forEach(b=>b.onclick=()=>matronSend('params:set('+b.dataset.i+',1)'));
   list.querySelectorAll('.ptog').forEach(b=>b.onclick=()=>{ const on=b.dataset.on==='1'?0:1; b.dataset.on=on; b.textContent=on?'on':'off'; b.classList.toggle('on',!!on); matronSend('params:set('+b.dataset.i+','+on+')'); });
   list.querySelectorAll('.psld').forEach(sl=>{ const vi=list.querySelector('.pv-val[data-vi="'+sl.dataset.i+'"]');
     sl.oninput=()=>{ if(vi) vi.textContent=fmtNum(sl.value)+(sl.dataset.unit?' '+sl.dataset.unit:''); };
-    sl.onchange=()=>matronSend('params:set('+sl.dataset.i+','+sl.value+')'); });
+    sl.onchange=()=>{ matronSend('params:set('+sl.dataset.i+','+sl.value+')'); pvRequery(sl.dataset.i); }; });   // re-read true formatted value
+  list.querySelectorAll('.preset').forEach(b=>b.onclick=()=>{ const i=b.dataset.i, d=b.dataset.def, t=+b.dataset.t;
+    matronSend('params:set('+i+','+d+')');
+    if(t===2){ const s=list.querySelector('.psel[data-i="'+i+'"]'); if(s) s.value=d; }
+    else { const s=list.querySelector('.psld[data-i="'+i+'"]'); if(s){ s.value=d; } pvRequery(i); } });
 }
 
 /* ============ theme engine ============ */
@@ -1409,6 +1428,8 @@ function matronConnect(){
     replPrint('<span class="sys"># live link to matron @ '+host+':5555</span>');
     const pv=document.getElementById('paramsview'); if(pv&&pv.classList.contains('on')) refreshParams(); };
   matronWS.onmessage=ev=>{ let t=(typeof ev.data==='string')?ev.data:(ev.data?new TextDecoder().decode(ev.data):''); if(!t) return;
+    if(t.indexOf('@@ING_PV@@')>=0){ t.split('\n').forEach(ln=>{ const k=ln.indexOf('@@ING_PV@@'); if(k<0) return;   // single-param formatted-value refresh
+      const a=ln.slice(k+10).split('\t'); const el=document.querySelector('.pv-val[data-vi="'+a[0]+'"]'); if(el&&a[1]!=null) el.textContent=a[1]; }); }
     if(matronOnData) matronOnData(t);                       // params/preset channel may consume markers
     if(!/@@ING_/.test(t)) replPrint('<span class="ok">'+esc(t).replace(/\n$/,'')+'</span>'); };
   matronWS.onclose=()=>{ matronReady=false; matronRetry(); };
