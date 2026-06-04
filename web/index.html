@@ -791,7 +791,7 @@ button{font-family:inherit}
 </div>
 
 <script>
-const BUILD='b33 · 2026-06-03 · params: true nesting, per-param reset, formatted-on-release, real ranges';
+const BUILD='b34 · 2026-06-03 · params: live formatted labels while sliding (root note, etc.)';
 console.log('%cmaiden redesign build: '+BUILD,'color:#DEB887;font-weight:bold');
 const LS={
   get(k,d){try{const v=localStorage.getItem('maiden.'+k);return v==null?d:JSON.parse(v);}catch(e){return d;}},
@@ -1206,9 +1206,19 @@ async function renderModsView(){
    sub-headers, options → dropdowns, number/control/taper → sliders, binary → toggle,
    trigger → button. (Web-MIDI bridge is a post-release stretch goal — see README.)
    norns types: 0 sep · 1 number · 2 option · 3 control · 4 file · 5 taper · 6 trigger · 7 group · 8 text · 9 binary */
-let PARAMS=[], paramBuf='', presetSlot=1, pDeclutter=true, pCollapsed={};
+let PARAMS=[], paramBuf='', presetSlot=1, pDeclutter=true, pCollapsed={}, pLabelMap={};
 function openParams(){ showParams(); }
 function isEmptySlot(p){ return /^\s*\d+\.\s*none\s*$/i.test(p.name||''); }   // empty MIDI/device slots
+// number params that display NAMES (root note, etc.): pre-read params:string for each value
+// non-destructively (set p.value directly, no action fired, restore) so sliding shows the name.
+function needsLabelMap(p){ if(p.t!==1 || !isNaN(parseFloat(p.str))) return false;
+  const mn=parseFloat(p.min), mx=parseFloat(p.max); return isFinite(mn)&&isFinite(mx)&&(mx-mn)<=400; }
+function fetchLabelMaps(){
+  PARAMS.forEach(p=>{ if(!needsLabelMap(p) || pLabelMap[p.i]) return; pLabelMap[p.i]={};
+    const mn=Math.round(parseFloat(p.min)), mx=Math.round(parseFloat(p.max));
+    matronSend("do local p=params:lookup_param("+p.i+") local sv=p.value for v="+mn+","+mx+" do p.value=v local ok,s=pcall(function() return p:string() end) print('@@ING_PM@@'..("+p.i+")..'\\9'..v..'\\9'..(ok and s or '')) end p.value=sv end");
+  });
+}
 function refreshParams(){
   const status=document.getElementById('params-status');
   if(!matronReady){ status.textContent='no live link to matron — open ingenue on the device to use this'; document.getElementById('params-list').innerHTML=''; return; }
@@ -1273,6 +1283,7 @@ function paintParams(){
   list.querySelectorAll('.pv-head.collap').forEach(h=>h.onclick=()=>{ const b=h.nextElementSibling, show=b.style.display==='none';
     b.style.display=show?'':'none'; h.classList.toggle('open',show); pCollapsed[h.dataset.gkey]=!show; });
   wireParamControls(list);
+  fetchLabelMaps();                                          // pre-load name maps for note/label sliders
 }
 function pvRequery(i){ matronSend("print('@@ING_PV@@'..("+i+")..'\\9'..params:string("+i+"))"); }   // fetch the formatted display after a change
 function wireParamControls(list){
@@ -1280,7 +1291,8 @@ function wireParamControls(list){
   list.querySelectorAll('.ptrig').forEach(b=>b.onclick=()=>matronSend('params:set('+b.dataset.i+',1)'));
   list.querySelectorAll('.ptog').forEach(b=>b.onclick=()=>{ const on=b.dataset.on==='1'?0:1; b.dataset.on=on; b.textContent=on?'on':'off'; b.classList.toggle('on',!!on); matronSend('params:set('+b.dataset.i+','+on+')'); });
   list.querySelectorAll('.psld').forEach(sl=>{ const vi=list.querySelector('.pv-val[data-vi="'+sl.dataset.i+'"]');
-    sl.oninput=()=>{ if(vi) vi.textContent=fmtNum(sl.value)+(sl.dataset.unit?' '+sl.dataset.unit:''); };
+    sl.oninput=()=>{ if(!vi) return; const m=pLabelMap[sl.dataset.i], key=String(Math.round(sl.value));
+      vi.textContent = (m&&m[key]!=null) ? m[key] : fmtNum(sl.value)+(sl.dataset.unit?' '+sl.dataset.unit:''); };
     sl.onchange=()=>{ matronSend('params:set('+sl.dataset.i+','+sl.value+')'); pvRequery(sl.dataset.i); }; });   // re-read true formatted value
   list.querySelectorAll('.preset').forEach(b=>b.onclick=()=>{ const i=b.dataset.i, d=b.dataset.def, t=+b.dataset.t;
     matronSend('params:set('+i+','+d+')');
@@ -1430,6 +1442,8 @@ function matronConnect(){
   matronWS.onmessage=ev=>{ let t=(typeof ev.data==='string')?ev.data:(ev.data?new TextDecoder().decode(ev.data):''); if(!t) return;
     if(t.indexOf('@@ING_PV@@')>=0){ t.split('\n').forEach(ln=>{ const k=ln.indexOf('@@ING_PV@@'); if(k<0) return;   // single-param formatted-value refresh
       const a=ln.slice(k+10).split('\t'); const el=document.querySelector('.pv-val[data-vi="'+a[0]+'"]'); if(el&&a[1]!=null) el.textContent=a[1]; }); }
+    if(t.indexOf('@@ING_PM@@')>=0){ t.split('\n').forEach(ln=>{ const k=ln.indexOf('@@ING_PM@@'); if(k<0) return;   // value→name map for label sliders
+      const a=ln.slice(k+10).split('\t'); if(a.length<3) return; (pLabelMap[a[0]]=pLabelMap[a[0]]||{})[a[1]]=a[2]; }); }
     if(matronOnData) matronOnData(t);                       // params/preset channel may consume markers
     if(!/@@ING_/.test(t)) replPrint('<span class="ok">'+esc(t).replace(/\n$/,'')+'</span>'); };
   matronWS.onclose=()=>{ matronReady=false; matronRetry(); };

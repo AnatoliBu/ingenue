@@ -110,6 +110,12 @@ PanicOS ships a *half-implemented* state: PortedPlugins `.sc` **classes** presen
   the device-handoff race that kills all audio on a stack restart) and expose a **status line +
   Restart Audio button in config**. Best-effort restart; recommends a full power-cycle when it can't.
 
+- **B11 — Safer wide-range param edits (someday).** Some scripts declare a huge param
+  range (e.g. acid_test `sequence length` 1–256) but can't survive an arbitrary in-range
+  change live (mid-clock array resize → crash). Idea: for very-wide-range integer params,
+  commit on a tap / number entry instead of a twitchy slider (set 32 deliberately, not by
+  smearing through 256), and/or let scripts/us flag known-risky params. Low priority.
+
 ## Shipping plan (proposed — "ingenue" on device)
 
 - Ship as a **norns mod** you enable/disable that switches the served web app from system
