@@ -74,10 +74,18 @@ ingenue on :7777).
 ![params](screenshots/desktop/params.png)
 </details>
 
-<details><summary>Repository manager — tag filter, cards, image carousel + demo embeds</summary>
+<details><summary>Repository manager — tag filter + cards</summary>
 
 ![repository manager](screenshots/desktop/repo.png)
+</details>
+
+<details><summary>Expanded card — README + image carousel</summary>
+
 ![card with image carousel](screenshots/desktop/repo-carousel.png)
+</details>
+
+<details><summary>Expanded card — embedded video demo</summary>
+
 ![card with video demo](screenshots/desktop/repo-demo.png)
 </details>
 
