@@ -357,8 +357,11 @@ button{font-family:inherit}
 /* ============ first-class file manager ============ */
 .filesview{flex:1;min-width:0;min-height:0;display:none;flex-direction:column;background:var(--bg);position:relative;container-type:inline-size}
 .filesview.on{display:flex}
-.paramsview{flex:1;min-width:0;min-height:0;display:none;flex-direction:column;background:var(--bg);container-type:inline-size}
-.paramsview.on{display:flex}
+.paramsview,.modsview{flex:1;min-width:0;min-height:0;display:none;flex-direction:column;background:var(--bg);container-type:inline-size}
+.paramsview.on,.modsview.on{display:flex}
+.modsview .rd-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:12px;padding:10px 12px}
+.modsview .mods-toggle{border:1px solid var(--trim);background:var(--panel);color:var(--fg);border-radius:8px;padding:6px 12px;font:inherit;font-size:12px;cursor:pointer}
+.modsview .mods-toggle.on{border-color:var(--ok,#5c5);color:var(--ok,#5c5)}
 .pv-top{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:10px 14px;border-bottom:1px solid var(--trim);background:var(--panel2)}
 .pv-title{font-weight:600;font-size:14px;margin-right:6px}
 .pv-scroll{flex:1;min-height:0;overflow:auto}
@@ -592,6 +595,9 @@ button{font-family:inherit}
      <!-- first-class file manager -->
      <div class="filesview" id="filesview"></div>
 
+     <!-- mods manager (its own sheet — installed + installable community mods) -->
+     <div class="modsview" id="modsview"></div>
+
      <!-- live PARAMS editor (its own sheet — lists can be huge) -->
      <div class="paramsview" id="paramsview">
        <div class="pv-top">
@@ -660,17 +666,6 @@ button{font-family:inherit}
    </div>
 
    <!-- B8: mods manager (own view) -->
-   <div class="overlay" id="mods-overlay">
-     <div class="modal">
-       <div class="modal-head"><div class="t">mods</div><button class="x" id="mods-close">✕</button></div>
-       <div class="modal-body">
-         <p class="trust-msg">Enable or disable norns mods. Mods load at startup — <b>restart norns</b> after enabling one.</p>
-         <div id="mods-list" style="margin-top:8px"></div>
-         <div id="mods-empty" style="display:none;color:var(--faint);font-size:13px;margin-top:8px">no mods installed (scripts with a <span class="mono">lib/mod.lua</span>).</div>
-       </div>
-     </div>
-   </div>
-
    <!-- B9: live PARAMS editor -->
    <!-- untrusted-source install confirmation -->
    <div class="overlay" id="trust-overlay">
@@ -789,7 +784,7 @@ button{font-family:inherit}
 </div>
 
 <script>
-const BUILD='b30 · 2026-06-03 · params: sections/dropdowns/sliders, tight · matron binary frames · no fake text';
+const BUILD='b31 · 2026-06-03 · mods as a sheet w/ installable community mods + card detail';
 console.log('%cmaiden redesign build: '+BUILD,'color:#DEB887;font-weight:bold');
 const LS={
   get(k,d){try{const v=localStorage.getItem('maiden.'+k);return v==null?d:JSON.parse(v);}catch(e){return d;}},
@@ -1163,22 +1158,42 @@ function renderAudio(a){
     catch(e){ st.textContent=e.message; } btn.disabled=false; btn.textContent='restart audio'; };
 }
 
-/* ===== B8 mods manager (own overlay) ===== */
-function openMods(){ document.getElementById('mods-overlay').classList.add('on'); renderMods(); }
-async function renderMods(){ try{ const r=await fetch('api/mods',{cache:'no-store'}); if(!r.ok){ paintMods(null); return; } paintMods((await r.json()).mods); }catch(_){ paintMods(null); } }
-function paintMods(mods){
-  const list=document.getElementById('mods-list'), empty=document.getElementById('mods-empty');
-  if(!mods||!mods.length){ list.innerHTML=''; if(empty) empty.style.display=''; return; }
-  if(empty) empty.style.display='none';
-  list.innerHTML=mods.map(m=>`<div class="cfg-row"><span class="k" style="font-family:inherit">${m.name}</span>
-    <button class="rd-pill-btn modtog" data-mod="${m.name}" data-on="${m.enabled?1:0}" style="margin:0;min-width:90px;${m.enabled?'border-color:var(--ok,#5c5)':''}">${m.enabled?'✓ enabled':'disabled'}</button></div>`).join('');
-  list.querySelectorAll('.modtog').forEach(b=>b.onclick=async()=>{
-    const name=b.dataset.mod, on=b.dataset.on!=='1';
-    b.disabled=true;
-    try{ const j=await (await fetch('api/mods/toggle',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,on})})).json();
-      if(j.ok){ b.dataset.on=on?'1':'0'; b.textContent=on?'✓ enabled':'disabled'; b.style.borderColor=on?'var(--ok,#5c5)':'';
-        if(j.restart_required) confirmDialog('Restart norns','Enabled <b>'+name+'</b>. Mods only load at startup — do <b>SYSTEM &gt; RESTART</b> (or relaunch norns) for it to take effect.',()=>{}); }
-    }catch(e){ } b.disabled=false; });
+/* ===== B8 mods manager (own sheet — installed + installable community mods, with card detail) ===== */
+function isModEntry(p){ return (p.tags||[]).map(t=>String(t).toLowerCase()).includes('mod'); }
+async function renderModsView(){
+  const view=document.getElementById('modsview');
+  let modEnabled={};   // device truth: name -> enabled (also tells us which installed scripts are mods)
+  try{ const j=await (await fetch('api/mods',{cache:'no-store'})).json(); (j.mods||[]).forEach(m=>modEnabled[norm(m.name)]=m.enabled); }catch(_){}
+  const installed=[]; const seen=new Set();
+  Object.keys(modEnabled).forEach(k=>{ const cat=REPO.available.find(p=>norm(p.n)===k)||REPO.installed.find(p=>norm(p.n)===k);
+    const e=cat?{...cat,inst:1,dir:cat.dir||k}:{n:k,a:'(on device)',d:'installed mod',tags:['mod'],srcs:['community'],inst:1,dir:k};
+    installed.push(e); seen.add(k); });
+  // catalog scripts that are mods but aren't installed → installable
+  const avail=REPO.available.filter(p=>isModEntry(p)&&!p.inst&&!seen.has(norm(p.n)))
+                            .sort((a,b)=>a.n.localeCompare(b.n));
+  view.innerHTML=`<div class="pv-top"><div class="pv-title">mods</div>
+      <span class="v" style="width:auto;flex:1;font-family:inherit;color:var(--faint)">enable/disable installed mods (restart norns after enabling) · tap a card for details · add community mods below</span>
+      <button class="rd-pill-btn" id="mods-refresh" style="margin:0">↻</button></div>
+    <div class="pv-scroll">
+      <div class="pv-banner">installed mods · ${installed.length}</div>
+      <div class="rd-grid" id="mods-inst">${installed.map(p=>repoCard(p,'installed')).join('')||'<div class="pv-empty">no mods installed yet — add some below</div>'}</div>
+      <div class="pv-banner">available community mods · ${avail.length}</div>
+      <div class="rd-grid" id="mods-avail">${avail.map(p=>repoCard(p,'available')).join('')||'<div class="pv-empty">none found in the catalog</div>'}</div>
+    </div>`;
+  wireCards(view, installed.concat(avail), 'available');     // wires install/remove/demo/readme per card
+  // inject an enable/disable toggle into each installed-mod card
+  view.querySelectorAll('#mods-inst > .card').forEach((card,idx)=>{
+    const p=installed[idx]; if(!p) return; const on=!!modEnabled[norm(p.n)];
+    const row=card.querySelector('.act-row'); if(!row) return;
+    const b=document.createElement('button'); b.className='mods-toggle'+(on?' on':''); b.textContent=on?'✓ enabled':'disabled'; b.dataset.on=on?'1':'0';
+    b.onclick=async e=>{ e.stopPropagation(); const want=b.dataset.on!=='1'; b.disabled=true;
+      try{ const j=await (await fetch('api/mods/toggle',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:p.dir||p.n,on:want})})).json();
+        if(j.ok){ b.dataset.on=want?'1':'0'; b.textContent=want?'✓ enabled':'disabled'; b.classList.toggle('on',want);
+          if(j.restart_required) confirmDialog('Restart norns','Enabled <b>'+(p.n)+'</b>. Mods only load at startup — do <b>SYSTEM &gt; RESTART</b> (or relaunch norns) to apply.',()=>{}); }
+      }catch(_){ } b.disabled=false; };
+    row.prepend(b);
+  });
+  const rf=document.getElementById('mods-refresh'); if(rf) rf.onclick=renderModsView;
 }
 
 /* ===== B9 live PARAMS editor (matron ws) + presets =====
@@ -1968,10 +1983,13 @@ function renderRepo(){
 /* ============ navigation ============ */
 function setAct(which){ document.getElementById('a-files').classList.toggle('on',which==='files');
   document.getElementById('a-proj').classList.toggle('on',which==='proj');
-  const ap=document.getElementById('a-params'); if(ap) ap.classList.toggle('on',which==='params'); }
-function hideViews(){ document.getElementById('repoview').classList.remove('on');
-  document.getElementById('filesview').classList.remove('on');
-  const pv=document.getElementById('paramsview'); if(pv) pv.classList.remove('on'); }
+  const ap=document.getElementById('a-params'); if(ap) ap.classList.toggle('on',which==='params');
+  const am=document.getElementById('a-mods'); if(am) am.classList.toggle('on',which==='mods'); }
+function showMods(){document.getElementById('main').style.display='none'; hideViews();
+  document.getElementById('modsview').classList.add('on');
+  document.getElementById('maiden').classList.remove('drawer-open');
+  setAct('mods');setMtop('mods',false); renderModsView();}
+function hideViews(){ ['repoview','filesview','paramsview','modsview'].forEach(id=>{ const e=document.getElementById(id); if(e) e.classList.remove('on'); }); }
 // the mobile top bar (script name + folder icon) is editor-local — it must not bleed into other views
 function setMtop(label, showFileIcon){ const t=document.getElementById('m-title'); if(t&&label!=null) t.textContent=label;
   const m=document.getElementById('m-menu'); if(m) m.style.display=showFileIcon?'':'none'; }
@@ -1992,8 +2010,8 @@ function showParams(){document.getElementById('main').style.display='none'; hide
 const maiden=document.getElementById('maiden');
 function setMobileView(v){
   maiden.classList.remove('drawer-open');
-  if(v==='mods'){ openMods(); return; }         // mods stays an overlay — don't change the tab highlight
-  if(v==='params'){ showParams(); }
+  if(v==='mods'){ showMods(); }
+  else if(v==='params'){ showParams(); }
   else if(v==='repo'){ showRepo(); }
   else if(v==='files'){ showFiles(); }
   else { showMain(); maiden.dataset.view=v; }
@@ -2341,9 +2359,7 @@ function boot(){
   document.getElementById('scp-go').onclick=runScpHeal;
   // mods + params now have their own nav icons (out of config)
   document.getElementById('a-params').onclick=showParams;
-  document.getElementById('a-mods').onclick=openMods;
-  document.getElementById('mods-close').onclick=()=>document.getElementById('mods-overlay').classList.remove('on');
-  document.getElementById('mods-overlay').addEventListener('click',e=>{if(e.target.id==='mods-overlay')e.currentTarget.classList.remove('on');});
+  document.getElementById('a-mods').onclick=showMods;
   // B9 params editor wiring (its own view)
   document.getElementById('params-refresh').onclick=refreshParams;
   document.getElementById('params-save').onclick=()=>{ const s=+(prompt('save current params to PSET slot (1–9)','1')||0); if(s>=1&&s<=9){ presetSlot=s; matronSend('params:write('+s+')'); document.getElementById('params-status').textContent='saved → PSET slot '+s; } };
