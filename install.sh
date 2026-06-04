@@ -21,6 +21,16 @@ die(){ printf '\033[31m✗ %s\033[0m\n' "$*" >&2; exit 1; }
 # run privileged: as-is if already root, else via sudo (prefer non-interactive)
 priv(){ if [ "$(id -u)" = 0 ]; then "$@"; elif sudo -n true 2>/dev/null; then sudo "$@"; else sudo "$@"; fi; }
 
+# Refresh the root-level installer/entry next to ingenue so future self-updates carry their own
+# fixes (the web/. copy alone wouldn't). Atomic mv (new inode) — safe even though this very
+# script may be the one currently executing from $DEST.
+refresh_self(){
+  local src="$1" f
+  for f in install.sh ingenue.lua; do
+    [ -f "$src/$f" ] && cp "$src/$f" "$DEST/.$f.new" 2>/dev/null && mv -f "$DEST/.$f.new" "$DEST/$f" 2>/dev/null || true
+  done
+}
+
 # --- 1. make sure python3 is available (any target has internet per the install flow) ---
 ensure_python(){
   if command -v python3 >/dev/null 2>&1; then return 0; fi
@@ -51,17 +61,23 @@ DEST="$DUST/code/ingenue"
 say "dust: $DUST"
 
 # --- 3. fetch ingenue (unless the maiden ;install already placed the files) ---
+SRC_SHA=""   # the exact commit we install, captured during fetch (most reliable)
 if [ "${INGENUE_NO_FETCH:-0}" != "1" ]; then
   say "installing ingenue → $DEST"
   mkdir -p "$DEST"
   if command -v git >/dev/null 2>&1; then
     rm -rf /tmp/ingenue-src
     git clone --depth 1 -b "$BRANCH" "$REPO" /tmp/ingenue-src
-    cp -r /tmp/ingenue-src/web/. "$DEST/" && rm -rf /tmp/ingenue-src
+    SRC_SHA="$(git -C /tmp/ingenue-src rev-parse HEAD 2>/dev/null)" || SRC_SHA=""
+    cp -r /tmp/ingenue-src/web/. "$DEST/"
+    refresh_self /tmp/ingenue-src
+    rm -rf /tmp/ingenue-src
   else
     curl -fsSL "$REPO/archive/refs/heads/$BRANCH.tar.gz" -o /tmp/ingenue.tgz
     rm -rf /tmp/ingenue-x && mkdir -p /tmp/ingenue-x && tar xzf /tmp/ingenue.tgz -C /tmp/ingenue-x --strip-components=1
-    cp -r /tmp/ingenue-x/web/. "$DEST/" && rm -rf /tmp/ingenue.tgz /tmp/ingenue-x
+    cp -r /tmp/ingenue-x/web/. "$DEST/"
+    refresh_self /tmp/ingenue-x
+    rm -rf /tmp/ingenue.tgz /tmp/ingenue-x
   fi
 fi
 
@@ -71,14 +87,19 @@ elif [ -f "$DEST/web/server.py" ]; then WORK="$DEST/web"
 else die "server.py not found under $DEST"; fi
 
 # --- 4b. record the installed commit so the in-app update check can compare to main ---
+# Prefer the SHA from the clone; else a local .git; else the GitHub API. Every assignment is
+# guarded with `|| x=` so a SIGPIPE/curl failure under `set -e`+pipefail can't abort the install.
 record_version(){
-  local slug="${REPO#https://github.com/}"; slug="${slug%.git}"
-  local sha=""
-  sha="$(curl -fsSL "https://api.github.com/repos/$slug/commits/$BRANCH" 2>/dev/null \
-        | sed -n 's/.*"sha"[ :]*"\([0-9a-f]\{40\}\)".*/\1/p' | head -1)"
-  if [ -n "$sha" ]; then printf '%s\n' "$sha" > "$WORK/.version"; say "version ${sha:0:7}"; fi
+  local sha="$SRC_SHA"
+  if [ -z "$sha" ] && [ -d "$DEST/.git" ]; then sha="$(git -C "$DEST" rev-parse HEAD 2>/dev/null)" || sha=""; fi
+  if [ -z "$sha" ]; then
+    local slug="${REPO#https://github.com/}"; slug="${slug%.git}"
+    sha="$(curl -fsSL "https://api.github.com/repos/$slug/commits/$BRANCH" 2>/dev/null | grep -m1 -oE '[0-9a-f]{40}')" || sha=""
+  fi
+  if [ -n "$sha" ]; then printf '%s\n' "$sha" > "$WORK/.version" && say "version ${sha:0:7}"; fi
+  return 0
 }
-record_version || true
+record_version
 
 ensure_python
 PY="$(command -v python3)"
