@@ -361,7 +361,25 @@ button{font-family:inherit}
 .paramsview.on{display:flex}
 .pv-top{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:10px 14px;border-bottom:1px solid var(--trim);background:var(--panel2)}
 .pv-title{font-weight:600;font-size:14px;margin-right:6px}
-.pv-scroll{flex:1;min-height:0;overflow:auto;padding:6px 8px}
+.pv-scroll{flex:1;min-height:0;overflow:auto}
+.pv-empty{padding:16px;color:var(--faint)}
+.pv-banner{font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);padding:13px 14px 5px}
+.pv-head{display:flex;align-items:center;gap:8px;padding:6px 14px;font-weight:600;font-size:12.5px;background:var(--panel2);border-top:1px solid var(--trim);border-bottom:1px solid var(--trim);position:sticky;top:0}
+.pv-head.collap{cursor:pointer;user-select:none}
+.pv-caret{font-size:9px;color:var(--muted);transition:transform .15s}
+.pv-head.open .pv-caret{transform:rotate(90deg)}
+.pv-ct{margin-left:auto;font-size:11px;color:var(--faint);font-weight:400}
+.pv-row{display:flex;align-items:center;gap:12px;padding:5px 14px;min-height:30px;border-bottom:1px solid color-mix(in srgb,var(--trim) 45%,transparent)}
+.pv-row label{display:flex;align-items:center;gap:12px;width:100%;cursor:default}
+.pv-name{flex:1;font-size:13px;color:var(--fg)}
+.pv-row.slider{flex-direction:column;align-items:stretch;gap:4px}
+.pv-srow{display:flex;align-items:center;gap:12px}
+.pv-val{font-family:ui-monospace,monospace;font-size:12px;color:var(--accent);min-width:62px;text-align:right;white-space:nowrap}
+.pv-ro{font-family:ui-monospace,monospace;font-size:12px;color:var(--muted)}
+.psld{width:100%;accent-color:var(--accent);height:4px;cursor:pointer}
+.psel{background:var(--panel);color:var(--fg);border:1px solid var(--trim);border-radius:7px;padding:4px 8px;font:inherit;font-size:12px;min-width:130px;cursor:pointer}
+.pbtn{background:var(--panel);color:var(--fg);border:1px solid var(--trim);border-radius:7px;padding:4px 14px;font:inherit;font-size:12px;cursor:pointer}
+.pbtn.on{border-color:var(--ok,#5c5);color:var(--ok,#5c5)}
 .fv-bar{flex:0 0 auto;display:flex;align-items:center;gap:8px;padding:9px 12px;background:var(--panel2);border-bottom:1px solid var(--trim);flex-wrap:wrap}
 .fv-crumbs{display:flex;align-items:center;gap:1px;flex:1;min-width:120px;overflow:auto;font-size:13px}
 .fv-crumb{color:var(--accent2);cursor:pointer;white-space:nowrap;padding:3px 7px;border-radius:6px;background:transparent;border:0;font:inherit;font-size:13px}
@@ -771,7 +789,7 @@ button{font-family:inherit}
 </div>
 
 <script>
-const BUILD='b29 · 2026-06-03 · +96 base16 themes (137 total)';
+const BUILD='b30 · 2026-06-03 · params: sections/dropdowns/sliders, tight · matron binary frames · no fake text';
 console.log('%cmaiden redesign build: '+BUILD,'color:#DEB887;font-weight:bold');
 const LS={
   get(k,d){try{const v=localStorage.getItem('maiden.'+k);return v==null?d:JSON.parse(v);}catch(e){return d;}},
@@ -1164,34 +1182,68 @@ function paintMods(mods){
 }
 
 /* ===== B9 live PARAMS editor (matron ws) + presets =====
-   (Web-MIDI bridge is a post-release stretch goal — see README.) */
+   Mirrors the on-device PARAMS menu: groups → collapsible sections, separators →
+   sub-headers, options → dropdowns, number/control/taper → sliders, binary → toggle,
+   trigger → button. (Web-MIDI bridge is a post-release stretch goal — see README.)
+   norns types: 0 sep · 1 number · 2 option · 3 control · 4 file · 5 taper · 6 trigger · 7 group · 8 text · 9 binary */
 let PARAMS=[], paramBuf='', presetSlot=1;
 function openParams(){ showParams(); }
 function refreshParams(){
   const status=document.getElementById('params-status');
-  if(!matronReady){ status.textContent='no live link to matron — open ingenue on the device (port 7777) to use this'; document.getElementById('params-list').innerHTML=''; return; }
+  if(!matronReady){ status.textContent='no live link to matron — open ingenue on the device to use this'; document.getElementById('params-list').innerHTML=''; return; }
   status.textContent='reading params from device…'; PARAMS=[]; paramBuf=''; matronOnData=onParamData;
-  matronSend("do print('@@ING_P_BEGIN@@') for i=1,params.count do local p=params:lookup_param(i) local ty=p.t or 0 local mn='' local mx='' if p.controlspec then mn=p.controlspec.minval mx=p.controlspec.maxval elseif p.min~=nil then mn=p.min mx=p.max elseif p.options then mn=1 mx=#p.options end local nm=p.name or p.id or '?' local sv='' local ok2,err=pcall(function() sv=params:string(i) end) print('@@ING_P@@'..i..'\\9'..ty..'\\9'..tostring(nm)..'\\9'..tostring(mn)..'\\9'..tostring(mx)..'\\9'..tostring(sv)) end print('@@ING_P_END@@') end");
-  setTimeout(()=>{ if(!PARAMS.length && matronReady) status.textContent='waiting for matron… (if a script is loaded, hit ↻ refresh)'; },1200);
+  matronSend("do print('@@ING_P_BEGIN@@') for i=1,params.count do local p=params:lookup_param(i) local t=p.t or -1 local nm=p.name or p.id or '?' local mn='' local mx='' local opts='' if t==2 and p.options then opts=table.concat(p.options,'\\31') end if p.controlspec then mn=tostring(p.controlspec.minval) mx=tostring(p.controlspec.maxval) elseif p.min~=nil then mn=tostring(p.min) mx=tostring(p.max) end local val='' local str='' pcall(function() val=params:get(i) end) pcall(function() str=params:string(i) end) print('@@ING_P@@'..i..'\\9'..t..'\\9'..tostring(nm)..'\\9'..tostring(mn)..'\\9'..tostring(mx)..'\\9'..tostring(val)..'\\9'..tostring(str)..'\\9'..opts) end print('@@ING_P_END@@') end");
+  setTimeout(()=>{ if(!PARAMS.length && matronReady) status.textContent='waiting for matron — if a script is loaded, hit ↻ refresh'; },1400);
 }
 function onParamData(t){
   paramBuf+=t; if(paramBuf.indexOf('@@ING_P_END@@')<0) return;
-  PARAMS=[];
+  PARAMS=[]; const US=String.fromCharCode(31);
   paramBuf.split('\n').forEach(ln=>{ const k=ln.indexOf('@@ING_P@@'); if(k<0) return;
-    const a=ln.slice(k+9).split('\t'); if(a.length<6) return;
-    PARAMS.push({i:+a[0],t:+a[1],name:a[2],min:parseFloat(a[3]),max:parseFloat(a[4]),val:a[5]}); });
+    const a=ln.slice(k+9).split('\t'); if(a.length<7) return;
+    PARAMS.push({i:+a[0],t:+a[1],name:a[2],min:a[3],max:a[4],val:a[5],str:a[6],opts:(a[7]||'')?a[7].split(US):[]}); });
   paramBuf=''; matronOnData=null; paintParams();
 }
+function fmtNum(v){ v=+v; return Number.isInteger(v)?String(v):(Math.abs(v)>=100?v.toFixed(0):v.toFixed(2)); }
+function paramRow(p){
+  const lbl=`<span class="pv-name">${esc(p.name)}</span>`;
+  if(p.t===2){ const sel=p.opts.map(o=>`<option ${o===p.str?'selected':''}>${esc(o)}</option>`).join('');
+    return `<div class="pv-row"><label>${lbl}<select class="psel" data-i="${p.i}">${sel}</select></label></div>`; }
+  if(p.t===6) return `<div class="pv-row">${lbl}<button class="pbtn ptrig" data-i="${p.i}">▸ bang</button></div>`;
+  if(p.t===9){ const on=(+p.val)?1:0;
+    return `<div class="pv-row">${lbl}<button class="pbtn ptog${on?' on':''}" data-i="${p.i}" data-on="${on}">${on?'on':'off'}</button></div>`; }
+  if(p.t===1||p.t===3||p.t===5){
+    let mn=parseFloat(p.min), mx=parseFloat(p.max); let v=parseFloat(p.val); if(isNaN(v)) v=isFinite(mn)?mn:0;
+    const unit=((p.str||'').match(/[a-zA-Z%][a-zA-Z%\/]*\s*$/)||[''])[0].trim();
+    if(!isFinite(mn)) mn=isFinite(mx)?mx-72:-60;
+    if(!isFinite(mx)) mx=mn+72;
+    const step=p.t===1?1:((mx-mn)/240||0.01);
+    return `<div class="pv-row slider"><div class="pv-srow">${lbl}<span class="pv-val" data-vi="${p.i}">${esc(p.str||fmtNum(v))}</span></div>
+      <input type="range" class="psld" data-i="${p.i}" data-unit="${esc(unit)}" min="${mn}" max="${mx}" step="${step}" value="${v}"></div>`; }
+  return `<div class="pv-row">${lbl}<span class="pv-ro">${esc(p.str||'')}</span></div>`;
+}
 function paintParams(){
-  const list=document.getElementById('params-list'); document.getElementById('params-status').textContent=PARAMS.length+' params';
-  if(!PARAMS.length){ list.innerHTML='<div class="cfg-row"><span class="v" style="font-family:inherit">no params — load a script on the device, then ↻ refresh</span></div>'; return; }
-  list.innerHTML=PARAMS.map(p=>{
-    const sep=(isNaN(p.min)||isNaN(p.max));
-    if(sep) return `<div class="cfg-sec" style="margin:10px 0 4px">${esc(p.name)}</div>`;
-    return `<div class="cfg-row"><span class="k" style="font-family:inherit;flex:1">${esc(p.name)}</span>
-      <input class="pval" data-i="${p.i}" data-min="${p.min}" data-max="${p.max}" type="number" step="any" value="${parseFloat(p.val)||p.val||0}" style="width:110px"></div>`;
+  const list=document.getElementById('params-list'), st=document.getElementById('params-status');
+  if(!PARAMS.length){ st.textContent='no params'; list.innerHTML='<div class="pv-empty">no params — load a script on the device, then ↻ refresh</div>'; return; }
+  st.textContent=PARAMS.length+' parameters';
+  const secs=[]; let cur={kind:'top',name:'system parameters',rows:[]}; secs.push(cur);
+  PARAMS.forEach(p=>{ if(p.t===7){ cur={kind:'group',name:p.name,rows:[]}; secs.push(cur); }
+    else if(p.t===0){ cur={kind:'sep',name:p.name,rows:[]}; secs.push(cur); }
+    else cur.rows.push(p); });
+  list.innerHTML=secs.filter(s=>s.rows.length||s.kind==='group').map((s,si)=>{
+    const collap=s.kind==='group';
+    const body=`<div class="pv-rows"${collap?' style="display:none"':''}>${s.rows.map(paramRow).join('')}</div>`;
+    const hdr = s.kind==='top' ? `<div class="pv-banner">${esc(s.name)}</div>`
+      : `<div class="pv-head${collap?' collap':''}" data-sec="${si}">${collap?'<span class="pv-caret">▸</span>':''}<span>${esc(s.name||'')}</span><span class="pv-ct">${s.rows.length}</span></div>`;
+    return `<div class="pv-section">${hdr}${body}</div>`;
   }).join('');
-  list.querySelectorAll('.pval').forEach(inp=>inp.onchange=()=>matronSend('params:set('+inp.dataset.i+','+(parseFloat(inp.value)||0)+')'));
+  list.querySelectorAll('.pv-head.collap').forEach(h=>h.onclick=()=>{ const b=h.nextElementSibling; const show=b.style.display==='none';
+    b.style.display=show?'':'none'; h.classList.toggle('open',show); });
+  list.querySelectorAll('.psel').forEach(s=>s.onchange=()=>matronSend('params:set('+s.dataset.i+','+(s.selectedIndex+1)+')'));
+  list.querySelectorAll('.ptrig').forEach(b=>b.onclick=()=>matronSend('params:set('+b.dataset.i+',1)'));
+  list.querySelectorAll('.ptog').forEach(b=>b.onclick=()=>{ const on=b.dataset.on==='1'?0:1; b.dataset.on=on; b.textContent=on?'on':'off'; b.classList.toggle('on',!!on); matronSend('params:set('+b.dataset.i+','+on+')'); });
+  list.querySelectorAll('.psld').forEach(sl=>{ const vi=list.querySelector('.pv-val[data-vi="'+sl.dataset.i+'"]');
+    sl.oninput=()=>{ if(vi) vi.textContent=fmtNum(sl.value)+(sl.dataset.unit?' '+sl.dataset.unit:''); };
+    sl.onchange=()=>matronSend('params:set('+sl.dataset.i+','+sl.value+')'); });
 }
 
 /* ============ theme engine ============ */
@@ -1339,22 +1391,14 @@ function matronConnect(){
   matronWS.onclose=()=>{ matronReady=false; matronRetry(); };
   matronWS.onerror=()=>{ try{ matronWS.close(); }catch(_){ } };
 }
-function matronRetry(){ if(matronRetryT) return; matronRetryT=setTimeout(()=>{ matronRetryT=null; if(!matronReady) matronConnect(); }, 4000); }
-function matronSend(lua){ if(matronReady){ try{ matronWS.send(lua+'\n'); return true; }catch(_){ } } return false; }
+function matronRetry(){ if(matronRetryT) return; matronRetryT=setTimeout(()=>{ matronRetryT=null; if(!matronReady) matronConnect(); }, 2500); }
+function matronSend(lua){ if(matronReady){ try{ matronWS.send(new TextEncoder().encode(lua+'\n')); return true; }catch(_){ } } return false; }  // nng wants binary frames
 
 function replSubmit(){
   const inp=document.getElementById('replin'); const v=inp.value.trim(); if(!v) return;
   replPrint(`&gt;&gt; <span class="cmd">${esc(v)}</span>`);
   if(matronReady){ matronSend(v); inp.value=''; hideAC(); return; }   // REAL: stream from device
-  // ---- mock fallback (off-device demo) ----
-  let resp='';
-  if(/clock\.tempo/.test(v)) resp='<span class="ok">110.0</span>';
-  else if(/params:get/.test(v)) resp='<span class="ok">0.5</span>';
-  else if(/^print/.test(v)) resp=v.replace(/^print\s*\(?["']?/,'').replace(/["']?\)?$/,'');
-  else if(target==='sc') resp='<span class="meta">-> sc: ok</span>';
-  else if(/=/.test(v)) resp='';
-  else resp='<span class="meta"># ok (demo — no device link)</span>';
-  if(resp) replPrint(resp);
+  replPrint('<span class="meta"># no live matron link — open ingenue on the device to run commands</span>');
   inp.value=''; hideAC();
 }
 function esc(s){return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
@@ -2200,8 +2244,7 @@ function boot(){
   document.querySelector('#tree .row[data-file]')?.classList.add('sel');
   // repl seed
   replPrint(`<span class="sys">███▓▒░ MATRON ░▒▓███</span>`);
-  replPrint(`<span class="meta"># script load: /home/we/dust/code/awake/awake.lua</span>`);
-  replPrint(`loading engine: PolyPerc`);
+  replPrint(`<span class="meta"># connecting to matron…</span>`);
   // repl wiring
   const inp=document.getElementById('replin');
   inp.addEventListener('input',updateAC);
