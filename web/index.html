@@ -4,7 +4,8 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
 <meta name="theme-color" content="#1D1F21" id="metaTheme" />
-<title>maiden · interactive redesign</title>
+<title>ingenue</title>
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='7' fill='%231D1F21'/><circle cx='16' cy='16' r='8.5' fill='none' stroke='%23DEB887' stroke-width='2.6'/><line x1='16' y1='16' x2='16' y2='8.5' stroke='%23CC9999' stroke-width='2.8' stroke-linecap='round'/><circle cx='16' cy='16' r='1.7' fill='%23DEB887'/></svg>" />
 
 <!-- Ace editor (maiden's real editor component) -->
 <script src="https://cdn.jsdelivr.net/npm/ace-builds@1.32.6/src-min-noconflict/ace.js"></script>
@@ -379,6 +380,14 @@ button{font-family:inherit}
 .pbtn{background:var(--panel);color:var(--fg);border:1px solid var(--trim);border-radius:7px;padding:4px 14px;font:inherit;font-size:12px;cursor:pointer}
 .pbtn.on{border-color:var(--ok,#5c5);color:var(--ok,#5c5)}
 .pnum{background:var(--panel);color:var(--fg);border:1px solid var(--trim);border-radius:7px;padding:4px 8px;font:inherit;font-size:12px;width:84px;text-align:right}
+.pv-presets{border-bottom:1px solid var(--trim);background:var(--panel2);padding:10px 14px}
+.pv-presets-hd{font-size:11px;color:var(--muted);margin-bottom:8px}
+.pv-slots{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:7px}
+.pv-slot{display:flex;align-items:center;gap:6px;background:var(--panel);border:1px solid var(--trim);border-radius:8px;padding:5px 8px}
+.pv-slot .sn{flex:1;font-size:12px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pv-slot .sn .empty{color:var(--faint)}
+.pv-slot .rd-pill-btn{padding:3px 9px;font-size:11px}
+.pv-presets-io{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:9px}
 .pv-subhead{font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);padding:9px 14px 3px}
 .pv-group .pv-head{padding-left:calc(14px + var(--ind,0px))}
 .preset{background:none;border:0;color:var(--faint);cursor:pointer;font-size:14px;line-height:1;padding:2px 4px;border-radius:5px;flex:0 0 auto}
@@ -594,12 +603,15 @@ button{font-family:inherit}
          <button class="rd-pill-btn" id="params-refresh" title="re-read from device">↻</button>
          <button class="rd-pill-btn" id="params-defaults" title="reset all params to their defaults">↺ defaults</button>
          <button class="rd-pill-btn" id="params-declutter" title="hide empty MIDI/device slots">declutter</button>
-         <button class="rd-pill-btn" id="params-save">save preset</button>
-         <button class="rd-pill-btn" id="params-load">load preset</button>
+         <button class="rd-pill-btn" id="params-presets" title="browser presets — save/load/share">presets ▾</button>
+         <button class="rd-pill-btn" id="params-save" title="write a device PSET file (matron)">→ PSET</button>
+         <button class="rd-pill-btn" id="params-load" title="read a device PSET file (matron)">← PSET</button>
          <span class="v" id="params-status" style="width:auto;color:var(--faint);font-family:inherit;flex:1"></span>
        </div>
+       <div class="pv-presets" id="pv-presets" style="display:none"></div>
        <div class="pv-scroll"><div id="params-list"></div></div>
      </div>
+     <input type="file" id="preset-import" accept="application/json,.json" style="display:none">
      <input type="file" id="file-input" multiple style="display:none">
      <input type="file" id="dir-input" webkitdirectory directory multiple style="display:none">
 
@@ -654,7 +666,7 @@ button{font-family:inherit}
            <button class="rd-pill-btn" id="audio-restart" style="display:none;margin:0">restart audio</button></div>
 
          <div class="cfg-foot" style="margin-top:24px;padding-top:14px;border-top:1px solid var(--trim);display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;font-size:12px;color:var(--muted)">
-           <span>ingenue — a modern editor for norns</span>
+           <span>ingenue — a modern editor for norns · inspired by <a href="https://monome.org/docs/norns/maiden/" target="_blank" rel="noopener" style="color:var(--muted)">maiden</a></span>
            <a href="https://github.com/seajaysec/ingenue" target="_blank" rel="noopener" style="color:var(--accent);text-decoration:none">github.com/seajaysec/ingenue ↗</a>
          </div>
        </div>
@@ -780,8 +792,8 @@ button{font-family:inherit}
 </div>
 
 <script>
-const BUILD='b40 · 2026-06-04 · card head wraps buttons below name (no overlap) + wider mod cards';
-console.log('%cmaiden redesign build: '+BUILD,'color:#DEB887;font-weight:bold');
+const BUILD='b41 · 2026-06-04 · ingenue branding (title+favicon) + browser param presets + JSON export/import';
+console.log('%cingenue build: '+BUILD,'color:#DEB887;font-weight:bold');
 const LS={
   get(k,d){try{const v=localStorage.getItem('maiden.'+k);return v==null?d:JSON.parse(v);}catch(e){return d;}},
   set(k,v){try{localStorage.setItem('maiden.'+k,JSON.stringify(v));}catch(e){}}
@@ -1195,7 +1207,57 @@ async function renderModsView(){
    sub-headers, options → dropdowns, number/control/taper → sliders, binary → toggle,
    trigger → button. (Web-MIDI bridge is a post-release stretch goal — see README.)
    norns types: 0 sep · 1 number · 2 option · 3 control · 4 file · 5 taper · 6 trigger · 7 group · 8 text · 9 binary */
-let PARAMS=[], paramBuf='', presetSlot=1, pDeclutter=true, pCollapsed={}, pLabelMap={};
+let PARAMS=[], paramBuf='', presetSlot=1, pDeclutter=true, pCollapsed={}, pLabelMap={}, paramScript='';
+/* ===== browser presets: localStorage slots + JSON export/import (script-safety) ===== */
+const PRESET_SLOTS=6;
+function curParamVals(){ const o={}; PARAMS.forEach(p=>{ if(p.id && [1,2,3,5,9].indexOf(p.t)>=0) o[p.id]=p.val; }); return o; }
+function allPresets(){ return LS.get('presets',{})||{}; }
+function scriptKey(){ return (paramScript||'?').toLowerCase(); }
+function scriptPresets(){ return allPresets()[scriptKey()]||{}; }
+function applyVals(vals){ Object.keys(vals).forEach(id=>matronSend('params:set("'+id+'",'+vals[id]+')')); matronSend('params:bang()'); }
+function savePreset(slot){
+  if(!paramScript){ alert('no running script — open ingenue on the device with a script loaded'); return; }
+  const name=(prompt('name this preset',scriptPresets()[slot]?scriptPresets()[slot].name:('slot '+(slot+1)))||'').trim(); if(name===null) return;
+  const a=allPresets(); a[scriptKey()]=a[scriptKey()]||{}; a[scriptKey()][slot]={name:name||('slot '+(slot+1)),ts:Date.now(),vals:curParamVals()};
+  LS.set('presets',a); renderPresets(); document.getElementById('params-status').textContent='saved preset “'+(name||('slot '+(slot+1)))+'”';
+}
+function loadPreset(slot){ const p=scriptPresets()[slot]; if(!p) return; applyVals(p.vals); setTimeout(refreshParams,500);
+  document.getElementById('params-status').textContent='loaded “'+p.name+'”'; }
+function deletePreset(slot){ const a=allPresets(); if(a[scriptKey()]){ delete a[scriptKey()][slot]; LS.set('presets',a); renderPresets(); } }
+function exportPresetJson(){
+  if(!paramScript){ alert('no running script'); return; }
+  const data={app:'ingenue',kind:'params-preset',script:paramScript,ts:Date.now(),vals:curParamVals()};
+  const blob=new Blob([JSON.stringify(data,null,2)],{type:'application/json'}); const url=URL.createObjectURL(blob);
+  const a=document.createElement('a'); a.href=url; a.download='ingenue-'+(paramScript.replace(/[^a-z0-9]+/gi,'_'))+'-params.json'; a.click();
+  setTimeout(()=>URL.revokeObjectURL(url),1500);
+}
+function importPresetJson(file){ const r=new FileReader();
+  r.onload=()=>{ let d; try{ d=JSON.parse(r.result); }catch(e){ alert('not valid JSON'); return; }
+    if(!d || d.kind!=='params-preset' || !d.vals){ alert('not an ingenue params preset'); return; }
+    if((d.script||'').toLowerCase()!==scriptKey()){ alert('This preset is for “'+(d.script||'?')+'”, but the running script is “'+(paramScript||'?')+'”.\nLoad it from that script — refusing for safety.'); return; }
+    applyVals(d.vals); setTimeout(refreshParams,500); document.getElementById('params-status').textContent='imported preset from file';
+  }; r.readAsText(file);
+}
+function togglePresets(){ const el=document.getElementById('pv-presets'); const show=el.style.display==='none'; el.style.display=show?'':'none';
+  document.getElementById('params-presets').classList.toggle('on',show); if(show) renderPresets(); }
+function renderPresets(){
+  const el=document.getElementById('pv-presets'); const ps=scriptPresets();
+  let slots='';
+  for(let i=0;i<PRESET_SLOTS;i++){ const p=ps[i];
+    slots+=`<div class="pv-slot"><span class="sn">${p?esc(p.name):'<span class=\"empty\">slot '+(i+1)+' · empty</span>'}</span>`
+      +`<button class="rd-pill-btn ps-save" data-slot="${i}" title="save current params here">save</button>`
+      +(p?`<button class="rd-pill-btn ps-load" data-slot="${i}">load</button><button class="rd-pill-btn ps-del" data-slot="${i}" title="delete">✕</button>`:'')+`</div>`;
+  }
+  el.innerHTML=`<div class="pv-presets-hd">browser presets for <b>${esc(paramScript||'— no script —')}</b> · stored in this browser</div>`
+    +`<div class="pv-slots">${slots}</div>`
+    +`<div class="pv-presets-io"><button class="rd-pill-btn" id="ps-export">⤓ export .json</button><button class="rd-pill-btn" id="ps-import">⤒ import .json</button>`
+    +`<span class="v" style="color:var(--faint);font-family:inherit">share a preset as a file — it only loads back onto the same script</span></div>`;
+  el.querySelectorAll('.ps-save').forEach(b=>b.onclick=()=>savePreset(+b.dataset.slot));
+  el.querySelectorAll('.ps-load').forEach(b=>b.onclick=()=>loadPreset(+b.dataset.slot));
+  el.querySelectorAll('.ps-del').forEach(b=>b.onclick=()=>deletePreset(+b.dataset.slot));
+  document.getElementById('ps-export').onclick=exportPresetJson;
+  document.getElementById('ps-import').onclick=()=>document.getElementById('preset-import').click();
+}
 function openParams(){ showParams(); }
 function isEmptySlot(p){ return /^\s*\d+\.\s*none\s*$/i.test(p.name||''); }   // empty MIDI/device slots
 // number params that display NAMES (root note, etc.): pre-read params:string for each value
@@ -1212,17 +1274,20 @@ function refreshParams(){
   const status=document.getElementById('params-status');
   if(!matronReady){ status.textContent='no live link to matron — open ingenue on the device to use this'; document.getElementById('params-list').innerHTML=''; return; }
   status.textContent='reading params from device…'; PARAMS=[]; paramBuf=''; matronOnData=onParamData;
-  // dump per param: i, type, name, min, max, raw value, display string, options(\31), default, group child-count
-  matronSend("do print('@@ING_P_BEGIN@@') for i=1,params.count do local p=params:lookup_param(i) local t=p.t or -1 local nm=p.name or p.id or '?' local mn='' local mx='' local opts='' local nn='' local df='' if t==7 then nn=tostring(p.n or '') end if t==2 and p.options then opts=table.concat(p.options,'\\31') end if p.controlspec then mn=tostring(p.controlspec.minval) mx=tostring(p.controlspec.maxval) elseif p.min~=nil then mn=tostring(p.min) mx=tostring(p.max) end local d=p.default if d==nil and p.controlspec then d=p.controlspec.default end if d~=nil then df=tostring(d) end local val='' local str='' pcall(function() val=params:get(i) end) pcall(function() str=params:string(i) end) print('@@ING_P@@'..i..'\\9'..t..'\\9'..tostring(nm)..'\\9'..mn..'\\9'..mx..'\\9'..tostring(val)..'\\9'..tostring(str)..'\\9'..opts..'\\9'..df..'\\9'..nn) end print('@@ING_P_END@@') end");
+  // dump per param: i, type, name, min, max, raw value, display string, options(\31), default, group child-count, id
+  matronSend("do print('@@ING_SCRIPT@@'..tostring((norns.state and (norns.state.name or norns.state.shortname)) or '')) print('@@ING_P_BEGIN@@') for i=1,params.count do local p=params:lookup_param(i) local t=p.t or -1 local nm=p.name or p.id or '?' local mn='' local mx='' local opts='' local nn='' local df='' if t==7 then nn=tostring(p.n or '') end if t==2 and p.options then opts=table.concat(p.options,'\\31') end if p.controlspec then mn=tostring(p.controlspec.minval) mx=tostring(p.controlspec.maxval) elseif p.min~=nil then mn=tostring(p.min) mx=tostring(p.max) end local d=p.default if d==nil and p.controlspec then d=p.controlspec.default end if d~=nil then df=tostring(d) end local val='' local str='' pcall(function() val=params:get(i) end) pcall(function() str=params:string(i) end) print('@@ING_P@@'..i..'\\9'..t..'\\9'..tostring(nm)..'\\9'..mn..'\\9'..mx..'\\9'..tostring(val)..'\\9'..tostring(str)..'\\9'..opts..'\\9'..df..'\\9'..nn..'\\9'..tostring(p.id or '')) end print('@@ING_P_END@@') end");
   setTimeout(()=>{ if(!PARAMS.length && matronReady) status.textContent='waiting for matron — if a script is loaded, hit ↻'; },1400);
 }
 function onParamData(t){
   paramBuf+=t; if(paramBuf.indexOf('@@ING_P_END@@')<0) return;
+  const sm=paramBuf.match(/@@ING_SCRIPT@@([^\n]*)/); if(sm) paramScript=sm[1].trim();
   PARAMS=[]; const US=String.fromCharCode(31);
   paramBuf.split('\n').forEach(ln=>{ const k=ln.indexOf('@@ING_P@@'); if(k<0) return;
     const a=ln.slice(k+9).split('\t'); if(a.length<8) return;
-    PARAMS.push({i:+a[0],t:+a[1],name:a[2],min:a[3],max:a[4],val:a[5],str:a[6],opts:(a[7]||'')?a[7].split(US):[],def:(a[8]||''),n:+(a[9]||0)}); });
-  paramBuf=''; matronOnData=null; paintParams();
+    PARAMS.push({i:+a[0],t:+a[1],name:a[2],min:a[3],max:a[4],val:a[5],str:a[6],opts:(a[7]||'')?a[7].split(US):[],def:(a[8]||''),n:+(a[9]||0),id:(a[10]||'')}); });
+  paramBuf=''; matronOnData=null;
+  const ps=document.getElementById('params-script'); if(ps) ps.textContent=paramScript?('· '+paramScript):'';
+  paintParams(); if(document.getElementById('pv-presets').style.display!=='none') renderPresets();
 }
 function fmtNum(v){ v=+v; if(!isFinite(v)) return String(v); return Number.isInteger(v)?String(v):(Math.abs(v)>=100?v.toFixed(0):(Math.abs(v)>=1?v.toFixed(2):v.toFixed(3))); }
 function unitOf(p){ const m=(p.str||'').match(/[a-zA-Z%][a-zA-Z%\/]*\s*$/); return m?m[0].trim():''; }
@@ -2424,6 +2489,8 @@ function boot(){
   document.getElementById('a-mods').onclick=showMods;
   // B9 params editor wiring (its own view)
   document.getElementById('params-refresh').onclick=refreshParams;
+  document.getElementById('params-presets').onclick=togglePresets;
+  document.getElementById('preset-import').onchange=e=>{ const f=e.target.files[0]; e.target.value=''; if(f) importPresetJson(f); };
   document.getElementById('params-declutter').onclick=()=>{ pDeclutter=!pDeclutter;
     document.getElementById('params-declutter').classList.toggle('on',pDeclutter); paintParams(); };
   document.getElementById('params-declutter').classList.add('on');
