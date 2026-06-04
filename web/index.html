@@ -216,6 +216,14 @@ button{font-family:inherit}
 .rd-cathead .nm{font-weight:700;color:var(--fg);font-size:14px;text-transform:none}
 .rd-cathead .line{flex:1;height:1px;background:var(--trim)}
 .rd-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(310px,1fr));gap:12px}
+.facets{display:flex;flex-wrap:wrap;gap:5px;margin:7px 0 0}
+.facet{font-size:10.5px;line-height:1.6;padding:1px 7px;border-radius:9px;white-space:nowrap;border:1px solid color-mix(in srgb,var(--fc) 45%,transparent);background:color-mix(in srgb,var(--fc) 14%,transparent);color:var(--fc)}
+.gh-load{max-width:340px;margin:38px auto;text-align:center}
+.gh-load-msg{font-size:13px;color:var(--muted);margin-bottom:11px}
+.gh-bar{height:6px;border-radius:4px;background:color-mix(in srgb,var(--fg) 12%,transparent);overflow:hidden;position:relative}
+.gh-bar-fill{height:100%;width:0;background:var(--accent,#8af);border-radius:4px;transition:width .18s ease}
+.gh-bar.indet .gh-bar-fill{width:38%;position:absolute;animation:ghslide 1.05s ease-in-out infinite}
+@keyframes ghslide{0%{left:-38%}100%{left:100%}}
 .card{background:var(--panel);border:1px solid var(--trim);border-radius:13px;padding:14px 15px;display:flex;
   flex-direction:column;gap:9px;transition:border-color .15s,transform .15s,box-shadow .15s}
 .card:hover{border-color:var(--accent2);box-shadow:0 4px 16px rgba(0,0,0,.14)}  /* no transform → no scroll repaint jank */
@@ -742,7 +750,7 @@ button{font-family:inherit}
        <div class="modal-body">
          <p class="trust-msg" id="dep-intro"></p>
          <div id="dep-plan"></div>
-         <div class="trust-warn" id="dep-warn" style="margin-top:14px">Setup runs the script's own installer (<span class="mono">lib/install.sh</span>) and fetches the downloads above. It can take several minutes and runs commands on your device.</div>
+         <div class="trust-warn" id="dep-warn" style="margin-top:14px">Setup runs the script's own installer (<span class="mono">install.sh</span>) and fetches the downloads above. It can take several minutes and runs commands on your device.</div>
          <div class="trust-actions">
            <button class="btn btn-remove" id="dep-skip">Skip for now</button>
            <button class="btn btn-install" id="dep-go">Set up everything</button>
@@ -1149,6 +1157,7 @@ async function loadCatalog(){
       const fm=feed.scripts||feed;
       entries.forEach(e=>{ const x=fm[e.n.toLowerCase()]; if(!x) return;
         if(x.engine) e.engine=x.engine; if(x.nb) e.nb=1;
+        if(x.facets) e.facets=x.facets; if(x.nb_role) e.nbRole=x.nb_role;   // structural facets from the scraper (same model as live discovery)
         if(x.readme) e.readme=x.readme; if(x.images) e.images=x.images;
         if(x.tags) e.tags=Array.from(new Set((e.tags||[]).concat(x.tags))).slice(0,8);
         if(x.upd) e.upd=e.upd||x.upd; });
@@ -1690,7 +1699,7 @@ function tagBar(tab){
 }
 function repoList(tab){
   let list=repoBaseList(tab).slice();
-  if(tab==='discover' && discHideKnown){ const k=knownNames(); list=list.filter(p=>!k.has(p.n.toLowerCase())); }
+  if(tab==='discover' && discHideKnown && !_discUser){ const k=knownNames(); list=list.filter(p=>!k.has(p.n.toLowerCase())); }
   if(repoQuery && tab!=='discover'){ const q=repoQuery.toLowerCase();   // discover searches GitHub on Enter, not live
     list=list.filter(p=>(p.n+' '+p.a+' '+(p.tags||[]).join(' ')+' '+(p.d||'')).toLowerCase().includes(q)); }
   if(tagFilter.size && tab!=='discover'){ list=list.filter(p=>{ const t=entryTags(p); return [...tagFilter].every(f=>t.includes(f)); }); }
@@ -1740,13 +1749,20 @@ function enqueueInstall(p,btn,note,opts){
     jobDone(job,btn,!/err|fail/i.test(p.n), `${p.n} installed successfully — run SYSTEM > RESTART`, 'installed'); };
   setTimeout(tick,300);
 }
+// flip a removed script's state across every list immediately, so its card shows Install (not Remove)
+// even if the device installed-list refetch is slow or fails. refreshInstalled() still reconciles after.
+function markRemoved(nm){ const k=norm(nm);
+  REPO.installed=REPO.installed.filter(p=>norm(p.dir||p.n)!==k);
+  ['available','discover'].forEach(t=>(REPO[t]||[]).forEach(p=>{ if(norm(p.dir||p.n)===k){ p.inst=0; p.upd_avail=0; } }));
+  if(document.getElementById('repoview').classList.contains('on')) renderRepo();
+}
 function removeScript(p,btn){
   const nm=p.dir||p.n;
   confirmDialog('remove script?', `Remove <b>${p.n}</b>? This permanently deletes <b>dust/code/${nm}</b> from the device.`, ()=>{
     if(!HAS_BACKEND){ if(btn){const t=btn.textContent;btn.textContent='removed';setTimeout(()=>btn.textContent=t,900);} return; }
     const job=mkJob(p.n,'removing'); job.querySelector('.ilog').textContent=`deleting dust/code/${nm}…`;
     fetch('api/remove',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:nm})})
-      .then(r=>r.json()).then(j=>{ const ok=!j.error; jobDone(job,btn,ok, ok?`removed ${nm}`:j.error, 'removed'); if(ok) refreshInstalled(); })
+      .then(r=>r.json()).then(j=>{ const ok=!j.error; jobDone(job,btn,ok, ok?`removed ${nm}`:j.error, 'removed'); if(ok){ markRemoved(nm); refreshInstalled(); } })
       .catch(e=>jobDone(job,btn,false,e.message,''));
   }, true);
 }
@@ -1790,7 +1806,7 @@ function depNodeRows(rep){
   if((rep.downloads||[]).length) rows.push(R('⬇','downloads ('+rep.downloads.length+')',
     rep.downloads.map(u=>`<a href="${u}" target="_blank" rel="noopener">${u.split('/').slice(-1)[0]}</a>`).join('<br>')));
   if((rep.native||[]).length) rows.push(R('🛠','native tools',rep.native.join(', ')+' — used by the installer'));
-  if(rep.install_script) rows.push(R('▶','installer','lib/install.sh sets up the above on device'));
+  if(rep.install_script) rows.push(R('▶','installer','its install.sh sets up the above on device'));
   return rows.join('');
 }
 function depTreeHTML(node, level){
@@ -1841,15 +1857,34 @@ async function runHeal(root){
       }
       await heal(child);                                   // recurse: the dependency's own deps + installer
     }
-    if(node.install_script){                               // run this node's installer (downloads/builds, port-proofed)
-      const job=mkJob(node.name,'setting up'); job.querySelector('.ilog').textContent='running '+node.name+' lib/install.sh — builds + downloads, can take several minutes…';
-      try{ const j=await (await fetch('api/heal',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:node.name})})).json();
-        jobDone(job,null,!!j.ok,(j.log||j.error||'')+'\n'+(j.ok?'✓ '+node.name+' set up — run SYSTEM > RESTART':'✗ '+node.name+' setup failed'),'set up'); }
-      catch(e){ jobDone(job,null,false,e.message,''); }
-    }
+    if(node.install_script) await runSetup(node.name);     // run this node's installer (downloads/builds, port-proofed)
   }
   await heal(root);
   refreshInstalled();
+}
+// run JUST a script's installer step (no clone, no dependency re-walk). On failure it stays
+// honest — the script is already installed and runnable; only the optional setup didn't finish —
+// and offers a clean retry of this one step.
+async function runSetup(name){
+  const job=mkJob(name,'setting up'); const log=job.querySelector('.ilog');
+  log.textContent='running '+name+' install.sh — builds + downloads, can take several minutes…';
+  try{
+    const j=await (await fetch('api/heal',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name})})).json();
+    if(j.ok) jobDone(job,null,true,(j.log||'')+'\n✓ '+name+' set up — run SYSTEM > RESTART','set up');
+    else setupFailed(job,name,j.error||j.log||'setup did not complete');
+  }catch(e){ setupFailed(job,name,e.message); }
+}
+function setupFailed(job,name,why){
+  job.classList.remove('ok'); job.classList.add('err');
+  const sp=job.querySelector('.ispin'); if(sp) sp.style.display='none';
+  job.querySelector('.istatus').textContent='⚠ setup incomplete';
+  const log=job.querySelector('.ilog');
+  log.textContent+='\n'+why+'\n'+name+' is installed and may still run — only its optional setup step didn’t finish.';
+  log.scrollTop=log.scrollHeight;
+  let b=job.querySelector('.iretry');
+  if(!b){ b=document.createElement('button'); b.className='iretry btn'; b.style.cssText='margin:8px 10px 4px;font-size:12px'; job.appendChild(b); }
+  b.textContent='↻ try setup again';
+  b.onclick=()=>{ job.remove(); runSetup(name); };   // retry this step alone — nothing else re-runs
 }
 async function showRequirements(p){
   document.getElementById('dep-title').textContent='requirements';
@@ -1898,44 +1933,119 @@ const GH_BLOCK_NAMES=new Set(['ingenue']);   // also hide any repo named exactly
 let GH_LOGIN=null;
 function ghHeaders(){ const h={'Accept':'application/vnd.github+json'}; const g=LS.get('gh',{})||{}; if(g.t) h['Authorization']='token '+g.t; return h; }
 async function ghWhoami(){ if(GH_LOGIN) return GH_LOGIN; try{ const r=await fetch('https://api.github.com/user',{headers:ghHeaders()}); if(r.ok) GH_LOGIN=(await r.json()).login; }catch(_){ } return GH_LOGIN; }
-const _validCache={};
-async function validNorns(owner,name){   // structure check: a top-level .lua file (the norns script pattern)
-  const key=(owner+'/'+name).toLowerCase(); if(key in _validCache) return _validCache[key];
-  try{ const r=await fetch(`https://api.github.com/repos/${owner}/${name}/contents`,{headers:ghHeaders()});
-    if(!r.ok) return _validCache[key]=true;            // can't inspect (rate/redirect) → don't over-filter
-    const items=await r.json();
-    return _validCache[key]= Array.isArray(items) && items.some(f=>f.type==='file' && /\.lua$/i.test(f.name));
-  }catch(_){ return _validCache[key]=true; }
+/* ===== norns repo classifier (replaces the blunt "top-level .lua" gate) =====
+   The accurate "is this a norns artifact?" signal is the runtime-API fingerprint —
+   verified 343/343 on the community corpus, and exactly what generic-lua cruft lacks.
+   The top-level .lua is now just ONE facet label (script-ness), not the gate.
+   Cost: 1 recursive-tree call + at most 1 key-file read (skipped when lib/mod.lua or a
+   .sc engine already proves norns structurally). Determinations persist in localStorage,
+   keyed by pushed_at, so the universe self-warms and re-browsing costs nothing. */
+const _classCache={};
+const NORNS_FP=/engine\.|softcut\.|\bscreen\.|params:add|function init\(|function redraw\(|function enc\(|function key\(|controlspec|musicutil|grid\.connect|arc\.connect|metro\.|norns\.|_norns|mod\.hook|mod\.menu/;
+function _clsGet(k){ try{ const v=localStorage.getItem('ing_cls_'+k); return v?JSON.parse(v):null; }catch(_){ return null; } }
+function _clsPut(k,v){ try{ localStorage.setItem('ing_cls_'+k, JSON.stringify(v)); }catch(_){ } }
+async function classifyRepo(owner,name,branch,pushed){
+  const key=(owner+'/'+name).toLowerCase()+'@'+(pushed||'');
+  if(key in _classCache) return _classCache[key];
+  const persisted=_clsGet(key); if(persisted) return _classCache[key]=persisted;
+  const dunno={ok:true,facets:[],nb:0,nbRole:null};   // can't inspect (rate/redirect) → don't over-filter; not persisted
+  try{
+    const tr=await fetch(`https://api.github.com/repos/${owner}/${name}/git/trees/${branch||'HEAD'}?recursive=1`,{headers:ghHeaders()});
+    if(!tr.ok) return _classCache[key]=dunno;
+    const tj=await tr.json();
+    const paths=(tj.tree||[]).filter(e=>e.type==='blob').map(e=>e.path);
+    const topLua=paths.filter(p=>!p.includes('/') && /\.lua$/i.test(p));
+    const hasMod=paths.some(p=>/^lib\/mod\.lua$/i.test(p));
+    const libLua=paths.filter(p=>/\.lua$/i.test(p) && /(^|\/)lib\//i.test(p));
+    const hasEngine=paths.some(p=>/\.sc$/i.test(p) || /(^|\/)engine\//i.test(p));
+    let isNorns = hasMod || hasEngine;   // structural proof — no content read needed
+    // the one key file to read: script main (prefer <name>.lua), else mod.lua, else a lib file
+    const keyFile = topLua.find(p=>p.toLowerCase()===name.toLowerCase()+'.lua') || topLua[0]
+                  || (hasMod?'lib/mod.lua':null) || libLua[0] || null;
+    let nb=0, nbRole=null;
+    if(keyFile){
+      try{
+        const ep=keyFile.split('/').map(encodeURIComponent).join('/');
+        const fr=await fetch(`https://api.github.com/repos/${owner}/${name}/contents/${ep}`,
+          {headers:{...ghHeaders(),'Accept':'application/vnd.github.raw'}});
+        if(fr.ok){ const blob=await fr.text();
+          if(NORNS_FP.test(blob)) isNorns=true;
+          if(/nb:add_player/.test(blob)){ nb=1; nbRole='provides'; }          // registers voices → a voice pack
+          else if(/nb:add_param|require[\s(]*['"][^'"]*nb\/lib/.test(blob)){ nb=1; nbRole='uses'; } // assignable voices in-script
+        }
+      }catch(_){}
+    }
+    // provider whose add_player lives in a lib/ file we didn't read → fall back to the nb_ naming convention
+    if(!nb && (hasMod||libLua.length) && /(^|[^a-z])nb([^a-z]|$)/i.test(name)){ nb=1; nbRole='provides'; }
+    if(!isNorns){ const res={ok:false,facets:[],nb:0,nbRole:null}; _clsPut(key,res); return _classCache[key]=res; }
+    const facets=[];
+    if(topLua.length) facets.push('script');
+    if(hasMod) facets.push('mod');
+    if(!topLua.length && !hasMod && libLua.length) facets.push('library');
+    if(hasEngine) facets.push('engine');
+    const res={ok:true,facets,nb,nbRole};
+    _clsPut(key,res); return _classCache[key]=res;
+  }catch(_){ return _classCache[key]=dunno; }
 }
+function ghOwner(p){ if(p&&p.owner) return String(p.owner).toLowerCase();
+  const m=/github\.com\/([^\/]+)\//i.exec((p&&p.proj)||''); return m?m[1].toLowerCase():''; }
 async function ghSearch(query,page){
   _discQuery=(query!=null?query:_discQuery); _discPage=page||1;
   const v=document.getElementById('repoview'); const grid=v.querySelector('.rd-grid');
   const base=(_discQuery||'').trim();
-  const label=discMineOnly?'your repos':(base?'“'+base+'”':'norns scripts');
-  if(grid) grid.innerHTML=`<div class="gh-empty"><p>searching GitHub for ${label} (page ${_discPage})…</p></div>`;
+  const label=_discUser?('norns repos by @'+_discUser):(discMineOnly?'your repos':(base?'“'+base+'”':'norns repos'));
+  const setLoad=(msg,pct)=>{ const m=document.getElementById('gh-load-msg'), bar=document.getElementById('gh-bar'), f=document.getElementById('gh-bar-fill');
+    if(m&&msg!=null) m.textContent=msg;
+    if(bar){ if(pct==null) bar.classList.add('indet'); else { bar.classList.remove('indet'); if(f) f.style.width=Math.round(pct)+'%'; } } };
+  if(grid) grid.innerHTML=`<div class="gh-empty"><div class="gh-load"><div class="gh-load-msg" id="gh-load-msg">finding ${label}${_discPage>1?` · page ${_discPage}`:''}…</div><div class="gh-bar indet" id="gh-bar"><div class="gh-bar-fill" id="gh-bar-fill"></div></div></div></div>`;
   try{
     let qstr;
-    if(discMineOnly){ const me=await ghWhoami(); if(!me) throw new Error('connect a token in settings to see your repos');
+    if(_discUser){ qstr='user:'+_discUser+' language:lua'; }                 // a specific author — gate-classified to norns
+    else if(discMineOnly){ const me=await ghWhoami(); if(!me) throw new Error('connect a token in settings to see your repos');
       qstr=(base?base+' ':'')+'user:'+me+' language:lua'; }                 // your own — public + private the token sees
-    else qstr=(base?base+' norns':'norns script')+' language:lua';          // default: norns scripts, not "sequencer"
-    const r=await fetch(`https://api.github.com/search/repositories?q=${encodeURIComponent(qstr)}&sort=${discMineOnly?'updated':'stars'}&order=desc&per_page=${DISC_PER}&page=${_discPage}`,{headers:ghHeaders()});
+    else qstr=(base?base+' norns':'norns')+' language:lua';                  // keywordless default: every norns repo
+    const sort = sortMode==='stars' ? 'stars' : 'updated';                   // updated surfaces novel/active dev, not buried-under-popular
+    const r=await fetch(`https://api.github.com/search/repositories?q=${encodeURIComponent(qstr)}&sort=${sort}&order=desc&per_page=${DISC_PER}&page=${_discPage}`,{headers:ghHeaders()});
     if(!r.ok) throw new Error('HTTP '+r.status+(r.status===403?' (rate limit — add a token in settings)':''));
     const j=await r.json();
     _discTotal=Math.min(j.total_count||0,1000);   // GitHub caps search at 1000 results
     const me=GH_LOGIN, comm=new Set(REPO.available.filter(p=>p.srcs.includes('community')).map(p=>p.n.toLowerCase()));
+    const known=knownNames();
     let items=(j.items||[]).filter(it=>it.owner && !GH_BLOCK.has((it.owner.login+'/'+it.name).toLowerCase()) && !GH_BLOCK_NAMES.has((it.name||'').toLowerCase()));
-    // validate structure (top-level .lua) before showing — drop non-scripts upstream
-    const checks=await Promise.all(items.map(it=>validNorns(it.owner.login,it.name)));
-    items=items.filter((it,i)=>checks[i]);
-    REPO.discover=items.map(it=>{
+    // skip-before-classify: don't spend classify calls on repos already in the catalog/installed.
+    // (a specific author's view is exempt — there you want to see everything they've made.)
+    if(!_discUser && discHideKnown) items=items.filter(it=>!known.has((it.name||'').toLowerCase()));
+    // classify survivors — gate on the norns fingerprint, capture facets (script/mod/library/engine) + nb.
+    // the bar fills as each repo resolves (some hit the persistent cache and return instantly).
+    let done=0; const total=items.length||1;
+    setLoad(items.length?`checking ${items.length} repo${items.length>1?'s':''}…`:'no new repos here', items.length?0:100);
+    const cls=await Promise.all(items.map(it=>classifyRepo(it.owner.login,it.name,it.default_branch,it.pushed_at)
+      .then(r=>{ done++; setLoad(null, done/total*100); return r; })));
+    REPO.discover=items.map((it,i)=>[it,cls[i]]).filter(([,c])=>c&&c.ok).map(([it,c])=>{
       const srcs=['github']; if(comm.has((it.name||'').toLowerCase())) srcs.push('community');
       if(it.owner&&me&&it.owner.login===me) srcs.push('mine');
-      return { n:it.name, a:it.owner?it.owner.login:'?', d:it.description||'(no description)', v:'',
+      return { n:it.name, a:it.owner?it.owner.login:'?', owner:it.owner?it.owner.login:'', d:it.description||'(no description)', v:'',
         tags:(it.topics||[]).slice(0,5), stars:it.stargazers_count, upd:(it.pushed_at||'').slice(0,10),
-        proj:it.html_url, priv:!!it.private, srcs, gh:1 };
+        proj:it.html_url, priv:!!it.private, srcs, gh:1, facets:c.facets||[], nb:c.nb?1:0, nbRole:c.nbRole };
     });
     _discLoaded=true; if(repoTab==='discover') renderRepo();
   }catch(err){ if(grid) grid.innerHTML=`<div class="gh-empty"><p>GitHub search failed: ${err.message}</p></div>`; }
+}
+/* clicking an author anywhere → that user's norns repos. With a token we list their public
+   (and visible private) repos live, gate-classified; without one we show what the catalog/installed
+   already knows them for, and invite connecting GitHub to find more. */
+let _discUser=null;
+function ghUserRepos(login){
+  login=(login||'').trim(); if(!login) return;
+  _discUser=login; _discQuery=''; _discPage=1; discMineOnly=false; repoTab='discover'; selection.clear();
+  if(ghConnected){ _discLoaded=false; showRepo(); }   // renderRepo auto-triggers the user-mode search
+  else {                                              // offline-from-GitHub: list known repos by this author
+    const seen=new Set();
+    REPO.discover=[...REPO.installed,...REPO.available].filter(p=>{
+      if(ghOwner(p)!==login.toLowerCase()) return false;
+      const k=p.n.toLowerCase(); if(seen.has(k)) return false; seen.add(k); return true; });
+    _discTotal=REPO.discover.length; _discLoaded=true; showRepo();
+  }
 }
 /* ===== B2: engine-name deconfliction (shared "device bridge" plumbing — see mcp/) =====
    In production this queries the device for registered SC engines (matron `engine.names`,
@@ -1989,6 +2099,8 @@ function wireCards(v,list,tab){
     card.querySelectorAll('.pill[data-tag]').forEach(tg=>tg.onclick=e=>{e.stopPropagation();
       repoQuery=tg.dataset.tag; const q=document.getElementById('rd-q'); if(q) q.value=repoQuery; updateGrid();});
     card.querySelectorAll('a,.demo-btn,.lnk,.csel').forEach(el=>el.addEventListener('click',e=>e.stopPropagation()));
+    const au=card.querySelector('.by a[data-author]'); if(au) au.onclick=e=>{ e.preventDefault();e.stopPropagation();
+      const who=au.dataset.author; if(who) ghUserRepos(who); };
     const cb=card.querySelector('input[data-sel]'); if(cb) cb.onclick=e=>{ e.stopPropagation();
       if(cb.checked) selection.add(p.n); else selection.delete(p.n); updateBulkBar(); };
     const db=card.querySelector('.demo-btn'); if(db) db.onclick=e=>{e.stopPropagation();loadDemo(card,p);};
@@ -2048,6 +2160,12 @@ function srcTagsHTML(p){
 }
 function srcNames(p){ return (p.srcs||[]).map(s=>SRC[s]?SRC[s].name:s).join(', '); }
 function installState(p,tab){ if(p.upd_avail) return 'update'; if(tab==='installed'||p.inst) return 'installed'; return 'none'; }
+const FACET_META={script:['▶','script','#7ee787'],mod:['◆','mod','#c678dd'],library:['❏','library','#56b6c2'],engine:['♪','engine','#e5c07b']};
+function facetHTML(p){
+  let out=(p.facets||[]).map(f=>{ const m=FACET_META[f]; return m?`<span class="facet" style="--fc:${m[2]}">${m[0]} ${m[1]}</span>`:''; }).join('');
+  if(p.nb) out+=`<span class="facet" style="--fc:var(--ok,#6c6)">🎹 ${p.nbRole==='provides'?'nb voices':'nb-ready'}</span>`;
+  return out?`<div class="facets">${out}</div>`:'';
+}
 function repoCard(p,tab){
   const st=installState(p,tab);
   const badge = st==='update'   ? `<span class="okb upd"><svg viewBox="0 0 32 32"><path d="${I.refresh}"/></svg>update</span>`
@@ -2076,9 +2194,10 @@ function repoCard(p,tab){
     </div>`;
   return `<div class="card open${p.gh?' gh':''}" ${p.gh?`style="--srcc:${SRC[(p.srcs||[])[0]]?SRC[(p.srcs||[])[0]].color:'var(--trim)'}"`:''}>
     <div class="head"><label class="csel" title="select for bulk install"><input type="checkbox" data-sel ${selection.has(p.n)?'checked':''}></label><div class="id">
-      <div class="nm">${p.n} ${badge}${lock}</div><div class="by">by <a href="#">${p.a}</a></div></div>
+      <div class="nm">${p.n} ${badge}${lock}</div><div class="by">by <a href="#" data-author="${esc(ghOwner(p)||p.a||'')}" title="see this author's norns repos">${esc(p.a)}</a></div></div>
       <div class="act-row">${actions}</div></div>
     <div class="desc">${p.d}</div>
+    ${(p.facets&&p.facets.length)?facetHTML(p):''}
     <div class="foot">${srcTagsHTML(p)}${pills}<span class="grow"></span>${stars}${doc}${disc}${ver}</div>
     ${more}</div>`;
 }
@@ -2105,8 +2224,8 @@ function renderRepo(){
         <button class="rd-toggle" id="rd-toggle" title="hide / show search"><svg viewBox="0 0 32 32"><path d="M16 21L6 11l2.1-2.1L16 16.8 23.9 8.9 26 11z"/></svg></button>
       </div>`;
 
-  // discover gated on github connection
-  if(tab==='discover' && !ghConnected){
+  // discover gated on github connection — except an author view, which can list known repos offline
+  if(tab==='discover' && !ghConnected && !_discUser){
     v.innerHTML=`<div class="rd-top">${tabs}</div>
       <div class="rd-scroll"><div class="gh-empty">
         <div class="big"><svg viewBox="0 0 24 24"><path d="M12 .5C5.7.5.5 5.7.5 12c0 5.1 3.3 9.4 7.9 10.9.6.1.8-.2.8-.5v-1.7c-3.2.7-3.9-1.5-3.9-1.5-.5-1.3-1.3-1.7-1.3-1.7-1.1-.7.1-.7.1-.7 1.2.1 1.8 1.2 1.8 1.2 1 1.8 2.8 1.3 3.5 1 .1-.8.4-1.3.7-1.6-2.6-.3-5.3-1.3-5.3-5.7 0-1.3.5-2.3 1.2-3.1-.1-.3-.5-1.5.1-3.1 0 0 1-.3 3.3 1.2a11.5 11.5 0 0 1 6 0c2.3-1.5 3.3-1.2 3.3-1.2.6 1.6.2 2.8.1 3.1.8.8 1.2 1.8 1.2 3.1 0 4.4-2.7 5.4-5.3 5.7.4.3.8 1 .8 2.1v3.1c0 .3.2.6.8.5 4.6-1.5 7.9-5.8 7.9-10.9C23.5 5.7 18.3.5 12 .5z"/></svg></div>
@@ -2123,26 +2242,27 @@ function renderRepo(){
   const allBtn = tab==='installed'
     ? `<button class="rd-pill-btn" data-act="refresh"><svg viewBox="0 0 32 32"><path d="${I.refresh}"/></svg>Update all</button>`
     : tab==='discover'
-    ? `<button class="rd-pill-btn" data-act="search"><svg viewBox="0 0 32 32"><path d="${I.search}"/></svg>Search GitHub</button>`
+    ? `<button class="rd-pill-btn" data-act="search"><svg viewBox="0 0 32 32"><path d="${I.refresh}"/></svg>Refresh</button>`
     : `<button class="rd-pill-btn" data-act="refresh"><svg viewBox="0 0 32 32"><path d="${I.refresh}"/></svg>Refresh all</button>`;
   const ph = tab==='discover' ? 'search github for norns scripts — press enter ↵' : 'search scripts, authors, tags…';
   const opts=[['recent','recent'],['updated','last updated'],['name','name a–z'],['author','author']].concat(tab==='discover'?[['stars','stars']]:[]);
   const sortSel=`<select class="rd-sort" id="rd-sort" title="sort">${opts.map(o=>`<option value="${o[0]}" ${sortMode===o[0]?'selected':''}>sort: ${o[1]}</option>`).join('')}</select>`;
-  const head = `<div class="rd-cathead"><span class="nm rd-count">${list.length} ${tab==='discover'?'results':'scripts'}</span>${tab!=='installed'?`<span>${tab==='discover'?'norns scripts on github':'from '+availSources().filter(s=>!SRC[s].auth||ghConnected).length+' sources'}</span>`:''}<span class="line"></span><button class="selall-btn" data-selall>select all</button></div>`;
-  const totalPages = tab==='discover' ? Math.max(1,Math.ceil(_discTotal/DISC_PER)) : 1;
+  const discLabel = _discUser ? `<button class="rd-pill-btn" id="disc-clearuser" title="back to all norns">← @${esc(_discUser)}'s norns repos${ghConnected?'':' (known)'}</button>` : 'norns repos on github';
+  const head = `<div class="rd-cathead"><span class="nm rd-count">${list.length} ${tab==='discover'?'results':'scripts'}</span>${tab!=='installed'?`<span>${tab==='discover'?discLabel:'from '+availSources().filter(s=>!SRC[s].auth||ghConnected).length+' sources'}</span>`:''}<span class="line"></span><button class="selall-btn" data-selall>select all</button></div>`;
+  const totalPages = tab==='discover' ? Math.max(1,Math.ceil(_discTotal/DISC_PER)) : 1;  // kept only to disable 'next' on the last page
   const pager = (tab==='discover' && _discTotal>0) ? `<div class="rd-pager">
       <button class="fv-btn" data-page="${_discPage-1}" ${_discPage<=1?'disabled':''}>‹ prev</button>
-      <span class="pginfo">page ${_discPage} of ${totalPages.toLocaleString()} · ${_discTotal.toLocaleString()} results</span>
+      <span class="pginfo">page ${_discPage}</span>
       <button class="fv-btn" data-page="${_discPage+1}" ${_discPage>=totalPages?'disabled':''}>next ›</button></div>` : '';
   v.innerHTML=`<div class="rd-top">${tabs}
       <div class="rd-toolbar">
-        <label class="rd-search"><svg viewBox="0 0 32 32"><path d="${I.search}"/></svg><input id="rd-q" placeholder="${ph}"></label>
+        ${tab!=='discover'?`<label class="rd-search"><svg viewBox="0 0 32 32"><path d="${I.search}"/></svg><input id="rd-q" placeholder="${ph}"></label>`:''}
         ${sortSel}${allBtn}
         ${tab!=='discover'?`<button class="rd-filtertoggle" id="rd-filttog">⚲ filters${(srcFilter.size<SRC_ORDER.length||tagFilter.size)?' <span class="fct">'+(tagFilter.size+(SRC_ORDER.length-srcFilter.size))+'</span>':''}</button>`:''}
       </div><div class="rd-filters${filtersOpen?' open':''}" id="rd-filters">${tab==='installed'?'':srcBar(tab)}${tab!=='discover'?tagBar(tab):''}</div></div>
     <div class="rd-scroll"><div>${head}<div class="rd-grid">${list.map(p=>repoCard(p,tab)).join('')||`<div class="gh-empty"><p>nothing here yet.</p></div>`}</div>${pager}</div></div>
     <div class="bulkbar" id="bulkbar"></div>`;
-  v.querySelectorAll('[data-rt]').forEach(b=>b.onclick=()=>{repoTab=b.dataset.rt;repoQuery='';selection.clear();renderRepo();});
+  v.querySelectorAll('[data-rt]').forEach(b=>b.onclick=()=>{repoTab=b.dataset.rt;repoQuery='';_discUser=null;selection.clear();renderRepo();});
   v.querySelectorAll('[data-selall]').forEach(b=>b.onclick=()=>{
     const cur=repoList(repoTab); const allSel=cur.length&&cur.every(p=>selection.has(p.n));
     cur.forEach(p=>allSel?selection.delete(p.n):selection.add(p.n)); updateGrid(); updateBulkBar();
@@ -2156,16 +2276,17 @@ function renderRepo(){
   v.querySelectorAll('[data-addsrc]').forEach(c=>c.onclick=openCfg);
   const q=document.getElementById('rd-q');
   if(q){
-    if(tab==='discover'){ q.value=_discQuery; q.addEventListener('keydown',e=>{ if(e.key==='Enter') ghSearch(q.value,1); }); }
+    if(tab==='discover'){ q.value=_discQuery; q.addEventListener('keydown',e=>{ if(e.key==='Enter'){ _discUser=null; ghSearch(q.value,1); } }); }
     else { q.value=repoQuery; q.addEventListener('input',e=>{repoQuery=e.target.value;updateGrid();}); }
   }
   const ss=document.getElementById('rd-sort'); if(ss) ss.addEventListener('change',e=>{sortMode=e.target.value;updateGrid();});
   v.querySelectorAll('[data-act]').forEach(b=>b.onclick=()=>{
-    if(b.dataset.act==='search'){ const i=document.getElementById('rd-q'); ghSearch(i?i.value:'',1); }
+    if(b.dataset.act==='search'){ const i=document.getElementById('rd-q'); _discUser=null; ghSearch(i?i.value:'',1); }
     else { const t=b.innerHTML; b.innerHTML='✓ done'; setTimeout(()=>{b.innerHTML=t;},900); }
   });
   v.querySelectorAll('[data-hideknown]').forEach(c=>c.onclick=()=>{ discHideKnown=!discHideKnown; renderRepo(); });
-  v.querySelectorAll('[data-minerepos]').forEach(c=>c.onclick=()=>{ discMineOnly=!discMineOnly; _discLoaded=false; ghSearch('',1); });
+  const dcu=document.getElementById('disc-clearuser'); if(dcu) dcu.onclick=()=>{ _discUser=null; _discLoaded=false; ghSearch('',1); };
+  v.querySelectorAll('[data-minerepos]').forEach(c=>c.onclick=()=>{ discMineOnly=!discMineOnly; _discUser=null; _discLoaded=false; ghSearch('',1); });
   v.querySelectorAll('[data-page]').forEach(b=>b.onclick=()=>{ const p=+b.dataset.page; if(p>=1 && !b.disabled) ghSearch(_discQuery,p); });
   wireCards(v,list,tab); updateBulkBar();
   if(tab==='discover' && ghConnected && !_discLoaded) ghSearch('');   // default: "norns script", not "sequencer"

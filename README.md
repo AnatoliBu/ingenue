@@ -50,12 +50,20 @@ ingenue on :7777).
   script-safety-gated so a preset only loads back onto the script it came from.
 - **Repository manager** — the full community catalog (350+), search, sort, a real
   multi-select **tag filter** (with an auto *additional voice* tag for nb voices), source
-  filters, GitHub discovery (your public **and** private repos), expandable cards with
-  README + an **image carousel** and **embedded demos** (YouTube / Vimeo / SoundCloud), an
-  install dock with per-job logs, bulk install, **engine-name deconfliction**, and
-  **recursive dependency healing**.
-- **Mods** — enable/disable installed mods (with restart reminders) and install community
-  mods, all with full card detail.
+  filters, expandable cards with README + an **image carousel** and **embedded demos**
+  (YouTube / Vimeo / SoundCloud), an install dock with per-job logs, bulk install,
+  **engine-name deconfliction**, and **recursive dependency healing** (which now retries a
+  failed setup step on its own, without re-cloning).
+- **GitHub discovery** — browse *every* norns repo on GitHub (not just the catalog),
+  classified by what it actually is: each result is fingerprinted against the norns runtime
+  API and badged by **facet** — `script`, `mod`, `library`, `engine` — so mods and shared
+  libraries are first-class, not dropped. Defaults to a keyword-free, recently-active browse
+  that skips anything already cataloged or installed; a progress bar fills as repos classify
+  (results cache, so re-browsing is instant). Pulls in your own public **and** private repos,
+  and **clicking any author** shows everything they've made for norns.
+- **Mods** — detected structurally (`lib/mod.lua`), so we identify them ourselves rather than
+  trusting a hand-tagged list; enable/disable installed mods (with restart reminders) and
+  install community mods, all with full card detail.
 - **64-bit plugin auto-heal** — on a 64-bit norns missing its SuperCollider UGen binaries,
   ingenue detects it and offers to install correct-arch builds it ships, so engine-based
   scripts make sound. (See [`DESIGN-NOTES.md`](DESIGN-NOTES.md).)
@@ -83,6 +91,15 @@ ingenue on :7777).
 <details><summary>Repository manager — tag filter + cards</summary>
 
 ![repository manager](screenshots/desktop/repo.png)
+</details>
+
+<details><summary>GitHub discovery — facet-classified results + author view</summary>
+
+Every norns repo on GitHub, badged by **facet** (`script` / `mod` / `library` / `engine`) so
+mods and shared libraries are first-class — shown here for a single author (click any name to
+get this). Already-cataloged/installed repos are skipped.
+
+![github discovery with facet badges](screenshots/desktop/discover.png)
 </details>
 
 <details><summary>Expanded card — README + image carousel + embedded video demo</summary>
@@ -130,11 +147,11 @@ Your GitHub token lives **only** in the browser's localStorage and is sent **onl
 ## Layout
 
 - `web/` — the app: `index.html` (single self-contained page), `server.py` (the on-device
-  API over the dust tree), `community.json` + `enriched.json` (catalog + enrichment from the
+  API over the dust tree), `community.json` + `enriched.json` + `feed.json` (catalog +
+  enrichment + per-repo facets from the
   [`nornslist`](https://github.com/seajaysec/nornslist) scraper), `vendor/` (bundled 64-bit
   UGen pack).
 - `install.sh` — the one-line installer above.
-- `mcp/` — `maiden_mcp.py`, a companion MCP server (REPL, scripts, files, engines).
 - `DESIGN-NOTES.md` — what's built + the backlog.
 
 ## Stretch goals (PRs welcome)

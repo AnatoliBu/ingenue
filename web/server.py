@@ -122,13 +122,27 @@ def ensure_home_dust():
         return f"warn: could not create {hw} symlink: {e}\n"
 
 
+def find_installer(full):
+    """The script's installer, by norns convention: lib/install.sh, or a top-level
+    install.sh. An install.sh buried in a subdir (viewer/, docs/, examples/) is unrelated
+    tooling — flagging it as 'needs setup' produces spurious prompts and 'no lib/install.sh
+    to run' failures (e.g. synth-quest's viewer/install.sh). Returns the relative path or None."""
+    for rel in ("lib/install.sh", "install.sh"):
+        if os.path.isfile(os.path.join(full, rel)):
+            return rel
+    return None
+
+
 def run_install(full):
-    """Interpret a script's lib/install.sh ourselves so it works on ANY port:
+    """Interpret a script's installer ourselves so it works on ANY port:
     downloads + tar extracts run in Python (native gzip/xz, no BusyBox-tar / GNU-tar
     differences), /home/we/dust is translated to the real dust, and other commands
     (builds, etc.) fall back to the shell."""
     import shlex, tarfile, zipfile
-    inst = os.path.join(full, "lib", "install.sh")
+    rel = find_installer(full)
+    if not rel:
+        return False, ["no install.sh found (looked in lib/install.sh and ./install.sh)"]
+    inst = os.path.join(full, rel)
     log = []
     pp = ensure_home_dust().strip()
     if pp:
@@ -228,8 +242,10 @@ def analyze_dir(full, name):
     downloads = sorted(set(u for u in urls
                            if re.search(r"\.(tar\.gz|tgz|zip|tar\.xz)|/releases/download/|archive\.org", u)))
     sc_ext = sorted(set(re.findall(r"([A-Za-z0-9_]+_scsynth\.so)", blob)))
-    reqs = sorted(set(r for r in re.findall(r"require[\s(]+['\"]([A-Za-z0-9_]+)/lib", blob)
-                      if r not in (name, "core")))
+    # library names can contain dots/hyphens (mx.samples, mx.synths, 4-big-knobs) — the old
+    # [A-Za-z0-9_]+ class silently dropped those, so dotted deps never flagged for heal.
+    reqs = sorted(set(r for r in re.findall(r"require[\s(]+['\"]([A-Za-z0-9_.\-]+)/lib", blob)
+                      if r not in (name, "core") and r.strip(".")))
     native = []
     if any(f.endswith("go.mod") for f in files): native.append("go")
     if any(f.endswith("Makefile") for f in files): native.append("make")
@@ -238,7 +254,7 @@ def analyze_dir(full, name):
     if re.search(r"audiowaveform", blob): native.append("audiowaveform")
     rep = {
         "name": name,
-        "install_script": any(f.endswith("install.sh") for f in files),
+        "install_script": bool(find_installer(full)),
         "downloads": downloads[:12],
         "sc_extensions": sc_ext,
         "needs_sc_ext": bool(sc_ext) or "Extensions/" in blob,
@@ -797,9 +813,8 @@ class H(http.server.SimpleHTTPRequestHandler):
                 return self._json({"ok": True})
             if path == "/api/heal":
                 full, name = safe_script_dir(b.get("name"))
-                inst = os.path.join(full, "lib", "install.sh")
-                if not os.path.isfile(inst):
-                    return self._json({"error": f"{name} has no lib/install.sh to run"}, 404)
+                if not find_installer(full):
+                    return self._json({"error": f"{name} has no install.sh to run"}, 404)
                 ok, log = run_install(full)         # interpret install.sh ourselves (port-proof downloads/extracts)
                 return self._json({"ok": ok, "name": name, "log": log[-2000:]})
             if path == "/api/install":
