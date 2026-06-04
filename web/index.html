@@ -24,29 +24,14 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
 .mono{font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace}
 button{font-family:inherit}
 
-/* ---------- sim chrome ---------- */
-.sim-bar{position:sticky;top:0;z-index:60;display:flex;align-items:center;gap:10px;flex-wrap:wrap;
-  padding:8px 12px;background:var(--panel2);border-bottom:1px solid var(--trim);font-size:13px;color:var(--muted)}
-.sim-bar .title{font-weight:600;color:var(--fg)}.sim-bar .title b{color:var(--accent2)}
 .seg{display:inline-flex;border:1px solid var(--trim);border-radius:7px;overflow:hidden;background:var(--panel)}
 .seg button{appearance:none;border:0;background:transparent;color:var(--muted);padding:5px 11px;font-size:12px;
   cursor:pointer;border-right:1px solid var(--trim)}
 .seg button:last-child{border-right:0}
 .seg button.on{background:var(--accent);color:#241a0d;font-weight:600}
-.sim-bar .spacer{flex:1}.sim-bar .hint{font-size:11px}
-.sim-bar .hint b{color:var(--accent)}
-.stage{display:flex;justify-content:center;padding:18px 12px 40px;
-  background:repeating-linear-gradient(45deg,transparent,transparent 11px,rgba(125,125,125,.05) 11px,rgba(125,125,125,.05) 22px)}
-.device{width:100%;max-width:var(--dev-w,100%);height:var(--dev-h,calc(100dvh - 96px));max-height:calc(100dvh - 96px);
-  background:var(--bg);border:1px solid var(--trim);border-radius:10px;box-shadow:0 14px 44px rgba(0,0,0,.3);overflow:hidden;
-  container-type:inline-size;position:relative;transition:max-width .25s ease,height .25s ease}
-@media(max-width:760px){
-  .stage{padding:0;height:100dvh}
-  .sim-bar{display:none}                       /* dev-only chrome; full screen to the app on phones */
-  /* full viewport on a real phone — clear the desktop-preview 96px clamp that left the
-     stage background showing through the bottom of the screen */
-  .device{height:100dvh;max-height:100dvh;border:0;border-radius:0;box-shadow:none;max-width:100%}
-}
+/* the app always fills the real viewport; container-query width drives the responsive layout */
+.stage{height:100dvh}
+.device{width:100%;height:100dvh;background:var(--bg);overflow:hidden;container-type:inline-size;position:relative}
 
 /* ===================== maiden ===================== */
 .maiden{display:flex;flex-direction:column;height:100%;background:var(--bg);color:var(--fg)}
@@ -524,19 +509,8 @@ button{font-family:inherit}
 </style>
 </head>
 <body>
-<div class="sim-bar">
-  <span class="title">maiden <b>·</b> interactive redesign</span>
-  <span class="seg" id="size">
-    <button data-w="390" data-h="800">📱 phone</button>
-    <button data-w="900" data-h="fill">▦ tablet</button>
-    <button data-w="9999" data-h="fill" class="on">🖥 desktop</button>
-  </span>
-  <span class="spacer"></span>
-  <span class="hint">tap the <b>⚙ gear</b> for ~26 themes · everything's editable</span>
-</div>
-
 <div class="stage">
- <div class="device" id="device" style="--dev-w:9999px">
+ <div class="device" id="device">
   <div class="maiden" id="maiden" data-view="edit">
    <div class="app-header"></div>
 
@@ -791,7 +765,7 @@ button{font-family:inherit}
 </div>
 
 <script>
-const BUILD='b34 · 2026-06-03 · params: live formatted labels while sliding (root note, etc.)';
+const BUILD='b35 · 2026-06-03 · remove device-size preview switcher (full viewport)';
 console.log('%cmaiden redesign build: '+BUILD,'color:#DEB887;font-weight:bold');
 const LS={
   get(k,d){try{const v=localStorage.getItem('maiden.'+k);return v==null?d:JSON.parse(v);}catch(e){return d;}},
@@ -2373,14 +2347,6 @@ function boot(){
     b.onclick=()=>{ splitUpload=b.dataset.u==='split'; LS.set('splitupload',splitUpload);
       document.querySelectorAll('#uploadmode button').forEach(x=>x.classList.toggle('on',x===b));
       if(document.getElementById('filesview').classList.contains('on')) renderFiles(); };
-  });
-  // size sim
-  const device=document.getElementById('device');
-  document.querySelectorAll('#size button').forEach(b=>b.onclick=()=>{
-    document.querySelectorAll('#size button').forEach(x=>x.classList.remove('on'));b.classList.add('on');
-    device.style.setProperty('--dev-w',b.dataset.w+'px');
-    device.style.setProperty('--dev-h', b.dataset.h==='fill'?'calc(100dvh - 96px)':b.dataset.h+'px');
-    if(editor)setTimeout(()=>editor.resize(),260);
   });
   buildThemeGrid();
   const bs=document.getElementById('buildstamp'); if(bs) bs.textContent=BUILD;
