@@ -67,6 +67,12 @@ PanicOS ships a *half-implemented* state: PortedPlugins `.sc` **classes** presen
 
 ## Backlog
 
+> **Shipped b25–b26:** B5 (README + carousel), B6 (tag filter + nb "additional voice"),
+> B7 (ingenue consumes a nightly `feed.json` — scraper-side generator still TODO in nornslist),
+> B8 (mods manager), B9 (live params + presets + Web-MIDI), B10 (audio health + restart),
+> plus live REPL/files/editor-save and device info. Remaining live-wiring: file-browser
+> *write* ops (mkdir/rename/delete/upload still mock), and the nornslist feed generator.
+
 - **B4 — Patches & dependency handling.** ✅ **Shipped (b20–b23).** Dependency analyzer
   (`/api/deps`, by name for installed or by url via shallow clone for un-installed) detects
   install scripts, sample/audio downloads, SC-engine extensions, required scripts, nb voices,
