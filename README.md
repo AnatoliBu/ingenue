@@ -44,7 +44,10 @@ ingenue on :7777).
 - **Live REPL** — a real connection to matron over its websocket; run commands, see output.
 - **Live PARAMS** — mirrors the on-device PARAMS menu: collapsible nested groups, dropdowns
   for options, sliders with the **true formatted values** (note names, scales, `dB`/`ms`,
-  `1/16`…), per-param reset, presets, and a declutter toggle for empty device slots.
+  `1/16`…), per-param reset, and a declutter toggle for empty device slots.
+- **Param presets** — device PSET slots, plus **browser presets** (per-script localStorage
+  slots) and **JSON export/import** to back up and share your settings — import is
+  script-safety-gated so a preset only loads back onto the script it came from.
 - **Repository manager** — the full community catalog (350+), search, sort, a real
   multi-select **tag filter** (with an auto *additional voice* tag for nb voices), source
   filters, GitHub discovery (your public **and** private repos), expandable cards with
