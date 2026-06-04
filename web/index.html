@@ -212,8 +212,9 @@ button{font-family:inherit}
 .card .lnk{display:inline-grid;place-items:center;width:26px;height:26px;border-radius:7px;color:var(--muted);cursor:pointer}
 .card .lnk:hover{background:color-mix(in srgb,var(--fg) 12%,transparent);color:var(--fg)}
 .card .lnk svg{width:15px;height:15px;fill:currentColor}
-.act-row{display:flex;gap:8px;flex:0 0 auto}
-.btn{appearance:none;border:0;font-size:13px;font-weight:600;border-radius:9px;padding:8px 16px;cursor:pointer;white-space:nowrap}
+.act-row{display:flex;gap:6px;flex:0 1 auto;flex-wrap:wrap;justify-content:flex-end}
+.btn{appearance:none;border:0;font-size:12px;font-weight:600;border-radius:8px;padding:6px 11px;cursor:pointer;white-space:nowrap}
+.modsview .mods-toggle{padding:5px 10px}   /* keep it compact next to Reinstall/Remove */
 .btn-install{background:var(--accent);color:#241a0d}
 .btn-update{background:transparent;border:1px solid var(--accent2);color:var(--accent2)}
 .btn-remove{background:transparent;border:1px solid var(--trim);color:var(--muted)}
@@ -358,7 +359,7 @@ button{font-family:inherit}
 .modsview .csel{display:none}   /* mods aren't bulk-installed — hide the select checkbox */
 .pv-top{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:10px 14px;border-bottom:1px solid var(--trim);background:var(--panel2)}
 .pv-title{font-weight:600;font-size:14px;margin-right:6px}
-.pv-scroll{flex:1;min-height:0;overflow:auto}
+.pv-scroll{flex:1;min-height:0;overflow:auto;padding:6px 10px 28px}
 .pv-empty{padding:16px;color:var(--faint)}
 .pv-banner{font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);padding:13px 14px 5px}
 .pv-head{display:flex;align-items:center;gap:8px;padding:6px 14px;font-weight:600;font-size:12.5px;background:var(--panel2);border-top:1px solid var(--trim);border-bottom:1px solid var(--trim);position:sticky;top:0}
@@ -779,7 +780,7 @@ button{font-family:inherit}
 </div>
 
 <script>
-const BUILD='b38 · 2026-06-03 · upload toast · ;install · repo link in config';
+const BUILD='b39 · 2026-06-04 · smaller card action buttons + params page padding';
 console.log('%cmaiden redesign build: '+BUILD,'color:#DEB887;font-weight:bold');
 const LS={
   get(k,d){try{const v=localStorage.getItem('maiden.'+k);return v==null?d:JSON.parse(v);}catch(e){return d;}},
