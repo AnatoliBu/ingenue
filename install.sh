@@ -70,6 +70,16 @@ if   [ -f "$DEST/server.py" ];     then WORK="$DEST"
 elif [ -f "$DEST/web/server.py" ]; then WORK="$DEST/web"
 else die "server.py not found under $DEST"; fi
 
+# --- 4b. record the installed commit so the in-app update check can compare to main ---
+record_version(){
+  local slug="${REPO#https://github.com/}"; slug="${slug%.git}"
+  local sha=""
+  sha="$(curl -fsSL "https://api.github.com/repos/$slug/commits/$BRANCH" 2>/dev/null \
+        | sed -n 's/.*"sha"[ :]*"\([0-9a-f]\{40\}\)".*/\1/p' | head -1)"
+  if [ -n "$sha" ]; then printf '%s\n' "$sha" > "$WORK/.version"; say "version ${sha:0:7}"; fi
+}
+record_version || true
+
 ensure_python
 PY="$(command -v python3)"
 

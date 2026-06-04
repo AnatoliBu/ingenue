@@ -42,6 +42,51 @@ def find_dust():
 DUST = find_dust()
 CODE = os.path.join(DUST, "code")
 PORT = int(sys.argv[1]) if len(sys.argv) > 1 else 7777
+HERE = os.path.dirname(os.path.realpath(__file__))   # where server.py / install.sh live
+
+
+def installed_sha():
+    """The commit ingenue was installed from (written by install.sh into .version).
+    Used by the in-app update check to compare against github main."""
+    try:
+        with open(os.path.join(HERE, ".version"), encoding="utf-8") as f:
+            return f.read().strip()
+    except Exception:
+        return ""
+
+
+def self_update():
+    """Re-run install.sh to pull the latest ingenue and restart the service.
+    install.sh restarts ingenue.service at the end — which, on a default
+    KillMode=control-group unit, would kill any child we spawn mid-update.
+    So we launch it via systemd-run as its own transient unit (outside our
+    cgroup) when available; otherwise fall back to a detached process."""
+    script = os.path.join(HERE, "install.sh")
+    if not os.path.isfile(script):
+        alt = os.path.join(HERE, "..", "install.sh")     # web/ subdir layout
+        if os.path.isfile(alt):
+            script = alt
+    if not os.path.isfile(script):
+        return {"error": "install.sh not found next to ingenue"}
+    env = ["--setenv=INGENUE_DUST=%s" % DUST, "--setenv=INGENUE_PORT=%s" % PORT]
+    if shutil.which("systemd-run"):
+        for extra in (["--unit", "ingenue-selfupdate"], []):   # try a stable name, then auto-named
+            cmd = ["systemd-run", "--collect"] + extra + env + ["bash", script]
+            try:
+                r = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
+            except Exception as e:  # noqa: BLE001
+                return {"error": str(e)}
+            if r.returncode == 0:
+                return {"ok": True, "method": "systemd-run"}
+        return {"error": "systemd-run failed", "log": (r.stderr or r.stdout)[-400:]}
+    try:   # no systemd-run — detached best effort (survives if KillMode!=control-group)
+        subprocess.Popen(
+            ["bash", script], start_new_session=True,
+            env={**os.environ, "INGENUE_DUST": DUST, "INGENUE_PORT": str(PORT)},
+            stdout=open(os.path.join(HERE, "update.log"), "ab"), stderr=subprocess.STDOUT)
+        return {"ok": True, "method": "background"}
+    except Exception as e:  # noqa: BLE001
+        return {"error": str(e)}
 
 
 def safe(rel):
@@ -664,6 +709,9 @@ class H(http.server.SimpleHTTPRequestHandler):
                 if self._q().get("online", ["0"])[0] == "1":   # opt-in network check
                     rep["online"] = scplugins_online_version()
                 return self._json(rep)
+            if path == "/api/version":
+                return self._json({"sha": installed_sha(),
+                                   "repo": "seajaysec/ingenue", "branch": "main"})
             if path == "/api/sysinfo":
                 return self._json(sysinfo())
             if path == "/api/audio":
@@ -718,6 +766,8 @@ class H(http.server.SimpleHTTPRequestHandler):
                 return self._json({"ok": True, "removed": name})
             if path == "/api/scplugins/heal":
                 return self._json(scplugins_heal(b.get("source", "bundled"), (b.get("url") or "").strip()))
+            if path == "/api/self-update":
+                return self._json(self_update())
             if path == "/api/audio/restart":
                 return self._json(audio_restart())
             if path == "/api/mods/toggle":

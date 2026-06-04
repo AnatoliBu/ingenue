@@ -61,6 +61,9 @@ ingenue on :7777).
   scripts make sound. (See [`DESIGN-NOTES.md`](DESIGN-NOTES.md).)
 - **Audio-server health**, device info, and **137 color themes** (base16 + Catppuccin /
   Rosé Pine / Tokyo Night / … — editor syntax generated from every palette).
+- **In-app updates** — on load ingenue checks GitHub for a newer build and, if there is one,
+  shows an unobtrusive toast with the changelog and a one-tap **Update now** that pulls the
+  latest and restarts the service for you (no SSH, no re-running the installer).
 
 ## Gallery
 

@@ -186,6 +186,25 @@ button{font-family:inherit}
 #upload-toast .ub{height:3px;border-radius:2px;background:var(--trim);margin-top:7px;overflow:hidden}
 #upload-toast .uf{height:100%;background:var(--accent);transition:width .2s ease}
 @container (max-width:640px){ #upload-toast{left:8px;right:8px;bottom:70px;transform:translateY(20px);max-width:none;text-align:center} #upload-toast.show{transform:translateY(0)} }
+#update-toast{position:fixed;left:16px;bottom:16px;z-index:320;background:var(--panel2);border:1px solid var(--trim);
+  border-radius:12px;padding:11px 13px 12px;font-size:13px;color:var(--fg);box-shadow:0 10px 34px rgba(0,0,0,.4);
+  opacity:0;pointer-events:none;transform:translateY(16px);transition:opacity .22s ease,transform .22s ease;width:min(360px,92vw)}
+#update-toast.show{opacity:1;pointer-events:auto;transform:translateY(0)}
+#update-toast .ut-row{display:flex;align-items:flex-start;gap:8px}
+#update-toast .ut-title{flex:1;line-height:1.35}
+#update-toast .ut-x{background:none;border:0;color:var(--muted);font-size:15px;cursor:pointer;padding:0 2px;line-height:1}
+#update-toast .ut-x:hover{color:var(--fg)}
+#update-toast .ut-log{margin:7px 0 2px;color:var(--muted)}
+#update-toast .ut-log summary{cursor:pointer;font-size:12px;user-select:none}
+#update-toast .ut-log ul{margin:6px 0 0;padding-left:18px;max-height:150px;overflow:auto}
+#update-toast .ut-log li{margin:2px 0;font-size:12px;line-height:1.3}
+#update-toast .ut-actions{display:flex;align-items:center;gap:12px;margin-top:9px}
+#update-toast .ut-go{background:var(--accent);color:var(--bg);border:0;border-radius:8px;font:inherit;font-size:13px;
+  font-weight:600;padding:7px 14px;cursor:pointer}
+#update-toast .ut-go[disabled]{opacity:.6;cursor:default}
+#update-toast .ut-link{color:var(--muted);font-size:12px;text-decoration:none}
+#update-toast .ut-link:hover{color:var(--fg)}
+@container (max-width:640px){ #update-toast{left:8px;right:8px;bottom:70px;width:auto} }
 .rd-sort{appearance:none;-webkit-appearance:none;border:1px solid var(--trim);background:var(--panel);color:var(--fg);
   font:inherit;font-size:13px;padding:7px 26px 7px 12px;border-radius:9px;cursor:pointer;white-space:nowrap;
   background-image:linear-gradient(45deg,transparent 50%,var(--muted) 50%),linear-gradient(135deg,var(--muted) 50%,transparent 50%);
@@ -795,8 +814,76 @@ button{font-family:inherit}
 </div>
 
 <script>
-const BUILD='b44 · 2026-06-04 · drop the /ingenue path (keep clear of maiden)';
+const BUILD='b45 · 2026-06-04 · in-app update check + one-tap self-update';
 console.log('%cingenue build: '+BUILD,'color:#DEB887;font-weight:bold');
+
+/* ===== self-update: on load, ask github if main is ahead of the installed commit ===== */
+const UPD_REPO='seajaysec/ingenue', UPD_BRANCH='main';
+let _updChecked=false;
+async function checkForUpdate(manual){
+  let local;
+  try{ local=await fetch('api/version',{cache:'no-store'}).then(r=>r.json()); }
+  catch(_){ if(manual) updateToastMsg('⚠ couldn’t reach ingenue to check version'); return; }
+  const sha=((local&&local.sha)||'').trim();
+  if(!/^[0-9a-f]{7,40}$/.test(sha)){ if(manual) updateToastMsg('ℹ this install predates update tracking — reinstall once to enable it'); return; }
+  let cmp=null;
+  try{
+    cmp=await fetch(`https://api.github.com/repos/${UPD_REPO}/compare/${sha}...${UPD_BRANCH}`,
+      {headers:{'Accept':'application/vnd.github+json'}}).then(r=>r.ok?r.json():null);
+  }catch(_){ if(manual) updateToastMsg('⚠ couldn’t reach GitHub to check for updates'); return; }
+  if(!cmp){ if(manual) updateToastMsg('⚠ GitHub didn’t recognize the installed commit'); return; }
+  if(!(cmp.ahead_by>0)){ if(manual) updateToastMsg('✓ ingenue is up to date'); return; }
+  const head=(cmp.commits&&cmp.commits.length)?cmp.commits[cmp.commits.length-1].sha:'';
+  if(!manual && head && localStorage.getItem('ingenue_skip_update')===head) return;  // dismissed this one
+  showUpdateToast(cmp, head);
+}
+function updEl(){ let t=document.getElementById('update-toast');
+  if(!t){ t=document.createElement('div'); t.id='update-toast'; document.body.appendChild(t); } return t; }
+function updateToastMsg(html){ const t=updEl();
+  t.innerHTML=`<div class="ut-row"><span class="ut-title">${html}</span><button class="ut-x" title="dismiss">✕</button></div>`;
+  t.querySelector('.ut-x').onclick=()=>t.classList.remove('show'); t.classList.add('show');
+  clearTimeout(t._h); t._h=setTimeout(()=>t.classList.remove('show'),5000); }
+function showUpdateToast(cmp, head){
+  const n=cmp.ahead_by;
+  const lines=(cmp.commits||[]).slice(-15).reverse()
+    .map(c=>`<li>${esc(((c.commit&&c.commit.message)||'').split('\n')[0])}</li>`).join('');
+  const t=updEl(); clearTimeout(t._h);
+  t.innerHTML=`
+    <div class="ut-row">
+      <span class="ut-title">⬆ ingenue update available <b>· ${n} change${n!==1?'s':''}</b></span>
+      <button class="ut-x" id="ut-later" title="not now">✕</button>
+    </div>
+    <details class="ut-log"><summary>What changed</summary><ul>${lines}</ul></details>
+    <div class="ut-actions">
+      <button class="ut-go" id="ut-go">Update now</button>
+      <a class="ut-link" href="https://github.com/${UPD_REPO}/commits/${UPD_BRANCH}" target="_blank" rel="noopener">on GitHub ↗</a>
+    </div>`;
+  t.classList.add('show');
+  document.getElementById('ut-later').onclick=()=>{ if(head) localStorage.setItem('ingenue_skip_update',head); t.classList.remove('show'); };
+  document.getElementById('ut-go').onclick=()=>runUpdate(t);
+}
+async function runUpdate(t){
+  const go=document.getElementById('ut-go'), title=t.querySelector('.ut-title');
+  if(go){ go.disabled=true; go.textContent='Updating…'; }
+  const before=((await fetch('api/version',{cache:'no-store'}).then(r=>r.json()).catch(()=>({}))).sha||'');
+  try{
+    const r=await fetch('api/self-update',{method:'POST'}); const j=await r.json().catch(()=>({}));
+    if(!r.ok || j.error) throw new Error(j.error||('HTTP '+r.status));
+  }catch(e){ if(go){ go.disabled=false; go.textContent='Update now'; }
+    title.innerHTML='⚠ update couldn’t start — '+esc(e.message); return; }
+  title.innerHTML='⏳ pulling latest & restarting ingenue…';
+  let tries=0;
+  const iv=setInterval(async()=>{
+    tries++;
+    let v=null; try{ v=await fetch('api/version',{cache:'no-store'}).then(r=>r.ok?r.json():null); }catch(_){ }
+    if(v && /^[0-9a-f]{7,40}$/.test(v.sha||'') && v.sha!==before){
+      clearInterval(iv); title.innerHTML='✓ updated — reloading…'; setTimeout(()=>location.reload(),900);
+    } else if(tries>75){   // ~150s
+      clearInterval(iv); title.innerHTML='↻ taking longer than expected — reload when ready';
+      if(go){ go.disabled=false; go.textContent='Reload now'; go.onclick=()=>location.reload(); }
+    }
+  },2000);
+}
 try{ document.title='ingenue · norns'; }catch(e){}   // force-correct any stale tab title
 const LS={
   get(k,d){try{const v=localStorage.getItem('maiden.'+k);return v==null?d:JSON.parse(v);}catch(e){return d;}},
@@ -2471,7 +2558,9 @@ function boot(){
       if(document.getElementById('filesview').classList.contains('on')) renderFiles(); };
   });
   buildThemeGrid();
-  const bs=document.getElementById('buildstamp'); if(bs) bs.textContent=BUILD;
+  const bs=document.getElementById('buildstamp');
+  if(bs){ bs.textContent=BUILD; bs.style.cursor='pointer'; bs.title='check for updates';
+    bs.onclick=()=>checkForUpdate(true); }
   // editing layout: default split view, restore saved view + console height
   maiden.dataset.edit = LS.get('editview','combo');
   const rh=LS.get('replh',null); if(rh) document.documentElement.style.setProperty('--repl-h',rh);
@@ -2479,6 +2568,7 @@ function boot(){
   loadCatalog().then(checkScPlugins);   // pull the real catalog, then silently check SC-plugin health
   matronConnect();                      // live REPL + params link to matron (no-op off-device)
   initAudioHealth();                    // B10 audio-server health line in config
+  setTimeout(()=>{ if(!_updChecked){ _updChecked=true; checkForUpdate(false); } }, 1800);  // quiet on-load update check
   document.addEventListener('keydown',e=>{ if((e.metaKey||e.ctrlKey)&&e.key==='s'){ e.preventDefault(); saveActive(); } });  // Ctrl/Cmd-S saves to device
   // SC-plugin (64-bit UGen) banner + modal wiring
   document.getElementById('scp-banner-fix').onclick=openScp;

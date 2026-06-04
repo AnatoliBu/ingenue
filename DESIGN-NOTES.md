@@ -123,7 +123,13 @@ PanicOS ships a *half-implemented* state: PortedPlugins `.sc` **classes** presen
 - Ship as a **norns mod** you enable/disable that switches the served web app from system
   maiden to ingenue (asset swap + maiden restart, since maiden is a separate process — a pure
   Lua mod can't do it alone; needs a small shell/service step).
-- **Auto-self-updater** — checks the hosted repo for pushes, offers to update, shows the
-  changelog (git log). Feasible.
+- ~~**Auto-self-updater**~~ — **built (b45).** On load the app fetches the installed commit
+  from `/api/version` (written by `install.sh` into `.version`) and asks the GitHub compare
+  API whether `main` is ahead; if so it shows an unobtrusive toast with the changelog (commit
+  subjects) and a one-tap **Update now**. That POSTs `/api/self-update`, which re-runs
+  `install.sh` via `systemd-run` (a transient unit, so it survives the service restart
+  install.sh triggers), then the page polls `/api/version` and reloads when the new commit is
+  live. "Not now" dismisses that specific version (localStorage); the config build-stamp is a
+  manual re-check.
 - Eventually request inclusion in the norns-community installer to target regular maiden.
 - *Open question:* asset-swap-and-restart vs. run ingenue on its own port and redirect.
