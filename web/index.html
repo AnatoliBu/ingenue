@@ -600,6 +600,36 @@ button{font-family:inherit}
          <div class="cfg-row"><span class="k">upload buttons</span>
            <span class="seg" id="uploadmode"><button data-u="unified">unified</button><button data-u="split">files + folder</button></span>
            <span class="v" style="width:auto;color:var(--faint);font-family:inherit">unified uses drag for folders; split adds a folder picker (better on touch)</span></div>
+
+         <!-- device section (shown only when the on-device backend is reachable) -->
+         <div class="cfg-sec" id="dev-sec" style="margin-top:20px;display:none">device · norns</div>
+         <div class="cfg-row" id="audio-row" style="display:none"><span class="k">audio server</span>
+           <span class="v" id="audio-state" style="width:auto;flex:1;font-family:inherit">checking…</span>
+           <button class="rd-pill-btn" id="audio-restart" style="display:none;margin:0">restart audio</button></div>
+         <div id="mods-box" style="display:none">
+           <div class="cfg-row"><span class="k">mods</span><span class="v" id="mods-hint" style="width:auto;flex:1;font-family:inherit;color:var(--faint)">enable/disable norns mods — restart norns after enabling</span></div>
+           <div id="mods-list" style="margin-bottom:6px"></div>
+         </div>
+         <div class="cfg-row" id="params-row" style="display:none"><span class="k">parameters</span>
+           <button class="rd-pill-btn" id="open-params" style="margin:0">open live PARAMS editor →</button>
+           <span class="v" style="width:auto;color:var(--faint);font-family:inherit">edit the running script's params live; presets; MIDI-learn</span></div>
+       </div>
+     </div>
+   </div>
+
+   <!-- B9: live PARAMS editor -->
+   <div class="overlay" id="params-overlay">
+     <div class="modal">
+       <div class="modal-head"><div class="t">PARAMS · <span id="params-script" style="font-weight:400;color:var(--muted)">live</span></div><button class="x" id="params-close">✕</button></div>
+       <div class="modal-body">
+         <div class="trust-actions" style="margin:0 0 10px;justify-content:flex-start;gap:8px;flex-wrap:wrap">
+           <button class="rd-pill-btn" id="params-refresh" style="margin:0">↻ refresh</button>
+           <button class="rd-pill-btn" id="params-save" style="margin:0">save preset</button>
+           <button class="rd-pill-btn" id="params-load" style="margin:0">load preset</button>
+           <button class="rd-pill-btn" id="params-midi" style="margin:0">🎹 enable MIDI</button>
+           <span class="v" id="params-status" style="width:auto;color:var(--faint);font-family:inherit;flex:1"></span>
+         </div>
+         <div id="params-list" style="max-height:52vh;overflow:auto"></div>
        </div>
      </div>
    </div>
@@ -721,7 +751,7 @@ button{font-family:inherit}
 </div>
 
 <script>
-const BUILD='b24 · 2026-06-03 · SC-plugin health: bundled 64-bit UGen auto-heal';
+const BUILD='b25 · 2026-06-03 · live REPL/params/MIDI · mods · audio health · live files';
 console.log('%cmaiden redesign build: '+BUILD,'color:#DEB887;font-weight:bold');
 const LS={
   get(k,d){try{const v=localStorage.getItem('maiden.'+k);return v==null?d:JSON.parse(v);}catch(e){return d;}},
@@ -965,6 +995,87 @@ async function runScpHeal(){
   }catch(e){ jobDone(job,null,false,e.message,''); go.disabled=false; go.textContent='Install plugins'; }
 }
 
+/* ===== B10 audio-server health (config line + best-effort restart) ===== */
+async function initAudioHealth(){ try{ const r=await fetch('api/audio',{cache:'no-store'}); if(!r.ok) return; renderAudio(await r.json()); }catch(_){ } }
+function renderAudio(a){
+  document.getElementById('dev-sec').style.display='';
+  document.getElementById('audio-row').style.display='';
+  const st=document.getElementById('audio-state'), btn=document.getElementById('audio-restart');
+  if(a.core_up){ st.innerHTML='<span style="color:#5c5">● healthy</span> — jackd · scsynth · crone up'+(a.recent_device_race?' <span style="color:var(--warn,#c80)">(saw a recent hw:0 handoff race)</span>':''); btn.style.display='none'; }
+  else { st.innerHTML='<span style="color:var(--err)">● down</span> — '+(a.hint||'audio server not running'); btn.style.display=''; }
+  btn.onclick=async()=>{ btn.disabled=true; btn.textContent='restarting…';
+    try{ const j=await (await fetch('api/audio/restart',{method:'POST'})).json();
+      st.innerHTML = j.ok ? '<span style="color:#5c5">restart requested</span> — '+j.method
+        : '<span style="color:var(--err)">couldn\'t auto-restart</span> — '+(j.hint||'power-cycle the device'); }
+    catch(e){ st.textContent=e.message; } btn.disabled=false; btn.textContent='restart audio'; };
+}
+
+/* ===== B8 mods manager (config) ===== */
+async function renderMods(){ try{ const r=await fetch('api/mods',{cache:'no-store'}); if(!r.ok) return; paintMods((await r.json()).mods); }catch(_){ } }
+function paintMods(mods){
+  const box=document.getElementById('mods-box'), list=document.getElementById('mods-list');
+  if(!mods||!mods.length){ box.style.display='none'; return; }
+  box.style.display=''; document.getElementById('dev-sec').style.display='';
+  list.innerHTML=mods.map(m=>`<div class="cfg-row"><span class="k" style="font-family:inherit">${m.name}${m.self?' <span style="color:var(--faint)">(ingenue itself)</span>':''}</span>
+    <button class="rd-pill-btn modtog" data-mod="${m.name}" data-on="${m.enabled?1:0}" style="margin:0;min-width:84px;${m.enabled?'border-color:var(--ok,#5c5)':''}">${m.enabled?'✓ enabled':'disabled'}</button></div>`).join('');
+  list.querySelectorAll('.modtog').forEach(b=>b.onclick=async()=>{
+    const name=b.dataset.mod, on=b.dataset.on!=='1';
+    b.disabled=true;
+    try{ const j=await (await fetch('api/mods/toggle',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,on})})).json();
+      if(j.ok){ b.dataset.on=on?'1':'0'; b.textContent=on?'✓ enabled':'disabled'; b.style.borderColor=on?'var(--ok,#5c5)':'';
+        if(j.restart_required) confirmDialog('Restart norns','Enabled <b>'+name+'</b>. Mods only load at startup — do <b>SYSTEM &gt; RESTART</b> (or relaunch norns) for it to take effect.',()=>{}); }
+    }catch(e){ } b.disabled=false; });
+}
+
+/* ===== B9 live PARAMS editor (matron ws) + presets + Web MIDI ===== */
+let PARAMS=[], paramBuf='', midiAccess=null, midiLearn=null, midiMap={}, presetSlot=1;
+function openParams(){ document.getElementById('params-overlay').classList.add('on'); refreshParams(); }
+function refreshParams(){
+  const status=document.getElementById('params-status');
+  if(!matronReady){ status.textContent='no live link to matron — open ingenue on the device (port 7777) to use this'; document.getElementById('params-list').innerHTML=''; return; }
+  status.textContent='reading params from device…'; PARAMS=[]; paramBuf=''; matronOnData=onParamData;
+  matronSend("do print('@@ING_P_BEGIN@@') for i=1,params.count do local p=params:lookup_param(i) local ty=p.t or 0 local mn='' local mx='' if p.controlspec then mn=p.controlspec.minval mx=p.controlspec.maxval elseif p.min~=nil then mn=p.min mx=p.max elseif p.options then mn=1 mx=#p.options end local nm=p.name or p.id or '?' local sv='' local ok2,err=pcall(function() sv=params:string(i) end) print('@@ING_P@@'..i..'\\9'..ty..'\\9'..tostring(nm)..'\\9'..tostring(mn)..'\\9'..tostring(mx)..'\\9'..tostring(sv)) end print('@@ING_P_END@@') end");
+  setTimeout(()=>{ if(!PARAMS.length && matronReady) status.textContent='waiting for matron… (if a script is loaded, hit ↻ refresh)'; },1200);
+}
+function onParamData(t){
+  paramBuf+=t; if(paramBuf.indexOf('@@ING_P_END@@')<0) return;
+  PARAMS=[];
+  paramBuf.split('\n').forEach(ln=>{ const k=ln.indexOf('@@ING_P@@'); if(k<0) return;
+    const a=ln.slice(k+9).split('\t'); if(a.length<6) return;
+    PARAMS.push({i:+a[0],t:+a[1],name:a[2],min:parseFloat(a[3]),max:parseFloat(a[4]),val:a[5]}); });
+  paramBuf=''; matronOnData=null; paintParams();
+}
+function paintParams(){
+  const list=document.getElementById('params-list'); document.getElementById('params-status').textContent=PARAMS.length+' params';
+  if(!PARAMS.length){ list.innerHTML='<div class="cfg-row"><span class="v" style="font-family:inherit">no params — load a script on the device, then ↻ refresh</span></div>'; return; }
+  list.innerHTML=PARAMS.map(p=>{
+    const sep=(isNaN(p.min)||isNaN(p.max)); const bound=midiMap[p.i]!=null;
+    if(sep) return `<div class="cfg-sec" style="margin:10px 0 4px">${esc(p.name)}</div>`;
+    return `<div class="cfg-row"><span class="k" style="font-family:inherit;flex:1">${esc(p.name)}</span>
+      <input class="pval" data-i="${p.i}" data-min="${p.min}" data-max="${p.max}" type="number" step="any" value="${parseFloat(p.val)||p.val||0}" style="width:90px">
+      <button class="rd-pill-btn plearn" data-i="${p.i}" style="margin:0;${bound?'border-color:var(--ok,#5c5)':''}" title="MIDI learn">${bound?'CC'+midiMap[p.i+'_cc']:'learn'}</button></div>`;
+  }).join('');
+  list.querySelectorAll('.pval').forEach(inp=>inp.onchange=()=>matronSend('params:set('+inp.dataset.i+','+(parseFloat(inp.value)||0)+')'));
+  list.querySelectorAll('.plearn').forEach(b=>b.onclick=()=>{ if(!midiAccess){ document.getElementById('params-status').textContent='enable MIDI first (🎹)'; return; }
+    midiLearn=+b.dataset.i; document.getElementById('params-status').textContent='move a MIDI control to bind it to "'+(PARAMS.find(x=>x.i===midiLearn)||{}).name+'"'; });
+}
+async function enableMidi(){
+  const status=document.getElementById('params-status');
+  if(!navigator.requestMIDIAccess){ status.textContent='Web MIDI not supported in this browser (try Chrome)'; return; }
+  try{ midiAccess=await navigator.requestMIDIAccess(); }catch(e){ status.textContent='MIDI permission denied'; return; }
+  for(const inp of midiAccess.inputs.values()) inp.onmidimessage=onMidi;
+  document.getElementById('params-midi').textContent='🎹 MIDI on';
+  status.textContent='MIDI on — click "learn" on a param, then move a knob/fader';
+}
+function onMidi(e){ const [st,d1,d2]=e.data; if((st&0xf0)!==0xb0) return;   // CC messages only
+  if(midiLearn!=null){ midiMap[midiLearn]=d1; midiMap[midiLearn+'_cc']=d1; midiLearn=null; paintParams(); return; }
+  for(const k in midiMap){ if(String(k).endsWith('_cc')) continue; if(midiMap[k]===d1){
+    const p=PARAMS.find(x=>x.i===+k); if(!p||isNaN(p.min)||isNaN(p.max)) continue;
+    const v=p.min+(d2/127)*(p.max-p.min); matronSend('params:set('+k+','+v+')');
+    const inp=document.querySelector('.pval[data-i="'+k+'"]'); if(inp) inp.value=Math.round(v*1000)/1000;
+  }}
+}
+
 /* ============ theme engine ============ */
 let editor=null, curTheme=0, userPickedTheme=false;
 function isDark(hex){ // luminance test for the editor's isDark flag
@@ -1049,13 +1160,25 @@ function wireTree(el){
 /* ============ editor / tabs ============ */
 let openTabs=[]; let activeFile=null;
 function fileName(p){return p.split('/').pop();}
+function setEditorText(t){ if(editor) editor.setValue(t,-1); else { const fb=document.getElementById('fallback'); if(fb) fb.value=t; } }
 function openFile(path){
   if(!openTabs.includes(path)) openTabs.push(path);
   activeFile=path;
-  if(editor){ editor.session.setMode(path.endsWith('.sc')?'ace/mode/lua':'ace/mode/lua'); editor.setValue(FILES[path]||'',-1); }
-  else { const fb=document.getElementById('fallback'); if(fb) fb.value=FILES[path]||''; }
+  setEditorText(FILES[path]||'');                            // instant: mock / placeholder
+  if(HAS_BACKEND){                                           // REAL: read the file off the device (scripts live under code/)
+    fetch('api/read?path='+encodeURIComponent('code/'+path),{cache:'no-store'})
+      .then(r=>r.ok?r.text():null).then(t=>{ if(t!=null && activeFile===path) setEditorText(t); }).catch(()=>{});
+  }
   document.getElementById('m-title').textContent=fileName(path);
   renderTabs();
+}
+function saveActive(){
+  if(!activeFile) return;
+  const txt = editor ? editor.getValue() : (document.getElementById('fallback')||{}).value||'';
+  if(!HAS_BACKEND){ FILES[activeFile]=txt; replPrint('<span class="meta"># saved '+esc(activeFile)+' (local demo)</span>'); return; }
+  fetch('api/write?path='+encodeURIComponent('code/'+activeFile),{method:'PUT',headers:{'Content-Type':'text/plain'},body:txt})
+    .then(r=>r.json()).then(j=>{ replPrint('<span class="meta"># saved '+esc(activeFile)+(j.bytes!=null?' ('+j.bytes+' bytes)':'')+(j.error?' — '+esc(j.error):'')+'</span>'); })
+    .catch(e=>replPrint('<span class="meta"># save failed: '+esc(e.message)+'</span>'));
 }
 function renderTabs(){
   const tabsHTML=openTabs.map(p=>
@@ -1079,17 +1202,33 @@ function setEditView(m){ document.getElementById('maiden').dataset.edit=m; LS.se
 const out=()=>document.getElementById('replout');
 function replPrint(html){ const o=out(); o.innerHTML+=html+'\n'; o.scrollTop=o.scrollHeight; }
 let target='matron';
+
+/* ===== live matron link (real REPL + params channel over ws://<host>:5555) ===== */
+let matronWS=null, matronReady=false, matronOnData=null;
+function matronConnect(){
+  let host=location.hostname; if(!host||location.protocol==='file:') return;   // off-device demo → stay mocked
+  try{ matronWS=new WebSocket('ws://'+host+':5555'); }catch(_){ return; }
+  matronWS.onopen=()=>{ matronReady=true; replPrint('<span class="sys"># live link to matron @ '+host+':5555</span>'); };
+  matronWS.onmessage=ev=>{ const t=(typeof ev.data==='string')?ev.data:''; if(!t) return;
+    if(matronOnData) matronOnData(t);                       // params/preset channel may consume markers
+    if(!/@@ING_/.test(t)) replPrint('<span class="ok">'+esc(t).replace(/\n$/,'')+'</span>'); };
+  matronWS.onclose=()=>{ matronReady=false; };
+  matronWS.onerror=()=>{ matronReady=false; };
+}
+function matronSend(lua){ if(matronReady){ try{ matronWS.send(lua+'\n'); return true; }catch(_){ } } return false; }
+
 function replSubmit(){
   const inp=document.getElementById('replin'); const v=inp.value.trim(); if(!v) return;
   replPrint(`&gt;&gt; <span class="cmd">${esc(v)}</span>`);
-  // canned responses
+  if(matronReady){ matronSend(v); inp.value=''; hideAC(); return; }   // REAL: stream from device
+  // ---- mock fallback (off-device demo) ----
   let resp='';
   if(/clock\.tempo/.test(v)) resp='<span class="ok">110.0</span>';
   else if(/params:get/.test(v)) resp='<span class="ok">0.5</span>';
   else if(/^print/.test(v)) resp=v.replace(/^print\s*\(?["']?/,'').replace(/["']?\)?$/,'');
   else if(target==='sc') resp='<span class="meta">-> sc: ok</span>';
   else if(/=/.test(v)) resp='';
-  else resp='<span class="meta"># ok</span>';
+  else resp='<span class="meta"># ok (demo — no device link)</span>';
   if(resp) replPrint(resp);
   inp.value=''; hideAC();
 }
@@ -1609,8 +1748,18 @@ let fvPath=['dust'], fvSel=new Set();
 let splitUpload=LS.get('splitupload',false);   // unified (drag for folders) by default; split adds a folder picker
 function fvNode(path){ let n=FS; for(let i=1;i<path.length;i++){ const x=(n.children||[]).find(c=>c.name===path[i]&&c.type==='dir'); if(!x) break; n=x; } return n; }
 function fmtSize(b){ if(b==null) return ''; if(b<1024) return b+' B'; if(b<1048576) return (b/1024).toFixed(1)+' KB'; return (b/1048576).toFixed(1)+' MB'; }
+async function fvLoadAndRender(){                            // REAL dust listing from the device
+  const node=fvNode(fvPath), rel=fvPath.slice(1).join('/');
+  try{ const r=await fetch('api/ls?path='+encodeURIComponent(rel),{cache:'no-store'}); const items=await r.json();
+    if(Array.isArray(items)) node.children=items.map(it=>({name:it.name, type:it.type==='dir'?'dir':'file',
+      size:it.size, mod:it.mod, children:it.type==='dir'?null:undefined}));
+  }catch(_){ }
+  node._live=1; renderFiles();
+}
 function renderFiles(){
-  const v=document.getElementById('filesview'); const node=fvNode(fvPath);
+  const node=fvNode(fvPath);
+  if(HAS_BACKEND && !node._live){ fvLoadAndRender(); return; }   // lazy-load this dir live, then re-render
+  const v=document.getElementById('filesview');
   const crumbs=fvPath.map((seg,i)=>`<button class="fv-crumb ${i===fvPath.length-1?'cur':''}" data-cd="${i}">${seg}</button>`).join('<span class="fv-sep">/</span>');
   const kids=(node.children||[]).slice().sort((a,b)=>(a.type===b.type)?a.name.localeCompare(b.name):(a.type==='dir'?-1:1));
   const rows=kids.length?kids.map(c=>{ const dir=c.type==='dir';
@@ -1801,6 +1950,8 @@ function renderSrc(){
   });
 }
 function openCfg(){ buildThemeGrid(document.getElementById('theme-filter').value); renderGh(); renderSrc();
+  initAudioHealth(); renderMods();                          // refresh device section (no-op off-device)
+  if(HAS_BACKEND||matronReady){ document.getElementById('dev-sec').style.display=''; document.getElementById('params-row').style.display=''; }
   document.getElementById('overlay').classList.add('on'); }
 function closeCfg(){ document.getElementById('overlay').classList.remove('on'); }
 
@@ -1907,6 +2058,9 @@ function boot(){
   const rh=LS.get('replh',null); if(rh) document.documentElement.style.setProperty('--repl-h',rh);
   initSplit();
   loadCatalog().then(checkScPlugins);   // pull the real catalog, then silently check SC-plugin health
+  matronConnect();                      // live REPL + params link to matron (no-op off-device)
+  initAudioHealth();                    // B10 audio-server health line in config
+  document.addEventListener('keydown',e=>{ if((e.metaKey||e.ctrlKey)&&e.key==='s'){ e.preventDefault(); saveActive(); } });  // Ctrl/Cmd-S saves to device
   // SC-plugin (64-bit UGen) banner + modal wiring
   document.getElementById('scp-banner-fix').onclick=openScp;
   document.getElementById('scp-banner-x').onclick=()=>{ document.getElementById('scp-banner').style.display='none'; LS.set('scpDismiss',Date.now()+7*24*3600*1000); };
@@ -1915,6 +2069,14 @@ function boot(){
   document.getElementById('scp-skip').onclick=()=>document.getElementById('scp-overlay').classList.remove('on');
   document.getElementById('scp-overlay').addEventListener('click',e=>{if(e.target.id==='scp-overlay')e.currentTarget.classList.remove('on');});
   document.getElementById('scp-go').onclick=runScpHeal;
+  // B9 params editor wiring
+  document.getElementById('open-params').onclick=openParams;
+  document.getElementById('params-close').onclick=()=>document.getElementById('params-overlay').classList.remove('on');
+  document.getElementById('params-overlay').addEventListener('click',e=>{if(e.target.id==='params-overlay')e.currentTarget.classList.remove('on');});
+  document.getElementById('params-refresh').onclick=refreshParams;
+  document.getElementById('params-midi').onclick=enableMidi;
+  document.getElementById('params-save').onclick=()=>{ const s=+(prompt('save current params to PSET slot (1–9)','1')||0); if(s>=1&&s<=9){ presetSlot=s; matronSend('params:write('+s+')'); document.getElementById('params-status').textContent='saved → PSET slot '+s; } };
+  document.getElementById('params-load').onclick=()=>{ const s=+(prompt('load params from PSET slot (1–9)','1')||0); if(s>=1&&s<=9){ presetSlot=s; matronSend('params:read('+s+');params:bang()'); document.getElementById('params-status').textContent='loaded ← PSET slot '+s; setTimeout(refreshParams,400); } };
   // trust-gate modal wiring
   document.getElementById('trust-cancel').onclick=()=>{document.getElementById('trust-overlay').classList.remove('on');trustPending=null;};
   document.getElementById('trust-overlay').addEventListener('click',e=>{if(e.target.id==='trust-overlay'){e.currentTarget.classList.remove('on');trustPending=null;}});

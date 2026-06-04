@@ -417,6 +417,173 @@ def scplugins_heal(source="bundled", url=""):
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+# ---------------------------------------------------------------------------
+# Audio-server health (B10) — jack/scsynth state + the hw:0 handoff race
+# ---------------------------------------------------------------------------
+def norns_log_path():
+    for p in (os.path.join(DUST, "..", "..", "logs", "norns.log"),
+              os.path.expanduser("~/.local/share/norns/norns.log"),
+              os.path.join(DUST, "..", "log", "norns.log")):
+        rp = os.path.realpath(p)
+        if os.path.isfile(rp):
+            return rp
+    return None
+
+
+def proc_pid(name):
+    for d in os.listdir("/proc"):
+        if not d.isdigit():
+            continue
+        try:
+            with open(f"/proc/{d}/comm") as f:
+                if f.read().strip() == name:
+                    return int(d)
+        except OSError:
+            continue
+    return None
+
+
+def tail_text(path, nbytes=20000):
+    try:
+        with open(path, "rb") as f:
+            f.seek(0, 2)
+            sz = f.tell()
+            f.seek(max(0, sz - nbytes))
+            return f.read().decode("utf-8", "replace")
+    except OSError:
+        return ""
+
+
+def audio_status():
+    procs = {n: proc_pid(n) for n in ("jackd", "crone", "scsynth", "sclang", "matron")}
+    log = norns_log_path()
+    tail = tail_text(log) if log else ""
+    race = bool(re.search(r'playback device "hw:\d" is already in use|JackServer::Open failed', tail))
+    quits = "JackTemporaryException : now quits" in tail
+    core_up = bool(procs["jackd"] and procs["scsynth"] and procs["crone"])
+    return {
+        "procs": procs, "core_up": core_up,
+        "recent_device_race": race, "recent_jack_quit": quits,
+        "ok": core_up and not (race and not procs["scsynth"]),
+        "log": os.path.basename(log) if log else None,
+        "hint": ("audio server looks healthy" if core_up else
+                 "audio server is down — jack couldn't hold the sound device; a full power-cycle is the reliable fix"),
+    }
+
+
+def audio_restart():
+    # Best-effort. No norns service exists on PortMaster-style ports, so a clean
+    # restart usually means a power-cycle; we try the safe options and report.
+    for cmd in ("systemctl restart norns", "systemctl restart norns-jack",
+                "sv restart norns"):
+        try:
+            r = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=20)
+            if r.returncode == 0:
+                return {"ok": True, "method": cmd, "reboot_required": False,
+                        "log": f"ran: {cmd}"}
+        except Exception:  # noqa: BLE001
+            continue
+    return {"ok": False, "reboot_required": True,
+            "error": "no safe auto-restart on this port",
+            "hint": "power-cycle the whole device — jack only cleanly re-grabs the sound card at boot"}
+
+
+# ---------------------------------------------------------------------------
+# Mods manager (B8) — list dust/code/*/lib/mod.lua + the enabled-state file
+# ---------------------------------------------------------------------------
+def mods_state_file():
+    return os.path.join(DUST, "data", "system.mods")
+
+
+def read_enabled_mods():
+    try:
+        with open(mods_state_file()) as f:
+            return re.findall(r'"([^"]+)"', f.read())
+    except OSError:
+        return []
+
+
+def write_enabled_mods(names):
+    body = "return {\n{\n" + "".join(f'   "{n}",\n' for n in names) + "},\n}\n"
+    os.makedirs(os.path.dirname(mods_state_file()), exist_ok=True)
+    with open(mods_state_file(), "w") as f:
+        f.write(body)
+
+
+def list_mods():
+    enabled = set(read_enabled_mods())
+    out = []
+    for name in sorted(os.listdir(CODE)):
+        if name.startswith("."):
+            continue
+        if os.path.isfile(os.path.join(CODE, name, "lib", "mod.lua")):
+            out.append({"name": name, "enabled": name in enabled, "self": name == "ingenue"})
+    return {"mods": out, "enabled": sorted(enabled),
+            "state_file": os.path.relpath(mods_state_file(), DUST)}
+
+
+def toggle_mod(name, on):
+    name = (name or "").strip()
+    if not name or "/" in name:
+        return {"error": "bad mod name"}
+    if not os.path.isfile(os.path.join(CODE, name, "lib", "mod.lua")):
+        return {"error": f"{name} is not a mod (no lib/mod.lua)"}
+    enabled = read_enabled_mods()
+    was = name in enabled
+    if on and not was:
+        enabled.append(name)
+    elif not on and was:
+        enabled = [m for m in enabled if m != name]
+    write_enabled_mods(enabled)
+    return {"ok": True, "name": name, "enabled": on,
+            "restart_required": bool(on) and not was,   # enabling a previously-off mod needs a restart
+            "mods": list_mods()["mods"]}
+
+
+# ---------------------------------------------------------------------------
+# README + images (B5) — pulled from the script's GitHub repo, best-effort
+# ---------------------------------------------------------------------------
+def _gh_owner_repo(url):
+    m = re.search(r"github\.com[:/]+([^/]+)/([^/.]+)", url or "")
+    return (m.group(1), m.group(2)) if m else (None, None)
+
+
+def fetch_readme(url):
+    owner, repo = _gh_owner_repo(url)
+    if not owner:
+        return {"error": "not a github url"}
+    try:
+        req = urllib.request.Request(
+            f"https://api.github.com/repos/{owner}/{repo}/readme",
+            headers={"User-Agent": "ingenue", "Accept": "application/vnd.github.raw"})
+        with urllib.request.urlopen(req, timeout=8) as r:
+            raw_base = r.headers.get("X-Ingenue", "")  # unused; placeholder
+            md = r.read().decode("utf-8", "replace")
+    except Exception as e:  # noqa: BLE001
+        return {"error": f"no README ({e.__class__.__name__})", "images": [], "text": ""}
+    # raw base for resolving relative image paths (try main then master)
+    base_main = f"https://raw.githubusercontent.com/{owner}/{repo}/main/"
+    imgs = []
+    for m in re.findall(r'!\[[^\]]*\]\(([^)\s]+)', md) + re.findall(r'<img[^>]+src=["\']([^"\']+)', md):
+        u = m.strip()
+        if u.startswith("http"):
+            imgs.append(u)
+        elif not u.startswith("data:"):
+            imgs.append(base_main + u.lstrip("./"))
+    # description = first non-heading, non-image prose paragraph
+    desc = ""
+    for para in re.split(r"\n\s*\n", md):
+        s = re.sub(r"`{1,3}", "", para).strip()
+        if s and not s.startswith(("#", "!", "<", "|", "-", "*", "[![")) and len(s) > 30:
+            desc = re.sub(r"\s+", " ", s)[:600]
+            break
+    seen, uniq = set(), []
+    for u in imgs:
+        if u not in seen and re.search(r"\.(png|jpe?g|gif|webp)(\?|$)", u, re.I):
+            seen.add(u); uniq.append(u)
+    return {"owner": owner, "repo": repo, "text": desc, "images": uniq[:12]}
+
+
 class H(http.server.SimpleHTTPRequestHandler):
     def __init__(self, *a, **k):
         super().__init__(*a, directory=HERE, **k)
@@ -460,6 +627,12 @@ class H(http.server.SimpleHTTPRequestHandler):
                 if self._q().get("online", ["0"])[0] == "1":   # opt-in network check
                     rep["online"] = scplugins_online_version()
                 return self._json(rep)
+            if path == "/api/audio":
+                return self._json(audio_status())
+            if path == "/api/mods":
+                return self._json(list_mods())
+            if path == "/api/readme":
+                return self._json(fetch_readme(self._q().get("url", [""])[0]))
             if path == "/api/ls":
                 return self._json(listing(safe(self._q().get("path", [""])[0])))
             if path == "/api/read":
@@ -505,6 +678,10 @@ class H(http.server.SimpleHTTPRequestHandler):
                 return self._json({"ok": True, "removed": name})
             if path == "/api/scplugins/heal":
                 return self._json(scplugins_heal(b.get("source", "bundled"), (b.get("url") or "").strip()))
+            if path == "/api/audio/restart":
+                return self._json(audio_restart())
+            if path == "/api/mods/toggle":
+                return self._json(toggle_mod(b.get("name"), bool(b.get("on"))))
             if path == "/api/heal":
                 full, name = safe_script_dir(b.get("name"))
                 inst = os.path.join(full, "lib", "install.sh")

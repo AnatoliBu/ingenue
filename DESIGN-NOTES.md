@@ -89,6 +89,20 @@ PanicOS ships a *half-implemented* state: PortedPlugins `.sc` **classes** presen
   last-updated, demos, nb-voice detection, engine names) and ships as a **nightly-refreshed
   static data feed** ingenue consumes, vs. what ingenue must compute live (GitHub search,
   device state). Goal: ingenue stays light on-device; heavy enrichment is offloaded.
+- **B8 — Mods manager.** Detect the current state of norns **mods** on device (scan
+  `dust/code/*/lib/mod.lua` + the enabled-mods state norns persists), expose them in ingenue for
+  **enable/disable**, and **remind to restart norns** when you enable a mod that wasn't already on
+  (mods load at startup). Mirror of the SYSTEM > MODS menu, in the browser.
+- **B9 — Live parameters + preset + MIDI bridge.** A view into the running script's **PARAMS**
+  menu: read the param tree from matron and **edit values in the browser with changes reflected
+  live on device** (and vice-versa), plus **save/load presets**. Stretch: a **MIDI mapping** mode
+  that uses the **browser** (Web MIDI) as a bridge to MIDI controllers connected to the *computer*,
+  mapping them to the params ingenue sees — MIDI-learn without the controller being on the norns.
+  (Depends on a live matron link — same websocket plumbing as the REPL/MCP work.)
+- **B10 — Audio-server health + restart.** Detect jack/audio-stack state (jackd/scsynth/crone
+  alive; recent `playback device "hw:0" is already in use` / `JackServer::Open failed` in the log —
+  the device-handoff race that kills all audio on a stack restart) and expose a **status line +
+  Restart Audio button in config**. Best-effort restart; recommends a full power-cycle when it can't.
 
 ## Shipping plan (proposed — "ingenue" on device)
 
