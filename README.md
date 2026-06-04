@@ -79,14 +79,9 @@ ingenue on :7777).
 ![repository manager](screenshots/desktop/repo.png)
 </details>
 
-<details><summary>Expanded card — README + image carousel</summary>
+<details><summary>Expanded card — README + image carousel + embedded video demo</summary>
 
-![card with image carousel](screenshots/desktop/repo-carousel.png)
-</details>
-
-<details><summary>Expanded card — embedded video demo</summary>
-
-![card with video demo](screenshots/desktop/repo-demo.png)
+![expanded card with README, carousel and video demo](screenshots/desktop/repo-carousel.png)
 </details>
 
 <details><summary>Mods — installed + installable community mods</summary>

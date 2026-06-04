@@ -196,7 +196,7 @@ button{font-family:inherit}
 .card{background:var(--panel);border:1px solid var(--trim);border-radius:13px;padding:14px 15px;display:flex;
   flex-direction:column;gap:9px;transition:border-color .15s,transform .15s,box-shadow .15s}
 .card:hover{border-color:var(--accent2);box-shadow:0 4px 16px rgba(0,0,0,.14)}  /* no transform → no scroll repaint jank */
-.card .head{display:flex;align-items:flex-start;gap:10px}
+.card .head{display:flex;align-items:flex-start;gap:10px;flex-wrap:wrap}   /* buttons drop below the name on narrow cards instead of overlapping it */
 .card .id{flex:1;min-width:0}
 .card .nm{font-family:ui-monospace,monospace;font-weight:700;font-size:15px;color:var(--fg);display:flex;gap:8px;align-items:center;flex-wrap:wrap}
 .card .nm .okb{display:inline-flex;align-items:center;gap:4px;font-family:-apple-system,sans-serif;font-size:11px;font-weight:600;
@@ -353,7 +353,7 @@ button{font-family:inherit}
 .filesview.on{display:flex}
 .paramsview,.modsview{flex:1;min-width:0;min-height:0;display:none;flex-direction:column;background:var(--bg);container-type:inline-size}
 .paramsview.on,.modsview.on{display:flex}
-.modsview .rd-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:12px;padding:10px 12px}
+.modsview .rd-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(360px,1fr));gap:12px;padding:10px 12px}
 .modsview .mods-toggle{border:1px solid var(--accent);background:color-mix(in srgb,var(--accent) 12%,transparent);color:var(--accent);border-radius:8px;padding:6px 12px;font:inherit;font-size:12px;cursor:pointer;white-space:nowrap}
 .modsview .mods-toggle.on{border-color:var(--ok,#5c5);color:var(--ok,#5c5);background:color-mix(in srgb,var(--ok,#5c5) 12%,transparent)}
 .modsview .csel{display:none}   /* mods aren't bulk-installed — hide the select checkbox */
@@ -780,7 +780,7 @@ button{font-family:inherit}
 </div>
 
 <script>
-const BUILD='b39 · 2026-06-04 · smaller card action buttons + params page padding';
+const BUILD='b40 · 2026-06-04 · card head wraps buttons below name (no overlap) + wider mod cards';
 console.log('%cmaiden redesign build: '+BUILD,'color:#DEB887;font-weight:bold');
 const LS={
   get(k,d){try{const v=localStorage.getItem('maiden.'+k);return v==null?d:JSON.parse(v);}catch(e){return d;}},
