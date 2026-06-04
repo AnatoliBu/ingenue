@@ -649,16 +649,7 @@ class H(http.server.SimpleHTTPRequestHandler):
         except Exception:
             return {"_raw": raw}
 
-    def _rebase(self):
-        # serve the app under /ingenue too (like maiden's /maiden): strip the prefix so
-        # /ingenue, /ingenue/, /ingenue/api/..., /ingenue/favicon.svg all route like root.
-        pr = urllib.parse.urlsplit(self.path)
-        if pr.path == "/ingenue" or pr.path.startswith("/ingenue/"):
-            newpath = pr.path[len("/ingenue"):] or "/"
-            self.path = urllib.parse.urlunsplit(("", "", newpath, pr.query, ""))
-
     def do_GET(self):
-        self._rebase()
         path = urllib.parse.urlparse(self.path).path
         try:
             if path == "/api/installed":
@@ -700,7 +691,6 @@ class H(http.server.SimpleHTTPRequestHandler):
         return super().do_GET()
 
     def do_PUT(self):
-        self._rebase()
         if urllib.parse.urlparse(self.path).path != "/api/write":
             return self._json({"error": "not found"}, 404)
         try:
@@ -717,7 +707,6 @@ class H(http.server.SimpleHTTPRequestHandler):
             return self._json({"error": str(e)}, 500)
 
     def do_POST(self):
-        self._rebase()
         path = urllib.parse.urlparse(self.path).path
         b = self._body()
         try:

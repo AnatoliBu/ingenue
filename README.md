@@ -28,8 +28,7 @@ curl -fsSL https://raw.githubusercontent.com/seajaysec/ingenue/main/install.sh |
 
 Either way it discovers your `dust` tree and runs ingenue as a persistent service on
 **:7777** (always up, like maiden — survives reboots, auto-restarts). Then open
-**`http://<your-norns-ip>:7777/`** from any device — or **`http://<your-norns-ip>:7777/ingenue`**
-(the app answers at the `/ingenue` path too, mirroring maiden's `/maiden`).
+**`http://<your-norns-ip>:7777/`** from any device.
 
 It does **not** replace or touch maiden; the two run side by side (maiden on :5000,
 ingenue on :7777).
