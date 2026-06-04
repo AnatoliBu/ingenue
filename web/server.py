@@ -454,6 +454,20 @@ def tail_text(path, nbytes=20000):
         return ""
 
 
+def sysinfo():
+    u = os.uname()
+    ip = ""
+    try:
+        import socket
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(("8.8.8.8", 80)); ip = s.getsockname()[0]; s.close()
+    except Exception:  # noqa: BLE001
+        pass
+    return {"hostname": u.nodename, "ip": ip, "arch": u.machine,
+            "system": f"{u.sysname} {u.release}", "port": PORT,
+            "dust": DUST, "python": sys.version.split()[0]}
+
+
 def audio_status():
     procs = {n: proc_pid(n) for n in ("jackd", "crone", "scsynth", "sclang", "matron")}
     log = norns_log_path()
@@ -627,6 +641,8 @@ class H(http.server.SimpleHTTPRequestHandler):
                 if self._q().get("online", ["0"])[0] == "1":   # opt-in network check
                     rep["online"] = scplugins_online_version()
                 return self._json(rep)
+            if path == "/api/sysinfo":
+                return self._json(sysinfo())
             if path == "/api/audio":
                 return self._json(audio_status())
             if path == "/api/mods":

@@ -603,6 +603,8 @@ button{font-family:inherit}
 
          <!-- device section (shown only when the on-device backend is reachable) -->
          <div class="cfg-sec" id="dev-sec" style="margin-top:20px;display:none">device · norns</div>
+         <div class="cfg-row" id="sysinfo-row" style="display:none"><span class="k">device</span>
+           <span class="v" id="sysinfo" style="width:auto;flex:1;font-family:ui-monospace,monospace;font-size:11px;color:var(--muted)">…</span></div>
          <div class="cfg-row" id="audio-row" style="display:none"><span class="k">audio server</span>
            <span class="v" id="audio-state" style="width:auto;flex:1;font-family:inherit">checking…</span>
            <button class="rd-pill-btn" id="audio-restart" style="display:none;margin:0">restart audio</button></div>
@@ -751,7 +753,7 @@ button{font-family:inherit}
 </div>
 
 <script>
-const BUILD='b25 · 2026-06-03 · live REPL/params/MIDI · mods · audio health · live files';
+const BUILD='b26 · 2026-06-03 · B5 readme · B6 tags · B7 feed · sysinfo';
 console.log('%cmaiden redesign build: '+BUILD,'color:#DEB887;font-weight:bold');
 const LS={
   get(k,d){try{const v=localStorage.getItem('maiden.'+k);return v==null?d:JSON.parse(v);}catch(e){return d;}},
@@ -912,6 +914,18 @@ async function loadCatalog(){
       entries.forEach(e=>{ const x=ex[e.n.toLowerCase()]; if(x){ e.demo=x.demo; e.upd=x.upd; e.comm=x.comm;
         e.proj=e.proj||x.proj; e.docU=e.docU||x.doc; e.discU=e.discU||x.disc; } });
     }catch(_){}
+    // B7: optional nightly precomputed feed from the nornslist scraper — engine names,
+    // nb-voice flag, README text + images, extra tags. ingenue uses it the moment it exists
+    // (no live GitHub/community fetches needed); absent → we compute those live on demand.
+    try{
+      const feed=await (await fetch('feed.json',{cache:'no-store'})).json();
+      const fm=feed.scripts||feed;
+      entries.forEach(e=>{ const x=fm[e.n.toLowerCase()]; if(!x) return;
+        if(x.engine) e.engine=x.engine; if(x.nb) e.nb=1;
+        if(x.readme) e.readme=x.readme; if(x.images) e.images=x.images;
+        if(x.tags) e.tags=Array.from(new Set((e.tags||[]).concat(x.tags))).slice(0,8);
+        if(x.upd) e.upd=e.upd||x.upd; });
+    }catch(_){}
     // keep the mocked non-community entries (your github repos + pure custom-catalog items) so the trust gate is demonstrable
     const KEEP=REPO.available.filter(p=>p.srcs.includes('mine')||(p.srcs.includes('kalium')&&!p.srcs.includes('community')));
     REPO.available = entries.concat(KEEP);
@@ -994,6 +1008,12 @@ async function runScpHeal(){
     if(j.ok) confirmDialog('Reboot the whole device','The 64-bit SuperCollider plugins are installed (<b>'+j.count+'</b> binaries). Now <b>power-cycle the entire device</b> — not just a norns restart — so SuperCollider loads them at boot. Then your engine scripts will make sound.', ()=>{});
   }catch(e){ jobDone(job,null,false,e.message,''); go.disabled=false; go.textContent='Install plugins'; }
 }
+
+/* ===== device info (hostname · ip · arch · system) ===== */
+async function initSysInfo(){ try{ const r=await fetch('api/sysinfo',{cache:'no-store'}); if(!r.ok) return; const s=await r.json();
+  document.getElementById('dev-sec').style.display=''; document.getElementById('sysinfo-row').style.display='';
+  document.getElementById('sysinfo').textContent=`${s.hostname||'?'} · ${s.ip||'no ip'} · ${s.arch} · ${s.system}`;
+  }catch(_){ } }
 
 /* ===== B10 audio-server health (config line + best-effort restart) ===== */
 async function initAudioHealth(){ try{ const r=await fetch('api/audio',{cache:'no-store'}); if(!r.ok) return; renderAudio(await r.json()); }catch(_){ } }
@@ -1295,11 +1315,28 @@ function sortCmp(a,b){
 }
 function knownNames(){ const s=new Set(); REPO.installed.forEach(p=>s.add(p.n.toLowerCase()));
   REPO.available.forEach(p=>{ if(p.srcs.includes('community')) s.add(p.n.toLowerCase()); }); return s; }
+/* ===== B6: tag filter facet + dynamic "additional voice" (nb) tag ===== */
+let tagFilter=new Set();
+const NB_TAG='additional voice';
+function isNbVoice(p){ if(p.nb) return true; const t=(p.tags||[]).map(x=>String(x).toLowerCase());
+  return t.includes('nb')||t.includes('n.b.')||/\bnb\b|note ?bridge|nb_|nb\//i.test(((p.d||'')+' '+(p.n||''))); }
+function entryTags(p){ const base=(p.tags||[]).map(String); return isNbVoice(p)?base.concat(NB_TAG):base; }
+function allTags(tab){
+  const counts={}; repoBaseList(tab).forEach(p=>entryTags(p).forEach(t=>{ counts[t]=(counts[t]||0)+1; }));
+  return Object.entries(counts).sort((a,b)=> a[0]===NB_TAG?-1 : b[0]===NB_TAG?1 : b[1]-a[1]);
+}
+function tagBar(tab){
+  const tags=allTags(tab); if(!tags.length) return '';
+  const chip=(t,c,on)=>`<button data-tag="${esc(t)}" style="font:inherit;font-size:11px;padding:3px 9px;border-radius:11px;cursor:pointer;border:1px solid ${on?'var(--accent,#8af)':'var(--trim,#555)'};background:${on?'color-mix(in srgb,var(--accent,#8af) 25%,var(--bg))':'transparent'};color:${t===NB_TAG?'var(--ok,#6c6)':'var(--fg)'}">${t===NB_TAG?'🎹 ':''}${esc(t)} <span style="opacity:.55">${c}</span></button>`;
+  const clear=tagFilter.size?`<button data-tagclear style="font:inherit;font-size:11px;padding:3px 9px;border-radius:11px;cursor:pointer;border:1px solid var(--err);background:transparent;color:var(--err)">✕ ${tagFilter.size}</button>`:'';
+  return `<div class="rd-tagbar" style="display:flex;flex-wrap:wrap;gap:6px;padding:8px 12px 2px;align-items:center">${clear}${tags.slice(0,48).map(([t,c])=>chip(t,c,tagFilter.has(t))).join('')}</div>`;
+}
 function repoList(tab){
   let list=repoBaseList(tab).slice();
   if(tab==='discover' && discHideKnown){ const k=knownNames(); list=list.filter(p=>!k.has(p.n.toLowerCase())); }
   if(repoQuery && tab!=='discover'){ const q=repoQuery.toLowerCase();   // discover searches GitHub on Enter, not live
     list=list.filter(p=>(p.n+' '+p.a+' '+(p.tags||[]).join(' ')+' '+(p.d||'')).toLowerCase().includes(q)); }
+  if(tagFilter.size && tab!=='discover'){ list=list.filter(p=>{ const t=entryTags(p); return [...tagFilter].every(f=>t.includes(f)); }); }
   return list.sort(sortCmp);
 }
 function updateGrid(){
@@ -1574,8 +1611,45 @@ function wireCards(v,list,tab){
     const cb=card.querySelector('input[data-sel]'); if(cb) cb.onclick=e=>{ e.stopPropagation();
       if(cb.checked) selection.add(p.n); else selection.delete(p.n); updateBulkBar(); };
     const db=card.querySelector('.demo-btn'); if(db) db.onclick=e=>{e.stopPropagation();loadDemo(card,p);};
-    // cards stay expanded; demo embeds load on demand via the "load demo" button
+    const rb=card.querySelector('.readme-btn'); if(rb) rb.onclick=e=>{e.stopPropagation();loadReadme(card,p);};
+    // cards stay expanded; demo embeds + README load on demand
   });
+}
+/* ===== B5: README + image carousel (norns.community / GitHub), lazy ===== */
+async function loadReadme(card,p){
+  const slot=card.querySelector('[data-readme]'); if(!slot) return;
+  if(p.readme||p.images){                                   // B7: precomputed by the nornslist feed → no fetch
+    let h=''; if(p.readme) h+=`<div class="readme-text" style="font-size:12px;color:var(--muted);line-height:1.5;margin:6px 0">${esc(p.readme)}</div>`;
+    if(p.images&&p.images.length) h+=carouselHTML(p.images);
+    slot.innerHTML=h; wireCarousel(slot); return;
+  }
+  slot.innerHTML='<span class="more-nodemo">loading README…</span>';
+  try{ const j=await (await fetch('api/readme?url='+encodeURIComponent(p.proj),{cache:'no-store'})).json();
+    if(j.error){ slot.innerHTML='<span class="more-nodemo">no README found ('+esc(j.error)+')</span>'; return; }
+    let html='';
+    if(j.text) html+=`<div class="readme-text" style="font-size:12px;color:var(--muted);line-height:1.5;margin:6px 0">${esc(j.text)}</div>`;
+    if(j.images&&j.images.length) html+=carouselHTML(j.images);
+    slot.innerHTML=html||'<span class="more-nodemo">no README details</span>';
+    wireCarousel(slot);
+  }catch(e){ slot.innerHTML='<span class="more-nodemo">README unavailable</span>'; }
+}
+function carouselHTML(imgs){
+  const multi=imgs.length>1;
+  return `<div class="carousel" data-idx="0" style="position:relative;margin:8px 0">
+    <img class="cimg" src="${imgs[0]}" data-imgs='${JSON.stringify(imgs).replace(/'/g,'&#39;')}' loading="lazy" style="width:100%;border-radius:8px;display:block;max-height:240px;object-fit:contain;background:#0003">
+    ${multi?`<button class="cprev" style="position:absolute;left:6px;top:50%;transform:translateY(-50%);border:0;background:#000a;color:#fff;border-radius:50%;width:28px;height:28px;cursor:pointer;font-size:16px">‹</button>
+    <button class="cnext" style="position:absolute;right:6px;top:50%;transform:translateY(-50%);border:0;background:#000a;color:#fff;border-radius:50%;width:28px;height:28px;cursor:pointer;font-size:16px">›</button>
+    <span class="cdot" style="position:absolute;bottom:6px;left:50%;transform:translateX(-50%);font-size:10px;color:#fff;background:#000a;padding:1px 7px;border-radius:8px">1 / ${imgs.length}</span>`:''}
+  </div>`;
+}
+function wireCarousel(root){
+  const car=root.querySelector('.carousel'); if(!car) return;
+  const img=car.querySelector('.cimg'); let imgs; try{ imgs=JSON.parse(img.dataset.imgs);}catch(_){ return; }
+  const go=d=>{ const i=((+car.dataset.idx)+d+imgs.length)%imgs.length; car.dataset.idx=i; img.src=imgs[i];
+    const dot=car.querySelector('.cdot'); if(dot) dot.textContent=(i+1)+' / '+imgs.length; };
+  const pv=car.querySelector('.cprev'), nx=car.querySelector('.cnext');
+  if(pv) pv.onclick=e=>{e.stopPropagation();go(-1);};
+  if(nx) nx.onclick=e=>{e.stopPropagation();go(1);};
 }
 function availSources(){ return SRC_ORDER.filter(id=>SRC_ON[id] && (!SRC[id].auth || ghConnected)); }
 function srcTagsHTML(p){
@@ -1610,6 +1684,7 @@ function repoCard(p,tab){
       <div class="more-meta">${p.upd?`updated ${p.upd}`:'last-updated unknown'} · via ${srcNames(p)}${p.inst?` · <button class="reqs-btn" data-reqs="1">⚙ requirements</button>`:''}</div>
       ${hasLinks?`<div class="more-links">${L(p.proj,'code')}${L(p.docU,'docs')}${L(p.discU,'discuss')}${L(p.comm,'norns.community')}</div>`:''}
       <div class="more-demo">${demoSlot}</div>
+      <div class="more-readme" data-readme>${isUrl(p.proj)?'<button class="readme-btn">📖 load README &amp; images</button>':''}</div>
     </div>`;
   return `<div class="card open${p.gh?' gh':''}" ${p.gh?`style="--srcc:${SRC[(p.srcs||[])[0]]?SRC[(p.srcs||[])[0]].color:'var(--trim)'}"`:''}>
     <div class="head"><label class="csel" title="select for bulk install"><input type="checkbox" data-sel ${selection.has(p.n)?'checked':''}></label><div class="id">
@@ -1674,7 +1749,7 @@ function renderRepo(){
       <div class="rd-toolbar">
         <label class="rd-search"><svg viewBox="0 0 32 32"><path d="${I.search}"/></svg><input id="rd-q" placeholder="${ph}"></label>
         ${sortSel}${allBtn}
-      </div>${tab==='installed'?'':srcBar(tab)}</div>
+      </div>${tab==='installed'?'':srcBar(tab)}${tab!=='discover'?tagBar(tab):''}</div>
     <div class="rd-scroll"><div>${head}<div class="rd-grid">${list.map(p=>repoCard(p,tab)).join('')||`<div class="gh-empty"><p>nothing here yet.</p></div>`}</div>${pager}</div></div>
     <div class="bulkbar" id="bulkbar"></div>`;
   v.querySelectorAll('[data-rt]').forEach(b=>b.onclick=()=>{repoTab=b.dataset.rt;repoQuery='';selection.clear();renderRepo();});
@@ -1685,6 +1760,8 @@ function renderRepo(){
   v.querySelectorAll('[data-src]').forEach(c=>c.onclick=()=>{
     const id=c.dataset.src; srcFilter.has(id)?srcFilter.delete(id):srcFilter.add(id); renderRepo();
   });
+  v.querySelectorAll('[data-tag]').forEach(c=>c.onclick=()=>{ const t=c.dataset.tag; tagFilter.has(t)?tagFilter.delete(t):tagFilter.add(t); renderRepo(); });
+  v.querySelectorAll('[data-tagclear]').forEach(c=>c.onclick=()=>{ tagFilter.clear(); renderRepo(); });
   v.querySelectorAll('[data-addsrc]').forEach(c=>c.onclick=openCfg);
   const q=document.getElementById('rd-q');
   if(q){
@@ -1950,7 +2027,7 @@ function renderSrc(){
   });
 }
 function openCfg(){ buildThemeGrid(document.getElementById('theme-filter').value); renderGh(); renderSrc();
-  initAudioHealth(); renderMods();                          // refresh device section (no-op off-device)
+  initSysInfo(); initAudioHealth(); renderMods();           // refresh device section (no-op off-device)
   if(HAS_BACKEND||matronReady){ document.getElementById('dev-sec').style.display=''; document.getElementById('params-row').style.display=''; }
   document.getElementById('overlay').classList.add('on'); }
 function closeCfg(){ document.getElementById('overlay').classList.remove('on'); }
