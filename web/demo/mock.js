@@ -8,64 +8,104 @@
 
   // ---------- top-level branding ----------
   const DEMO_TITLE = 'ingenue (demo)';
-  // The main app force-corrects the title once on load (a `document.title =`
-  // assignment well into the body's inline scripts). Replace the setter on
-  // the Document prototype so any subsequent assignment lands on our value.
-  try {
-    const desc = Object.getOwnPropertyDescriptor(Document.prototype, 'title');
-    if (desc && desc.set) {
-      const origSet = desc.set, origGet = desc.get;
-      Object.defineProperty(Document.prototype, 'title', {
-        configurable: true,
-        get(){ return origGet.call(this); },
-        set(){ origSet.call(this, DEMO_TITLE); }
-      });
-    }
-  } catch(_){}
   document.title = DEMO_TITLE;
+  // Brute-but-reliable title lock: the page force-corrects the title once
+  // during load (line ~916 in index.html). Setter-override is racy at
+  // that point in startup, so poll for a short window and snap it back.
+  let _lockTries = 0;
+  const _lockIv = setInterval(() => {
+    if (document.title !== DEMO_TITLE) document.title = DEMO_TITLE;
+    if (++_lockTries > 30) clearInterval(_lockIv);   // ~6s, more than the page needs
+  }, 200);
+  // After load, watch for any further changes (cheap)
+  try {
+    const obs = () => {
+      const tEl = document.querySelector('title');
+      if (!tEl) { setTimeout(obs, 50); return; }
+      new MutationObserver(() => {
+        if (document.title !== DEMO_TITLE) document.title = DEMO_TITLE;
+      }).observe(tEl, { childList:true, characterData:true, subtree:true });
+    };
+    obs();
+  } catch(_){}
   try { document.documentElement.classList.add('demo-mode'); } catch(_) {}
 
+  // Native-feeling chrome: the app already has a 5px gradient strip
+  // (.app-header). We thicken it slightly, drop the demo text inside it,
+  // and add a corner badge as the always-visible reminder. Nothing
+  // floats over content; layout shifts only by the strip-height delta.
   function injectBranding(){
-    if (document.getElementById('demo-bar')) return;
+    if (document.getElementById('demo-strip')) return;
     const css = document.createElement('style');
     css.textContent = `
-      #demo-bar{position:fixed;top:0;left:0;right:0;z-index:9999;
-        background:linear-gradient(90deg,#ff66c4,#7ac4ff);color:#0d0d12;
-        font:600 12px/1.5 system-ui,sans-serif;padding:6px 12px;
-        display:flex;gap:10px;align-items:center;justify-content:center;
-        box-shadow:0 1px 4px rgba(0,0,0,.35)}
-      #demo-bar a{color:#0d0d12;text-decoration:underline;font-weight:700}
-      #demo-bar .sep{opacity:.5}
-      #demo-badge{position:fixed;right:10px;bottom:10px;z-index:9999;
-        background:#ff66c4;color:#0d0d12;font:800 11px/1 system-ui,sans-serif;
-        letter-spacing:.08em;padding:6px 9px;border-radius:6px;
-        box-shadow:0 2px 8px rgba(0,0,0,.4);pointer-events:none}
-      html.demo-mode body{padding-top:30px !important}
-      html.demo-mode #demo-bar + *{margin-top:0}
+      html.demo-mode .app-header{
+        height:22px !important; cursor:pointer;
+        display:flex; align-items:center; justify-content:center;
+        padding:0 10px; gap:8px; overflow:hidden;
+      }
+      #demo-strip{
+        font:700 10px/1 system-ui,-apple-system,sans-serif;
+        letter-spacing:.18em; color:#0d0d12; text-transform:uppercase;
+        display:flex; align-items:center; gap:8px; white-space:nowrap;
+        text-shadow:0 1px 1px rgba(255,255,255,.35);
+      }
+      #demo-strip .sep{opacity:.45; font-weight:400}
+      #demo-strip a{color:#0d0d12; text-decoration:underline; font-weight:800}
+      #demo-badge{
+        position:fixed; right:10px; bottom:10px; z-index:9999;
+        background:#ff66c4; color:#0d0d12;
+        font:800 11px/1 system-ui,sans-serif; letter-spacing:.08em;
+        padding:6px 9px; border-radius:6px;
+        box-shadow:0 2px 8px rgba(0,0,0,.4); pointer-events:none;
+      }
+      /* on narrow viewports keep the strip readable but unobtrusive */
+      @media (max-width:480px){
+        html.demo-mode .app-header{height:20px !important}
+        #demo-strip{font-size:9px; letter-spacing:.14em; gap:6px}
+        #demo-strip .long{display:none}
+      }
     `;
     document.head.appendChild(css);
-    const bar = document.createElement('div');
-    bar.id = 'demo-bar';
+
+    const header = document.querySelector('.app-header');
+    if (!header) { setTimeout(injectBranding, 100); return; }
+
+    const strip = document.createElement('div');
+    strip.id = 'demo-strip';
     const mkSep = () => {
       const s = document.createElement('span');
       s.className = 'sep';
       s.textContent = '·';
       return s;
     };
+    const mkLong = (text) => {
+      const s = document.createElement('span');
+      s.className = 'long';
+      s.textContent = text;
+      return s;
+    };
     const link = document.createElement('a');
     link.href = 'https://github.com/seajaysec/ingenue';
     link.target = '_blank';
     link.rel = 'noopener';
-    link.textContent = 'install it on your norns ↗';
-    bar.append(
-      'this is a static demo of ingenue. ',
+    link.textContent = 'install on your norns ↗';
+    strip.append(
+      'demo mode',
       mkSep(),
-      ' nothing here is connected to a real norns ',
+      mkLong('static site — nothing here talks to a real norns'),
+      mkLong(' '),
       mkSep(),
       ' ',
       link
     );
-    document.body.appendChild(bar);
+    // Tapping the strip opens the repo — feels native, no extra UI to dismiss
+    header.style.cursor = 'pointer';
+    header.addEventListener('click', (e) => {
+      if (e.target.tagName === 'A') return;
+      window.open('https://github.com/seajaysec/ingenue', '_blank', 'noopener');
+    });
+    header.appendChild(strip);
+
     const badge = document.createElement('div');
     badge.id = 'demo-badge';
     badge.textContent = 'DEMO';
