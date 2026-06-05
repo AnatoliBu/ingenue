@@ -7,7 +7,18 @@
   if (!window.__INGENUE_DEMO__) return;
 
   // ---------- top-level branding ----------
-  document.title = 'ingenue (demo)';
+  const DEMO_TITLE = 'ingenue (demo)';
+  document.title = DEMO_TITLE;
+  // The main app force-corrects the title once on load; keep ours sticky
+  // with a MutationObserver instead of fighting the timing.
+  function lockTitle(){
+    const tEl = document.querySelector('title');
+    if (!tEl) { setTimeout(lockTitle, 50); return; }
+    new MutationObserver(() => {
+      if (document.title !== DEMO_TITLE) document.title = DEMO_TITLE;
+    }).observe(tEl, { childList:true, characterData:true, subtree:true });
+  }
+  lockTitle();
   try { document.documentElement.classList.add('demo-mode'); } catch(_) {}
 
   function injectBranding(){
