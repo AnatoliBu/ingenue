@@ -682,6 +682,46 @@ def fetch_readme(url):
             "images": imgs[:12], "has_images": bool(imgs), "has_readme": bool(md.strip())}
 
 
+def fetch_community(name_or_url):
+    """README description + images for a community script from norns.community — a static
+    GitHub Pages site (no API rate limit, unlike api.github.com's 60/hr). The browser can't
+    fetch it (no CORS headers), so the server does. Pass the exact comm URL when known,
+    else we derive the slug from the catalog name."""
+    s = (name_or_url or "").strip()
+    if s.startswith("http"):
+        url = s if s.endswith("/") else s + "/"
+    elif s:
+        slug = re.sub(r"\s+", "-", s.lower())
+        url = "https://norns.community/" + urllib.parse.quote(slug) + "/"
+    else:
+        return {"error": "no name", "images": [], "text": ""}
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": "ingenue"})
+        with urllib.request.urlopen(req, timeout=8) as r:
+            html = r.read().decode("utf-8", "replace")
+    except Exception as e:  # noqa: BLE001
+        return {"error": f"no community page ({e.__class__.__name__})", "images": [], "text": ""}
+    desc = ""
+    m = re.search(r'<meta name="description" content="([^"]*)"', html)
+    if m:
+        desc = re.sub(r"\s+", " ", m.group(1)).strip()
+    seen, imgs = set(), []
+    for u in re.findall(r'<img[^>]+src=["\']([^"\']+)', html):
+        u = u.strip()
+        if u.startswith("//"):
+            u = "https:" + u
+        elif u.startswith("/"):
+            u = "https://norns.community" + u
+        if not u.startswith("http") or u in seen:
+            continue
+        if re.search(r"shields\.io|/badge/|badgen\.net|avatars\.|/favicon", u, re.I):
+            continue
+        if re.search(r"\.(png|jpe?g|gif|webp)(\?|$)", u, re.I):
+            seen.add(u)
+            imgs.append(u)
+    return {"text": desc, "images": imgs[:12], "source": "norns.community"}
+
+
 class H(http.server.SimpleHTTPRequestHandler):
     def __init__(self, *a, **k):
         super().__init__(*a, directory=HERE, **k)
@@ -736,6 +776,9 @@ class H(http.server.SimpleHTTPRequestHandler):
                 return self._json(list_mods())
             if path == "/api/readme":
                 return self._json(fetch_readme(self._q().get("url", [""])[0]))
+            if path == "/api/community":
+                q = self._q()
+                return self._json(fetch_community(q.get("comm", q.get("name", [""]))[0]))
             if path == "/api/ls":
                 return self._json(listing(safe(self._q().get("path", [""])[0])))
             if path == "/api/read":
