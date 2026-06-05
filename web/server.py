@@ -16,7 +16,7 @@ API (confined to the dust tree):
   POST /api/install  {name,url,force} -> git clone url into dust/code/name
   POST /api/remove   {name}           -> delete dust/code/name
 """
-import http.server, socketserver, os, sys, json, re, shutil, subprocess, urllib.parse, urllib.request, datetime
+import http.server, socketserver, os, sys, json, re, shutil, subprocess, threading, urllib.parse, urllib.request, datetime
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 
@@ -55,19 +55,174 @@ def installed_sha():
         return ""
 
 
+# Serializes /api/install, /api/heal, and /api/self-update against each other.
+# Non-blocking acquire everywhere: collisions return 409 rather than queue. The
+# race we're closing: self-update ends in `systemctl restart ingenue`, default
+# KillMode=control-group, which SIGKILLs any in-flight clone/heal subprocess
+# in this server's cgroup and leaves a half-installed dust/code/<name>/ behind.
+# Self-update intentionally never releases on success — the restart kills us
+# and the new process starts with a fresh lock.
+_busy_lock = threading.Lock()
+_busy_what = None   # "install" / "heal" / "self_update" — for the 409 message
+
+
+def _busy_msg():
+    what = _busy_what or "another operation"
+    return f"{what} is in progress — try again in a moment"
+
+
+def _release_busy():
+    global _busy_what
+    _busy_what = None
+    try: _busy_lock.release()
+    except RuntimeError: pass
+
+
+# ---------------------------------------------------------------------------
+# Background jobs: install/heal run in a worker thread and stream their output
+# line-by-line into a buffer the UI polls (GET /api/job). The POST returns a job
+# id immediately, so the install never looks "hung" — the client follows along
+# and knows the moment it finishes. The worker (not the request thread) holds
+# _busy_lock for its whole life, so concurrent installs/heals/self-updates still
+# collide into a clean 409 the same way they did when these ran inline.
+_jobs = {}
+_jobs_lock = threading.Lock()
+_job_seq = 0
+
+
+class Job:
+    def __init__(self, kind, name):
+        self.kind, self.name = kind, name
+        self.lines = []
+        self.done = False
+        self.ok = None
+        self.error = None
+        self._lk = threading.Lock()
+
+    def emit(self, msg):
+        with self._lk:
+            for ln in (str(msg).splitlines() or [""]):
+                self.lines.append(ln)
+
+    def finish(self, ok, error=None):
+        with self._lk:
+            self.ok = ok
+            self.error = error
+            self.done = True
+
+    def snapshot(self, frm):
+        with self._lk:
+            return {"name": self.name, "kind": self.kind, "lines": self.lines[frm:],
+                    "next": len(self.lines), "done": self.done, "ok": self.ok,
+                    "error": self.error}
+
+
+def _new_job(kind, name):
+    global _job_seq
+    with _jobs_lock:
+        _job_seq += 1
+        jid = str(_job_seq)
+        _jobs[jid] = Job(kind, name)
+        if len(_jobs) > 40:                                  # bound memory: drop oldest finished
+            for k in [k for k, v in list(_jobs.items()) if v.done][:-20]:
+                _jobs.pop(k, None)
+        return jid, _jobs[jid]
+
+
+def get_job(jid):
+    with _jobs_lock:
+        return _jobs.get(jid)
+
+
+def start_job(kind, name, what, fn):
+    """Acquire the busy lock (non-blocking); on success spawn a worker that runs
+    fn(emit) -> (ok, error|None), streaming into a new Job, and releases the lock
+    when done. Returns (job_id, None) or (None, busy_message)."""
+    global _busy_what
+    if not _busy_lock.acquire(blocking=False):
+        return None, _busy_msg()
+    _busy_what = what
+    jid, job = _new_job(kind, name)
+
+    def work():
+        global _engine_cache
+        try:
+            ok, err = fn(job.emit)
+            job.finish(bool(ok), err)
+        except Exception as e:  # noqa: BLE001
+            job.emit(f"! {e}")
+            job.finish(False, str(e))
+        finally:
+            _engine_cache = None        # a just-installed script may provide an engine — rescan next analyze
+            _release_busy()
+    threading.Thread(target=work, daemon=True).start()
+    return jid, None
+
+
+def stream_proc(cmd, cwd, emit, timeout=900, shell=False):
+    """Run cmd, streaming stdout+stderr to emit() on every \\n or \\r boundary
+    (so git --progress and build tools update live). Returns the exit code, or
+    None if it was killed by the timeout."""
+    p = subprocess.Popen(cmd, cwd=cwd, shell=shell,
+                         stdout=subprocess.PIPE, stderr=subprocess.STDOUT, bufsize=0)
+    killer = threading.Timer(timeout, p.kill)
+    killer.daemon = True
+    killer.start()
+    buf = bytearray()
+    try:
+        while True:
+            ch = p.stdout.read(1)
+            if not ch:
+                break
+            if ch in (b"\n", b"\r"):
+                s = bytes(buf).decode("utf-8", "replace").rstrip()
+                if s:
+                    emit(s)
+                buf = bytearray()
+            else:
+                buf += ch
+        s = bytes(buf).decode("utf-8", "replace").rstrip()
+        if s:
+            emit(s)
+    finally:
+        rc = p.wait()
+        killer.cancel()
+    return rc
+
+
+def do_clone(full, url, emit):
+    """Stream a git clone into `full`. Returns (ok, error|None)."""
+    emit(f"$ git clone {url}")
+    rc = stream_proc(["git", "clone", "--depth", "1", "--progress", url, full],
+                     None, emit, timeout=180)
+    if rc != 0:
+        return False, (f"git clone exited {rc}" if rc is not None else "git clone timed out")
+    emit("✓ cloned — run SYSTEM > RESTART to load it")
+    return True, None
+
+
 def self_update():
     """Re-run install.sh to pull the latest ingenue and restart the service.
     install.sh restarts ingenue.service at the end — which, on a default
     KillMode=control-group unit, would kill any child we spawn mid-update.
     So we launch it via systemd-run as its own transient unit (outside our
-    cgroup) when available; otherwise fall back to a detached process."""
+    cgroup) when available; otherwise fall back to a detached process.
+
+    Lock is acquired non-blocking and held until the service restart kills us
+    (or released on every error path). While held, /api/install and /api/heal
+    return 409 — so no fresh clone/heal can start in the window between
+    'systemd-run fired' and 'systemctl restart ingenue SIGKILLs us'."""
+    global _busy_what
+    if not _busy_lock.acquire(blocking=False):
+        return {"error": _busy_msg()}
+    _busy_what = "self_update"
     script = os.path.join(HERE, "install.sh")
     if not os.path.isfile(script):
         alt = os.path.join(HERE, "..", "install.sh")     # web/ subdir layout
         if os.path.isfile(alt):
             script = alt
     if not os.path.isfile(script):
-        return {"error": "install.sh not found next to ingenue"}
+        _release_busy(); return {"error": "install.sh not found next to ingenue"}
     env = ["--setenv=INGENUE_DUST=%s" % DUST, "--setenv=INGENUE_PORT=%s" % PORT]
     if shutil.which("systemd-run"):
         for extra in (["--unit", "ingenue-selfupdate"], []):   # try a stable name, then auto-named
@@ -75,18 +230,18 @@ def self_update():
             try:
                 r = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
             except Exception as e:  # noqa: BLE001
-                return {"error": str(e)}
+                _release_busy(); return {"error": str(e)}
             if r.returncode == 0:
-                return {"ok": True, "method": "systemd-run"}
-        return {"error": "systemd-run failed", "log": (r.stderr or r.stdout)[-400:]}
+                return {"ok": True, "method": "systemd-run"}    # keep lock held — restart kills us
+        _release_busy(); return {"error": "systemd-run failed", "log": (r.stderr or r.stdout)[-400:]}
     try:   # no systemd-run — detached best effort (survives if KillMode!=control-group)
         subprocess.Popen(
             ["bash", script], start_new_session=True,
             env={**os.environ, "INGENUE_DUST": DUST, "INGENUE_PORT": str(PORT)},
             stdout=open(os.path.join(HERE, "update.log"), "ab"), stderr=subprocess.STDOUT)
-        return {"ok": True, "method": "background"}
+        return {"ok": True, "method": "background"}     # keep lock held — restart kills us
     except Exception as e:  # noqa: BLE001
-        return {"error": str(e)}
+        _release_busy(); return {"error": str(e)}
 
 
 def safe(rel):
@@ -106,6 +261,22 @@ def safe_script_dir(name):
     if os.path.dirname(full) != os.path.realpath(CODE):
         raise ValueError("script escapes dust/code")
     return full, name
+
+
+def git_remote(full):
+    """The origin URL a script was cloned from, read from its own .git. Lets us
+    reinstall/update scripts that came from GitHub (or anywhere) without the
+    catalog — the clone url is always inferable from the clone itself."""
+    if not os.path.isdir(os.path.join(full, ".git")):
+        return ""
+    try:
+        r = subprocess.run(["git", "-C", full, "remote", "get-url", "origin"],
+                           capture_output=True, text=True, timeout=10)
+        if r.returncode == 0:
+            return r.stdout.strip()
+    except Exception:  # noqa: BLE001
+        pass
+    return ""
 
 
 def ensure_home_dust():
@@ -133,20 +304,27 @@ def find_installer(full):
     return None
 
 
-def run_install(full):
+def run_install(full, emit=None):
     """Interpret a script's installer ourselves so it works on ANY port:
     downloads + tar extracts run in Python (native gzip/xz, no BusyBox-tar / GNU-tar
     differences), /home/we/dust is translated to the real dust, and other commands
-    (builds, etc.) fall back to the shell."""
+    (builds, etc.) fall back to the shell. `emit(line)` (optional) receives each log
+    line live so the UI can follow along; shell builds stream their output too."""
     import shlex, tarfile, zipfile
+    emit = emit or (lambda *_: None)
+    log = []
+
+    def add(msg):
+        log.append(msg)
+        emit(msg)
+
     rel = find_installer(full)
     if not rel:
-        return False, ["no install.sh found (looked in lib/install.sh and ./install.sh)"]
+        return False, "no install.sh found (looked in lib/install.sh and ./install.sh)"
     inst = os.path.join(full, rel)
-    log = []
     pp = ensure_home_dust().strip()
     if pp:
-        log.append(pp)
+        add(pp)
     cwd = full
     ok = True
     for raw in open(inst, "r", errors="ignore"):
@@ -156,7 +334,7 @@ def run_install(full):
         line = line.replace("/home/we/dust", DUST)
         try:
             if line.startswith("echo "):
-                log.append(line[5:].strip().strip('"').strip("'"))
+                add(line[5:].strip().strip('"').strip("'"))
             elif line.startswith("cd "):
                 d = line[3:].strip()
                 cwd = d if os.path.isabs(d) else os.path.normpath(os.path.join(cwd, d))
@@ -166,8 +344,9 @@ def run_install(full):
                 om = re.search(r"-[oO]\s+(\S+)", line)
                 out = om.group(1) if om else os.path.basename(url.split("?")[0])
                 dest = os.path.join(cwd, out)
+                emit(f"↓ downloading {out} …")
                 urllib.request.urlretrieve(url, dest)
-                log.append(f"downloaded {out} ({os.path.getsize(dest)} bytes)")
+                add(f"downloaded {out} ({os.path.getsize(dest)} bytes)")
             elif line.startswith("tar "):
                 fm = re.search(r"(\S+\.(?:tar\.gz|tgz|tar\.xz|tar|zip))\b", line)
                 if fm:
@@ -177,7 +356,7 @@ def run_install(full):
                         with zipfile.ZipFile(p) as z: z.extractall(cwd)
                     else:
                         with tarfile.open(p) as t: t.extractall(cwd)
-                    log.append(f"extracted {os.path.basename(p)}")
+                    add(f"extracted {os.path.basename(p)}")
             elif line.startswith("rm "):
                 for f in shlex.split(line)[1:]:
                     if not f.startswith("-"):
@@ -188,15 +367,16 @@ def run_install(full):
                     if not d.startswith("-"):
                         os.makedirs(d if os.path.isabs(d) else os.path.join(cwd, d), exist_ok=True)
             else:
-                r = subprocess.run(line, shell=True, cwd=cwd, capture_output=True, text=True, timeout=900)
-                if r.returncode != 0:
+                emit(f"$ {line}")
+                rc = stream_proc(line, cwd, emit, timeout=900, shell=True)   # build output streams live
+                if rc != 0:
                     ok = False
-                    log.append(f"$ {line}\n  ! exit {r.returncode}: {(r.stderr or r.stdout).strip()[-200:]}")
-                elif r.stdout.strip():
-                    log.append(f"$ {line}\n  {r.stdout.strip()[-200:]}")
+                    log.append(f"$ {line} -> exit {rc}")
+                else:
+                    log.append(f"$ {line}")
         except Exception as e:  # noqa: BLE001
             ok = False
-            log.append(f"! {line[:60]} -> {e}")
+            add(f"! {line[:60]} -> {e}")
     return ok, "\n".join(log)
 
 
@@ -206,6 +386,37 @@ def analyze_script(name):
     if not os.path.isdir(full):
         raise ValueError("not installed")
     return analyze_dir(full, name)
+
+
+_engine_cache = None
+
+
+def available_engines():
+    """Lowercased names of every SuperCollider engine present on this device:
+    norns CORE engines (PolyPerc, PolySub, …) plus any Engine_<X>.sc bundled in an
+    installed script. Lets us tell when a script's `engine.name = "Foo"` points at
+    an engine that isn't installed — the silent 'error: missing Foo' at launch.
+    Cached; invalidated after any install/heal (see start_job)."""
+    global _engine_cache
+    if _engine_cache is not None:
+        return _engine_cache
+    names = set()
+    roots = [CODE]
+    for rel in ("../norns/sc/engines", "../../norns/sc/engines",   # PanicOS / norns data layout
+                "norns/sc/engines", "../../we/norns/sc/engines"):
+        roots.append(os.path.normpath(os.path.join(DUST, rel)))
+    for d in roots:
+        if not os.path.isdir(d):
+            continue
+        for r, _ds, fs in os.walk(d):
+            if ".git" in r:
+                continue
+            for f in fs:
+                m = re.match(r"Engine_(.+)\.sc$", f)
+                if m:
+                    names.add(m.group(1).lower())
+    _engine_cache = names
+    return names
 
 
 def analyze_remote(url):
@@ -252,18 +463,30 @@ def analyze_dir(full, name):
     if re.search(r"\baubio|aubiogo", blob): native.append("aubio")
     if re.search(r"soxgo|\bsox\b", blob): native.append("sox")
     if re.search(r"audiowaveform", blob): native.append("audiowaveform")
+    # engine.name = "Foo" -> the script needs the Foo SuperCollider engine. If Foo
+    # isn't a norns built-in, isn't bundled in this script, and isn't installed by
+    # another script, the engine is MISSING -> launch fails with "error: missing Foo".
+    engines = sorted(set(re.findall(r"engine\.name\s*=\s*['\"]([A-Za-z0-9_]+)['\"]", blob)))
+    avail = available_engines()
+    self_engines = {re.match(r"Engine_(.+)\.sc$", os.path.basename(f)).group(1).lower()
+                    for f in files if re.match(r"Engine_.+\.sc$", os.path.basename(f))}
+    missing_engines = sorted(e for e in engines
+                             if e.lower() not in avail and e.lower() not in self_engines)
     rep = {
         "name": name,
+        "git_url": git_remote(full),                     # inferred clone url — enables reinstall/update off-catalog
         "install_script": bool(find_installer(full)),
         "downloads": downloads[:12],
         "sc_extensions": sc_ext,
         "needs_sc_ext": bool(sc_ext) or "Extensions/" in blob,
         "requires_scripts": reqs,
+        "engines": engines,
+        "missing_engines": missing_engines,              # engine.name targets not installed on device
         "nb": bool(re.search(r"require[\s(]+['\"]nb/|/nb/lib|nb_voice|nb:add", blob)),
         "native": sorted(set(native)),
     }
     rep["needs_setup"] = bool(rep["install_script"] or rep["downloads"] or rep["needs_sc_ext"]
-                              or rep["nb"] or rep["requires_scripts"])
+                              or rep["nb"] or rep["requires_scripts"] or rep["missing_engines"])
     return rep
 
 
@@ -764,6 +987,19 @@ class H(http.server.SimpleHTTPRequestHandler):
     def do_GET(self):
         path = urllib.parse.urlparse(self.path).path
         try:
+            if path == "/api/job":
+                q = self._q()
+                job = get_job(q.get("id", [""])[0])
+                if not job:
+                    return self._json({"error": "no such job", "gone": True}, 404)
+                try: frm = int(q.get("from", ["0"])[0] or 0)
+                except ValueError: frm = 0
+                return self._json(job.snapshot(frm))
+            if path == "/api/giturl":
+                full, name = safe_script_dir(self._q().get("name", [""])[0])
+                if not os.path.isdir(full):
+                    return self._json({"error": "not installed"}, 404)
+                return self._json({"name": name, "url": git_remote(full)})
             if path == "/api/installed":
                 return self._json(sorted(d for d in os.listdir(CODE)
                                          if os.path.isdir(os.path.join(CODE, d))
@@ -869,8 +1105,14 @@ class H(http.server.SimpleHTTPRequestHandler):
                 full, name = safe_script_dir(b.get("name"))
                 if not find_installer(full):
                     return self._json({"error": f"{name} has no install.sh to run"}, 404)
-                ok, log = run_install(full)         # interpret install.sh ourselves (port-proof downloads/extracts)
-                return self._json({"ok": ok, "name": name, "log": log[-2000:]})
+                # Runs in a worker thread that holds the busy lock for its whole life —
+                # serializes against self-update (which would SIGKILL the build) and
+                # streams its output into a job the UI polls. 409 if already busy.
+                jid, busy = start_job("heal", name, "heal",
+                                      lambda emit: run_install(full, emit))
+                if busy:
+                    return self._json({"error": busy}, 409)
+                return self._json({"ok": True, "job": jid, "name": name})
             if path == "/api/install":
                 full, name = safe_script_dir(b.get("name"))
                 url = (b.get("url") or "").strip()
@@ -881,12 +1123,12 @@ class H(http.server.SimpleHTTPRequestHandler):
                         shutil.rmtree(full)
                     else:
                         return self._json({"error": f"{name} already installed"}, 409)
-                r = subprocess.run(["git", "clone", "--depth", "1", url, full],
-                                   capture_output=True, text=True, timeout=180)
-                if r.returncode != 0:
-                    return self._json({"error": "git clone failed", "log": (r.stderr or r.stdout)[-800:]}, 500)
-                return self._json({"ok": True, "installed": name,
-                                   "log": (r.stderr or r.stdout)[-400:] or f"cloned {url}"})
+                # Same worker+lock model as heal: streams the clone, 409 if busy.
+                jid, busy = start_job("install", name, "install",
+                                      lambda emit: do_clone(full, url, emit))
+                if busy:
+                    return self._json({"error": busy}, 409)
+                return self._json({"ok": True, "job": jid, "name": name})
         except ValueError as e:
             return self._json({"error": str(e)}, 400)
         except subprocess.TimeoutExpired:

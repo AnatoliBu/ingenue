@@ -27,7 +27,11 @@ After=network.target
 [Service]
 Type=simple
 WorkingDirectory=$DEST
-ExecStartPre=-/usr/bin/pkill -f "server.py 7777"
+# reclaim :7777 from any orphaned/stale instance BEFORE binding — kill by PORT,
+# not by process name (pkill -f 'server.py 7777' self-matches and is unreliable;
+# a unit with NO reclaim crash-loops forever on 'Address already in use' if an
+# orphan survives a deploy). - = ignore when the port is already free.
+ExecStartPre=-/bin/sh -c 'fuser -k 7777/tcp 2>/dev/null; sleep 1'
 ExecStart=/usr/bin/python3 server.py 7777
 Restart=always
 RestartSec=3

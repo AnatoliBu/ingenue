@@ -370,7 +370,11 @@ button{font-family:inherit}
 
 /* install status dock */
 .install-dock{position:absolute;right:14px;bottom:14px;z-index:45;width:min(300px,calc(100% - 28px));
-  display:flex;flex-direction:column;gap:8px;pointer-events:none}
+  display:flex;flex-direction:column;gap:8px;pointer-events:none;max-height:min(70vh,560px);overflow-y:auto}
+.q-hdr{pointer-events:auto;align-self:stretch;background:var(--panel2,#1b1b1b);border:1px solid var(--trim);border-radius:9px;
+  padding:6px 11px;font-size:11px;font-weight:600;color:var(--accent2);position:sticky;top:0;z-index:1}
+.ijob.queued{opacity:.78}
+.ijob.queued .ispin{animation:none;border-top-color:var(--trim)}
 .ijob{pointer-events:auto;background:var(--panel);border:1px solid var(--trim);border-radius:11px;padding:11px 12px;
   box-shadow:0 8px 26px rgba(0,0,0,.32);animation:ijin .2s ease}
 @keyframes ijin{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
@@ -843,7 +847,7 @@ button{font-family:inherit}
 </div>
 
 <script>
-const BUILD='b46 · 2026-06-04 · self-update: reliable .version + installer self-refresh';
+const BUILD='b62 · 2026-06-04 · serial install queue (multi-select queues + shows progress, no more 409s)';
 console.log('%cingenue build: '+BUILD,'color:#DEB887;font-weight:bold');
 
 /* ===== self-update: on load, ask github if main is ahead of the installed commit ===== */
@@ -1152,6 +1156,18 @@ const REPO={
  ],
 };
 
+// Lib-deps that scripts pull in via `require "<name>/lib/..."` but that the
+// norns.community catalog does NOT list — so they're invisible, un-installable,
+// and unresolvable as dependencies (the whole pipeline keys off REPO.available).
+// nb is the big one: the de-facto voice-routing standard (crocus, dreamsequence,
+// and dozens more `require "nb/lib/nb"`), yet absent from norns.community itself.
+// Seeding it here makes it show in the list, installable, AND auto-healable as a
+// dependency — all through the existing catalog code paths. Add others as found.
+const DEP_OVERLAY=[
+ {n:'nb', a:'sixolet', d:'a note-routing standard — swap any script’s voice for any nb-compatible player. required by many modern scripts.',
+  v:'', tags:['nb','lib','utility'], proj:'https://github.com/sixolet/nb', srcs:['community']},
+];
+
 /* ============ load the real community catalog (350 scripts) ============ */
 async function loadCatalog(){
   try{
@@ -1181,6 +1197,9 @@ async function loadCatalog(){
         if(x.tags) e.tags=Array.from(new Set((e.tags||[]).concat(x.tags))).slice(0,8);
         if(x.upd) e.upd=e.upd||x.upd; });
     }catch(_){}
+    // merge known un-catalogued lib-deps (nb, …) so they're visible/installable
+    // and resolve when a script requires them (traceDeps/runHeal look them up here)
+    DEP_OVERLAY.forEach(o=>{ if(!entries.some(e=>norm(e.n)===norm(o.n))) entries.push({doc:0,disc:0,...o}); });
     // keep the mocked non-community entries (your github repos) so the trust gate is demonstrable
     const KEEP=REPO.available.filter(p=>p.srcs.includes('mine'));
     REPO.available = entries.concat(KEEP);
@@ -1749,24 +1768,101 @@ function jobDone(job,btn,ok,finalLog,doneLabel){
   if(btn){ btn.textContent=ok?doneLabel:'retry'; btn.disabled=false; }
   if(ok) setTimeout(()=>{ job.style.transition='opacity .4s'; job.style.opacity='0'; setTimeout(()=>job.remove(),450); }, 5000);
 }
-function enqueueInstall(p,btn,note,opts){
+// Follow a backend install/heal job: stream its log lines into the card until it finishes,
+// so the user always sees progress and knows the moment it's done (no more silent blocking).
+function pollJob(job, jid, opts){
   opts=opts||{};
-  const job=mkJob(p.n, opts.force?'reinstalling':'installing'); const log=job.querySelector('.ilog');
-  if(HAS_BACKEND){                                  // REAL install — git clone into dust/code on the device
-    if(!isUrl(p.proj)){ jobDone(job,btn,false,'no git url known for this script',''); return; }
-    log.textContent=`${opts.force?'reinstalling':'installing'} ${p.n}\n$ git clone ${p.proj}`+(note?'\n'+note:'');
-    fetch('api/install',{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({name:p.dir||p.n, url:p.proj, force:opts.force?1:0})})
-      .then(r=>r.json()).then(j=>{ const ok=!j.error;
-        jobDone(job,btn,ok, ok?((j.log||'cloned')+'\n✓ installed — run SYSTEM > RESTART'):(j.error+(j.log?'\n'+j.log:'')), 'installed');
-        if(ok){ refreshInstalled(); traceDeps(p).then(tree=>{ if(tree && treeNeedsAction(tree)) openDepPlan(tree,p); }); } })   // heal-on-install: offer to set up the whole graph
-      .catch(e=>jobDone(job,btn,false,e.message,''));
-    return;
+  const log=job.querySelector('.ilog'); const finalize=opts.finalize!==false;
+  let from=0, dead=0;
+  const tick=async()=>{
+    let j=null;
+    try{ j=await (await fetch('api/job?id='+encodeURIComponent(jid)+'&from='+from,{cache:'no-store'})).json(); }
+    catch(e){ if(++dead>6){ if(finalize) jobDone(job,null,false,'lost connection to the install job',''); return void(opts.onDone&&opts.onDone(false)); } return void setTimeout(tick,1200); }
+    dead=0;
+    if(j.gone){ if(finalize) jobDone(job,null,false,'install job not found — did the service restart?',''); return void(opts.onDone&&opts.onDone(false)); }
+    if(j.lines && j.lines.length){ log.textContent += (log.textContent?'\n':'')+j.lines.join('\n'); log.scrollTop=log.scrollHeight; }
+    if(typeof j.next==='number') from=j.next;
+    if(j.done){ if(finalize) jobDone(job,null,!!j.ok, j.ok?'':(j.error||'failed'), opts.label||(j.kind==='heal'?'set up':'installed')); return void(opts.onDone&&opts.onDone(!!j.ok)); }
+    setTimeout(tick, 800);
+  };
+  tick();
+}
+// ===== serial install/heal QUEUE =====
+// The backend serializes install/heal/self-update (busy lock → 409 on collision), on
+// purpose — parallel git clones thrash the device. So the client runs them ONE AT A TIME
+// through this FIFO queue and shows progress through it (multi-select install just enqueues
+// each), instead of firing them all at once and eating "install in progress" 409s.
+const JOBQ={items:[],running:false};
+function jobqAdd(task){   // task={label,verb,run:(job)=>Promise<ok>} — card appears now (queued), runs in turn
+  return new Promise(resolve=>{
+    const job=mkJob(task.label,'queued'); job.classList.add('queued');
+    JOBQ.items.push({...task,_job:job,_resolve:resolve});
+    jobqRender(); jobqPump();
+  });
+}
+async function jobqPump(){
+  if(JOBQ.running) return; JOBQ.running=true; jobqRender();
+  while(JOBQ.items.length){
+    const t=JOBQ.items.shift(); const job=t._job; job.classList.remove('queued');
+    const st=job.querySelector('.istatus'); if(st) st.textContent=t.verb||'working';
+    jobqRender();
+    let ok=false;
+    try{ ok=await t.run(job); }catch(e){ try{ jobDone(job,null,false,e.message||'failed',''); }catch(_){ } }
+    if(t._resolve) t._resolve(ok);
   }
-  const steps=[`cloning ${p.proj||('github.com/…/'+p.n)} …`,'resolving dependencies…',`copying to ~/dust/code/${p.n}…`,'scanning for engines…',...(note?[note]:[])];
-  let i=0; const tick=()=>{ if(i<steps.length){ log.textContent+=(i?'\n':'')+steps[i]; log.scrollTop=log.scrollHeight; i++; setTimeout(tick,340+Math.random()*240); return; }
-    jobDone(job,btn,!/err|fail/i.test(p.n), `${p.n} installed successfully — run SYSTEM > RESTART`, 'installed'); };
-  setTimeout(tick,300);
+  JOBQ.running=false; jobqRender();
+}
+function jobqRender(){   // queue-position labels on waiting cards + a dock header counter
+  JOBQ.items.forEach((t,i)=>{ const st=t._job&&t._job.querySelector('.istatus'); if(st) st.textContent=`queued · ${i+1} ahead`; });
+  const dock=document.getElementById('install-dock'); if(!dock) return;
+  let hdr=dock.querySelector('.q-hdr'); const pending=JOBQ.items.length+(JOBQ.running?1:0);
+  if(pending>1){ if(!hdr){ hdr=document.createElement('div'); hdr.className='q-hdr'; dock.insertBefore(hdr,dock.firstChild); } hdr.textContent=`install queue · ${pending} to go`; }
+  else if(hdr){ hdr.remove(); }
+}
+// POST an install/heal, tolerating an external busy-409 (self-update / another client) by
+// waiting and retrying — our own queue never collides, but other sources can. Returns job id.
+async function startBackendJob(endpoint, body, job){
+  for(let tries=0; tries<30; tries++){
+    let r,j;
+    try{ r=await fetch(endpoint,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}); j=await r.json(); }
+    catch(e){ throw new Error(e.message||'network error'); }
+    if(j.job) return j.job;
+    if(r.status===409){ const st=job.querySelector('.istatus'); if(st) st.textContent='waiting…'; await new Promise(res=>setTimeout(res,1500)); continue; }
+    throw new Error(j.error||'job did not start');
+  }
+  throw new Error('backend stayed busy — try again');
+}
+function enqueueInstall(p,btn,note,opts){   // queue a single install (multi-select calls this per item)
+  opts=opts||{};
+  return jobqAdd({label:p.n, verb:opts.force?'reinstalling':'installing', run:job=>installOne(p,btn,note,opts,job)});
+}
+async function installOne(p,btn,note,opts,job){   // the actual install; resolves ok when the job finishes
+  const log=job.querySelector('.ilog');
+  if(!HAS_BACKEND){   // demo (no device): animate a plausible clone
+    return await new Promise(resolve=>{
+      const steps=[`cloning ${p.proj||('github.com/…/'+p.n)} …`,'resolving dependencies…',`copying to ~/dust/code/${p.n}…`,'scanning for engines…',...(note?[note]:[])];
+      let i=0; const tick=()=>{ if(i<steps.length){ log.textContent+=(i?'\n':'')+steps[i]; log.scrollTop=log.scrollHeight; i++; setTimeout(tick,340+Math.random()*240); return; }
+        const ok=!/err|fail/i.test(p.n); jobDone(job,btn,ok,`${p.n} installed successfully — run SYSTEM > RESTART`,'installed'); resolve(ok); };
+      setTimeout(tick,300);
+    });
+  }
+  let url=p.proj;
+  if(!isUrl(url)){                                  // off-catalog / github-installed: recover the clone url from its .git remote
+    log.textContent='looking up git url…';
+    try{ const g=await (await fetch('api/giturl?name='+encodeURIComponent(p.dir||p.n),{cache:'no-store'})).json(); if(isUrl(g.url)){ url=g.url; p.proj=url; } }catch(_){}
+  }
+  if(!isUrl(url)){ jobDone(job,btn,false,'couldn’t find a git url — not in the catalog and no .git remote on device',''); if(btn){ btn.textContent='retry'; btn.disabled=false; } return false; }
+  log.textContent=`${opts.force?'reinstalling':'installing'} ${p.n}…`+(note?'\n'+note:'');
+  let jid;
+  try{ jid=await startBackendJob('api/install',{name:p.dir||p.n, url, force:opts.force?1:0}, job); }
+  catch(e){ jobDone(job,btn,false,e.message,''); if(btn){ btn.textContent='retry'; btn.disabled=false; } return false; }
+  return await new Promise(resolve=>{
+    pollJob(job, jid, {label:'installed', onDone:(ok)=>{
+      if(btn){ btn.textContent=ok?'installed':'retry'; btn.disabled=false; }
+      if(ok){ refreshInstalled(); traceDeps(p).then(tree=>{ if(tree && treeNeedsAction(tree)) openDepPlan(tree,p); }); }   // heal-on-install: offer to set up the graph
+      resolve(ok);
+    }});
+  });
 }
 // flip a removed script's state across every list immediately, so its card shows Install (not Remove)
 // even if the device installed-list refetch is slow or fails. refreshInstalled() still reconciles after.
@@ -1796,6 +1892,24 @@ async function fetchDepsUrl(url){
 }
 const DEP_MAX_DEPTH=4;
 function depStub(name,extra){ return Object.assign({name,requires_scripts:[],nb:false,needs_sc_ext:false,sc_extensions:[],downloads:[],native:[],install_script:false,needs_setup:false,children:[],installed:false},extra||{}); }
+// Resolve a required-dependency name to an installable entry WITHOUT gating on the
+// catalog: catalog/overlay first, then (if GitHub is connected) an exact-name repo
+// search. A `require "<name>/lib"` only gives us the folder name, never the owner —
+// the catalog was the name→owner map; this restores resolution for names it lacks.
+// Returns an entry with .proj, or null (caller then offers a paste-a-url field, so a
+// required dep is NEVER an un-installable dead end).
+async function ghFindRepo(name){
+  if(!ghConnected) return null;
+  try{
+    const r=await fetch(`https://api.github.com/search/repositories?q=${encodeURIComponent(name+' norns')}&per_page=10`,{headers:ghHeaders()});
+    if(!r.ok) return null;
+    const it=((await r.json()).items||[]).find(x=>norm(x.name)===norm(name));
+    return it?{n:name, a:(it.owner&&it.owner.login)||'github', d:it.description||'', tags:['github'], proj:it.html_url, srcs:['github'], gh:1}:null;
+  }catch(_){ return null; }
+}
+async function resolveDep(name){
+  return REPO.available.find(x=>norm(x.n)===norm(name)) || await ghFindRepo(name);
+}
 // Recursively analyze a script AND every script it requires, down the line — cycle-safe, depth-limited.
 // installed deps → analyzed by name on device; not-yet-installed → cloned + analyzed remotely via its catalog url.
 async function traceDeps(p, depth, seen){
@@ -1805,14 +1919,23 @@ async function traceDeps(p, depth, seen){
   const installed=REPO.installed.some(x=>norm(x.n)===key);
   let rep = installed ? await fetchDeps(p.dir||p.n)
           : isUrl(p.proj) ? await fetchDepsUrl(p.proj) : null;
-  if(!rep) return depStub(p.n, {installed, unresolved:!installed && !isUrl(p.proj),
+  if(!rep) return depStub(p.n, {installed, proj:p.proj, dir:p.dir||p.n,
+                                needsUrl:!installed && !isUrl(p.proj),
                                 error:(!installed && isUrl(p.proj))?'analyze failed':null});
-  rep.installed=installed; rep.children=[];
+  rep.installed=installed; rep.children=[]; rep.proj=p.proj||rep.git_url||rep.proj; rep.dir=p.dir||p.n;
   if(depth>0) for(const reqn of (rep.requires_scripts||[])){
     if(seen.has(norm(reqn))) continue;                     // cycle / already in the plan
-    const dep=REPO.available.find(x=>norm(x.n)===norm(reqn));
+    const dep=await resolveDep(reqn);                      // catalog → overlay → github; never catalog-gated
     if(dep) rep.children.push(await traceDeps(dep, depth-1, seen));
-    else { seen.add(norm(reqn)); rep.children.push(depStub(reqn,{missing:true})); }
+    else { seen.add(norm(reqn)); rep.children.push(depStub(reqn,{needsUrl:true})); }
+  }
+  // engine.name targets that aren't installed -> the script that PROVIDES the engine
+  // (Glut -> the 'glut' script). Same resolver, so it's installable / paste-url, never silent.
+  if(depth>0) for(const eng of (rep.missing_engines||[])){
+    if(seen.has(norm(eng))) continue;
+    const dep=await resolveDep(eng);                       // provider script, by engine name
+    if(dep){ const child=await traceDeps(dep, depth-1, seen); child.forEngine=eng; rep.children.push(child); }
+    else { seen.add(norm(eng)); rep.children.push(depStub(eng,{needsUrl:true, forEngine:eng})); }
   }
   return rep;
 }
@@ -1820,7 +1943,7 @@ let depPending=null;
 function depNodeRows(rep){
   const R=(ic,k,d)=>`<div class="dep-row"><span class="dep-ic">${ic}</span><div><div class="k">${k}</div>${d?`<div class="d">${d}</div>`:''}</div></div>`;
   const rows=[];
-  if(rep.nb) rows.push(R('🎹','nb voices','routes notes via nb — nb and the voices it uses must be installed'));
+  if(rep.nb) rows.push(R('🎹','nb voices','plays through nb — install an nb voice (the nb_* player mods) to make sound'));
   if(rep.needs_sc_ext) rows.push(R('🔌','SuperCollider engine extension',((rep.sc_extensions||[]).join(', ')||'extension')+' — installed if missing'));
   if((rep.downloads||[]).length) rows.push(R('⬇','downloads ('+rep.downloads.length+')',
     rep.downloads.map(u=>`<a href="${u}" target="_blank" rel="noopener">${u.split('/').slice(-1)[0]}</a>`).join('<br>')));
@@ -1833,12 +1956,20 @@ function depTreeHTML(node, level){
   const pad=level>0?` style="margin-left:${level*14}px;border-left:2px solid var(--trim,#444);padding-left:10px"`:'';
   let html='';
   if(level>0){
-    const status = node.missing ? '<span style="color:var(--err)">not in catalog</span>'
+    const status = node.needsUrl ? '<span style="color:var(--warn,#c80)">needs a source url</span>'
       : node.installed ? '<span style="color:#5c5">already installed</span>'
-      : node.unresolved ? '<span style="color:var(--err)">no source url</span>'
       : node.error ? '<span style="color:var(--err)">'+node.error+'</span>'
       : 'will be installed';
-    html += `<div class="dep-row"${pad}><span class="dep-ic">↳</span><div><div class="k">requires <b>${node.name}</b> &middot; <span style="font-weight:400">${status}</span></div></div></div>`;
+    const reqlabel = node.forEngine ? `needs the <b>${node.forEngine}</b> engine — installs <b>${node.name}</b>` : `requires <b>${node.name}</b>`;
+    html += `<div class="dep-row"${pad}><span class="dep-ic">↳</span><div><div class="k">${reqlabel} &middot; <span style="font-weight:400">${status}</span></div></div></div>`;
+    if(node.needsUrl){   // never a dead end — let the user point us at the repo so we install it too
+      html += `<div${pad}><div class="dep-row"><span class="dep-ic">✎</span><div style="flex:1;min-width:0">`
+        + `<div class="d">not found automatically — paste its git url to include it:</div>`
+        + `<div style="display:flex;gap:6px;margin-top:5px">`
+        + `<input class="dep-url-in" data-dep="${esc(node.name)}" value="${node.proj?esc(node.proj):''}" placeholder="https://github.com/owner/${esc(node.name)}" style="flex:1;min-width:0;background:var(--panel2,#222);border:1px solid var(--trim,#444);border-radius:6px;padding:5px 7px;color:inherit;font-size:12px">`
+        + `<button class="btn dep-url-go" data-dep="${esc(node.name)}">use</button>`
+        + `</div></div></div></div>`;
+    }
   }
   const body=depNodeRows(node);
   if(body) html += `<div${pad}>${body}</div>`;
@@ -1848,7 +1979,13 @@ function depTreeHTML(node, level){
 function depPlanHTML(rep){ const h=depTreeHTML(rep,0); return h.trim()?h:'<div class="dep-row">no extra setup detected — a plain clone is enough.</div>'; }
 function anyInstallScript(n){ return !!n.install_script || (n.children||[]).some(anyInstallScript); }
 // the tree needs action if anything needs setup, or a dependency still has to be installed
-function treeNeedsAction(n){ return !!n.needs_setup || (n.children||[]).some(c=>!c.installed && !c.missing) || (n.children||[]).some(treeNeedsAction); }
+// nb being *present* in a script isn't itself an action — many scripts (e.g. crocus) vendor nb
+// at lib/nb/ and only need an nb *voice* installed, which is informational, not a clone we can run.
+// Real actions: an installer to run, files to download, an SC extension, or a REQUIRED script (an
+// external `require "x/lib"`, which becomes a child) that isn't installed yet.
+function nodeActionable(n){ return !!(n.install_script || (n.downloads||[]).length || n.needs_sc_ext || (n.missing_engines||[]).length); }
+function treeNeedsAction(n){ return nodeActionable(n) || (n.children||[]).some(c=>!c.installed) || (n.children||[]).some(treeNeedsAction); }
+function findDepNode(n,name){ if(norm(n.name)===norm(name)) return n; for(const c of (n.children||[])){ const f=findDepNode(c,name); if(f) return f; } return null; }
 function openDepPlan(rep,p){
   depPending={rep,p};
   const act=treeNeedsAction(rep), n=(rep.children||[]).length;
@@ -1857,6 +1994,17 @@ function openDepPlan(rep,p){
     ? `<b>${rep.name}</b> needs more than a clone to run${n?` — and pulls in ${n} other script${n>1?'s':''} down the line`:''}:`
     : `<b>${rep.name}</b> requirements:`;
   document.getElementById('dep-plan').innerHTML=depPlanHTML(rep);
+  document.querySelectorAll('#dep-plan .dep-url-go').forEach(b=>{   // user supplies a url for an un-resolved dep
+    b.onclick=()=>{
+      const name=b.getAttribute('data-dep');
+      const inp=document.querySelector('#dep-plan .dep-url-in[data-dep="'+(window.CSS&&CSS.escape?CSS.escape(name):name)+'"]');
+      const url=((inp&&inp.value)||'').trim();
+      if(!isUrl(url)){ if(inp){ inp.style.borderColor='var(--err)'; inp.focus(); } return; }
+      const node=findDepNode(rep,name);
+      if(node){ node.proj=url; node.needsUrl=false; }     // flips to "will be installed"; runHeal picks up node.proj
+      openDepPlan(rep,p);                                 // re-render the plan with the dep now included
+    };
+  });
   document.getElementById('dep-warn').style.display = anyInstallScript(rep)?'block':'none';
   document.getElementById('dep-go').style.display = act?'':'none';
   document.getElementById('dep-overlay').classList.add('on');
@@ -1865,14 +2013,10 @@ function openDepPlan(rep,p){
 async function runHeal(root){
   async function heal(node){
     for(const child of (node.children||[])){
-      if(child.missing || child.unresolved) continue;
-      if(!child.installed){                                // clone the dependency from its catalog url
-        const dep=REPO.available.find(x=>norm(x.n)===norm(child.name));
-        if(dep && isUrl(dep.proj)){
-          const job=mkJob(child.name,'dependency'); job.querySelector('.ilog').textContent='installing dependency '+child.name+'…';
-          try{ const j=await (await fetch('api/install',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:dep.dir||dep.n,url:dep.proj})})).json();
-            jobDone(job,null,!j.error,j.error?j.error:'installed '+child.name,'installed'); }catch(e){ jobDone(job,null,false,e.message,''); }
-        }
+      if(!child.installed){                                // clone the dependency from whatever source resolved it
+        const url = child.proj || ((REPO.available.find(x=>norm(x.n)===norm(child.name))||{}).proj);
+        if(isUrl(url))                                     // catalog, overlay, github, or a url the user pasted —
+          await jobqAdd({label:child.name, verb:'dependency', run:job=>depInstall(child,url,job)});   // queue it (serial, no 409)
       }
       await heal(child);                                   // recurse: the dependency's own deps + installer
     }
@@ -1881,17 +2025,27 @@ async function runHeal(root){
   await heal(root);
   refreshInstalled();
 }
+async function depInstall(child,url,job){
+  job.querySelector('.ilog').textContent='installing dependency '+child.name+'…';
+  let jid;
+  try{ jid=await startBackendJob('api/install',{name:child.dir||child.name, url}, job); }
+  catch(e){ jobDone(job,null,false,e.message,''); return false; }
+  return await new Promise(res=>pollJob(job, jid, {label:'installed', onDone:res}));   // follow this clone before the next dep
+}
 // run JUST a script's installer step (no clone, no dependency re-walk). On failure it stays
 // honest — the script is already installed and runnable; only the optional setup didn't finish —
 // and offers a clean retry of this one step.
-async function runSetup(name){
-  const job=mkJob(name,'setting up'); const log=job.querySelector('.ilog');
-  log.textContent='running '+name+' install.sh — builds + downloads, can take several minutes…';
-  try{
-    const j=await (await fetch('api/heal',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name})})).json();
-    if(j.ok) jobDone(job,null,true,(j.log||'')+'\n✓ '+name+' set up — run SYSTEM > RESTART','set up');
-    else setupFailed(job,name,j.error||j.log||'setup did not complete');
-  }catch(e){ setupFailed(job,name,e.message); }
+function runSetup(name){ return jobqAdd({label:name, verb:'setting up', run:job=>setupRun(name,job)}); }
+async function setupRun(name,job){
+  job.querySelector('.ilog').textContent='running '+name+' install.sh — builds + downloads, can take several minutes…';
+  let jid;
+  try{ jid=await startBackendJob('api/heal',{name}, job); }
+  catch(e){ setupFailed(job,name,e.message); return false; }
+  return await new Promise(res=>pollJob(job, jid, {finalize:false, onDone:(ok)=>{   // stream the build live; we own the terminal state
+    if(ok) jobDone(job,null,true,'✓ '+name+' set up — run SYSTEM > RESTART','set up');
+    else setupFailed(job,name,'setup did not complete');
+    res(ok);
+  }}));
 }
 function setupFailed(job,name,why){
   job.classList.remove('ok'); job.classList.add('err');
