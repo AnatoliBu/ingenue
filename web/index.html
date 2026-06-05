@@ -714,7 +714,7 @@ button{font-family:inherit}
        <div class="modal-head"><div class="t">⚠ install from an untrusted source?</div></div>
        <div class="modal-body">
          <p class="trust-msg" id="trust-msg"></p>
-         <div class="trust-warn">norns scripts run with full access to your device. only install scripts you trust. the norns &amp; maiden maintainers do not review or vouch for third-party scripts — that responsibility is yours.</div>
+         <div class="trust-warn">norns scripts run with full access to your device. only install scripts you trust. ingenue's maintainer doesn't review, vouch for, or take responsibility for third-party scripts — that responsibility is yours.</div>
          <label class="trust-snooze"><input type="checkbox" id="trust-remember"> don't warn me again for
            <select id="trust-weeks"><option value="1">1 week</option><option value="2">2 weeks</option><option value="3">3 weeks</option><option value="4">4 weeks</option></select>
            <span class="trust-cap">(max 4 weeks — this reminder can be snoozed, not disabled)</span></label>
@@ -1663,7 +1663,7 @@ function bulkInstall(){
   const go=()=>{ items.forEach(p=>enqueueInstall(p,null)); selection.clear(); updateGrid(); updateBulkBar(); };
   if(untrusted.length && !snoozeActive()){
     trustPending={bulk:go};
-    document.getElementById('trust-msg').innerHTML=`<b>${untrusted.length}</b> of ${items.length} selected script${items.length>1?'s':''} come from sources outside maiden's built-in community catalog.`;
+    document.getElementById('trust-msg').innerHTML=`<b>${untrusted.length}</b> of ${items.length} selected script${items.length>1?'s':''} come from sources outside the built-in community catalog.`;
     document.getElementById('trust-remember').checked=false;
     document.getElementById('trust-overlay').classList.add('on');
   } else go();
@@ -2070,7 +2070,7 @@ function requestInstall(p,btn,tab){
   else {
     trustPending={p,btn};
     const src=(p.srcs||[]).map(s=>SRC[s]?SRC[s].name:s).join(', ')||'an external source';
-    document.getElementById('trust-msg').innerHTML=`<b>${p.n}</b> by ${p.a} comes from <b>${src}</b> — not maiden's built-in community catalog.`;
+    document.getElementById('trust-msg').innerHTML=`<b>${p.n}</b> by ${p.a} comes from <b>${src}</b> — not the built-in community catalog.`;
     document.getElementById('trust-remember').checked=false;
     document.getElementById('trust-overlay').classList.add('on');
   }

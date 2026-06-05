@@ -107,6 +107,7 @@ PY="$(command -v python3)"
 # --- 5. always-on service (systemd if present, else a backgrounded launch) ---
 if command -v systemctl >/dev/null 2>&1 && [ -d /etc/systemd/system ]; then
   say "installing systemd service (persistent, auto-restart)"
+  PKILL="$(command -v pkill 2>/dev/null || echo /usr/bin/pkill)"
   TMP="$(mktemp)"
   cat > "$TMP" <<EOF
 [Unit]
@@ -115,6 +116,9 @@ After=network.target
 [Service]
 Type=simple
 WorkingDirectory=$WORK
+# Reap any stray server.py on the port (e.g. a manual/preview launch) before we
+# start — otherwise it can hold :$PORT and serve stale code. '-' = ignore no-match.
+ExecStartPre=-$PKILL -f "server.py $PORT"
 ExecStart=$PY server.py $PORT
 Restart=always
 RestartSec=3

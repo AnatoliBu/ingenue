@@ -27,6 +27,7 @@ After=network.target
 [Service]
 Type=simple
 WorkingDirectory=$DEST
+ExecStartPre=-/usr/bin/pkill -f "server.py 7777"
 ExecStart=/usr/bin/python3 server.py 7777
 Restart=always
 RestartSec=3
