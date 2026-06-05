@@ -687,18 +687,29 @@ def fetch_community(name_or_url):
     GitHub Pages site (no API rate limit, unlike api.github.com's 60/hr). The browser can't
     fetch it (no CORS headers), so the server does. Pass the exact comm URL when known,
     else we derive the slug from the catalog name."""
+    # SSRF-safe: never fetch a caller-supplied URL. Accept either a bare name or a
+    # norns.community URL, but always rebuild the request against the pinned host + a
+    # sanitized slug, and refuse redirects so a 302 can't pivot to an internal address.
     s = (name_or_url or "").strip()
     if s.startswith("http"):
-        url = s if s.endswith("/") else s + "/"
-    elif s:
-        slug = re.sub(r"\s+", "-", s.lower())
-        url = "https://norns.community/" + urllib.parse.quote(slug) + "/"
+        pu = urllib.parse.urlparse(s)
+        if (pu.hostname or "").lower().rstrip(".") != "norns.community":
+            return {"error": "not a norns.community url", "images": [], "text": ""}
+        slug = pu.path.strip("/").split("/")[0]
     else:
-        return {"error": "no name", "images": [], "text": ""}
+        slug = s
+    slug = re.sub(r"\s+", "-", slug.lower())
+    if not slug or not re.fullmatch(r"[a-z0-9._-]+", slug):
+        return {"error": "bad name", "images": [], "text": ""}
+    url = "https://norns.community/" + urllib.parse.quote(slug) + "/"
     try:
+        class _NoRedirect(urllib.request.HTTPRedirectHandler):
+            def redirect_request(self, *a, **k):  # block redirect-pivot
+                return None
+        opener = urllib.request.build_opener(_NoRedirect)
         req = urllib.request.Request(url, headers={"User-Agent": "ingenue"})
-        with urllib.request.urlopen(req, timeout=8) as r:
-            html = r.read().decode("utf-8", "replace")
+        with opener.open(req, timeout=8) as r:
+            html = r.read(2_000_000).decode("utf-8", "replace")   # cap body
     except Exception as e:  # noqa: BLE001
         return {"error": f"no community page ({e.__class__.__name__})", "images": [], "text": ""}
     desc = ""
