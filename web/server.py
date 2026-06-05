@@ -706,6 +706,205 @@ def scplugins_heal(source="bundled", url=""):
 
 
 # ---------------------------------------------------------------------------
+# sclang class-library config health (the "duplicate Class aborts everything" /
+# "langPort drift mutes every nb voice" class)
+# ---------------------------------------------------------------------------
+# Distinct from scplugins_* above (which is about UGen *binary* arch). This is
+# about sclang's *class library* config: norns generates sclang_conf.yaml with
+# include/exclude paths. Two failure modes silently break scripts wholesale:
+#   1. A plugin shipped a double-nested duplicate class tree (<ext>/<name>/<name>/
+#      Classes/) that the active excludePaths does NOT suppress -> sclang aborts
+#      the WHOLE class library with "duplicate Class" -> every script dies.
+#   2. sclang lost the langPort race and bound 57121+ instead of 57120 -> nb mods
+#      and matron OSC (all hardcoded to 57120) talk to nothing, no error.
+# We also warn (3) when an excluded path hides real .sc classes a script needs.
+
+def sclang_conf_path():
+    """Locate the active norns sclang_conf.yaml (port HOME first, then DUST-relative)."""
+    cands = []
+    h = os.environ.get("HOME")
+    if h:
+        cands.append(os.path.join(h, "norns", "sclang_conf.yaml"))
+    cands += [os.path.join(DUST, "..", "norns", "sclang_conf.yaml"),
+              os.path.join(DUST, "..", "sclang_conf.yaml"),
+              os.path.expanduser("~/.local/share/SuperCollider/sclang_conf.yaml")]
+    for p in cands:
+        rp = os.path.realpath(p)
+        if os.path.isfile(rp):
+            return rp
+    return None
+
+
+def _parse_sclang_conf(path):
+    """Read the include/exclude path lists. The file is machine-generated with a
+    fixed, flat shape, so a line scanner is safe and keeps the server stdlib-only
+    (no PyYAML dependency)."""
+    section, inc, exc = None, [], []
+    try:
+        with open(path) as f:
+            for line in f:
+                t = line.strip()
+                if not t or t.startswith("#"):
+                    continue
+                if t.endswith(":") and not t.startswith("-"):
+                    section = t[:-1].strip()
+                elif t.startswith("- "):
+                    (inc if section == "includePaths" else
+                     exc if section == "excludePaths" else []).append(t[2:].strip())
+    except OSError:
+        return None
+    return {"includePaths": inc, "excludePaths": exc}
+
+
+def _nested_dup_dirs():
+    """Collections shipping the packaging-bug double-nested tree <ext>/<name>/<name>/,
+    whose inner copy duplicates the flat top-level classes. -> [(collection, inner)]."""
+    out = []
+    for d in sc_ext_dirs():
+        try:
+            for name in os.listdir(d):
+                coll = os.path.join(d, name)
+                inner = os.path.join(coll, name)
+                if os.path.isdir(coll) and os.path.isdir(inner):
+                    out.append((coll, inner))
+        except OSError:
+            continue
+    return out
+
+
+def _count_sc(path):
+    n = 0
+    for _root, _dirs, files in os.walk(path):
+        n += sum(1 for f in files if f.endswith(".sc"))
+    return n
+
+
+def _excluded(real_path, excl_real):
+    """True if real_path is one of, or sits under, an excluded path."""
+    return any(real_path == e or real_path.startswith(e + os.sep) for e in excl_real)
+
+
+def _langport_state(port=57120):
+    """Is `port` bound as a UDP socket, while sclang is running? If sclang is up
+    but 57120 is unbound, it drifted to 57121+ (the race)."""
+    sclang = proc_pid("sclang")
+    hexport = f"{port:04X}"
+    bound = False
+    for pf in ("/proc/net/udp", "/proc/net/udp6"):
+        try:
+            with open(pf) as f:
+                next(f, None)                       # skip header
+                for line in f:
+                    cols = line.split()
+                    if len(cols) > 1 and cols[1].split(":")[-1].upper() == hexport:
+                        bound = True
+                        break
+        except OSError:
+            continue
+        if bound:
+            break
+    return {"sclang_up": bool(sclang), "sclang_pid": sclang, "port": port,
+            "bound": bound}
+
+
+def sclang_config_check():
+    """Diagnose sclang class-library config. Mirrors scplugins_status() shape."""
+    machine, is64 = host_arch()
+    conf = sclang_conf_path()
+    parsed = _parse_sclang_conf(conf) if conf else None
+    excl = parsed["excludePaths"] if parsed else []
+    excl_real = {os.path.realpath(p) for p in excl}
+    nested = _nested_dup_dirs()
+    issues = []
+
+    # 1 (critical, fixable): nested duplicate trees not covered by excludePaths.
+    uncovered = [inner for _c, inner in nested
+                 if not _excluded(os.path.realpath(inner), excl_real)]
+    if uncovered:
+        issues.append({
+            "code": "duplicate_classes", "severity": "critical", "fixable": True,
+            "detail": (f"{len(uncovered)} plugin collection(s) ship a double-nested duplicate "
+                       "class tree the active sclang_conf does NOT exclude; sclang aborts the "
+                       "entire class library with 'duplicate Class' and every script breaks"),
+            "paths": uncovered[:12]})
+
+    # 2 (warning, manual): an excluded path hides real .sc classes a script needs.
+    # A nested-dup inner dir legitimately holds .sc (excluding it is the point) — skip those.
+    nested_inner_real = {os.path.realpath(inner) for _c, inner in nested}
+    hidden = []
+    for e in excl_real:
+        if os.path.isdir(e) and not _excluded(e, nested_inner_real):
+            n = _count_sc(e)
+            if n:
+                hidden.append({"path": e, "sc_count": n})
+    if hidden:
+        issues.append({
+            "code": "excluded_classes", "severity": "warning", "fixable": False,
+            "detail": ("an excluded path contains .sc class files that will NOT compile — a "
+                       "script-installed engine there fails to load; confirm the exclusion is intended"),
+            "paths": hidden[:12]})
+
+    # 3 (critical, reboot): sclang up but langPort 57120 unbound -> drifted to 57121+.
+    lp = _langport_state()
+    if lp["sclang_up"] and not lp["bound"]:
+        issues.append({
+            "code": "langport_drift", "severity": "critical", "fixable": False,
+            "detail": ("sclang is running but langPort 57120 is unbound — it drifted to 57121+; "
+                       "nb mods and matron OSC (hardcoded to 57120) silently miss. Reboot so the "
+                       "launcher frees 57120 before sclang starts"),
+            "info": lp})
+
+    return {
+        "host_arch": machine, "is_64bit": is64,
+        "sclang_conf": conf, "conf_found": bool(conf),
+        "nested_dup_collections": len(nested),
+        "excludePaths": excl, "langport": lp,
+        "issues": issues, "ok": not issues,
+        "can_fix": any(i["fixable"] for i in issues),
+        "reboot_required": any(i["code"] == "langport_drift" for i in issues),
+        "hint": ("sclang config looks healthy" if not issues
+                 else f"{len(issues)} sclang config issue(s) detected"),
+    }
+
+
+def sclang_config_heal():
+    """Repair sclang_conf.yaml so every double-nested duplicate class tree is excluded,
+    preventing the 'duplicate Class' abort. Mirrors the launcher's generator but on
+    demand; backs up first. Takes effect on the next sclang recompile (reboot)."""
+    conf = sclang_conf_path()
+    if not conf:
+        return {"ok": False, "error": "no sclang_conf.yaml found to repair"}
+    parsed = _parse_sclang_conf(conf)
+    if parsed is None:
+        return {"ok": False, "error": f"could not read {conf}"}
+    excl = list(parsed["excludePaths"])
+    excl_real = {os.path.realpath(p) for p in excl}
+    added = []
+    for _c, inner in _nested_dup_dirs():
+        if not _excluded(os.path.realpath(inner), excl_real):
+            excl.append(inner); excl_real.add(os.path.realpath(inner)); added.append(inner)
+    if not added:
+        return {"ok": True, "changed": False, "added": [], "reboot_required": False,
+                "log": "all duplicate class trees already excluded; nothing to repair"}
+    try:
+        shutil.copy2(conf, conf + ".ingenue.bak")
+        with open(conf, "w") as f:
+            f.write("includePaths:\n")
+            for p in parsed["includePaths"]:
+                f.write(f"    - {p}\n")
+            f.write("excludePaths:\n")
+            for p in excl:
+                f.write(f"    - {p}\n")
+            f.write("postInlinePaths: []\n")
+    except OSError as e:
+        return {"ok": False, "error": f"write failed: {e}"}
+    return {"ok": True, "changed": True, "added": added, "backup": conf + ".ingenue.bak",
+            "reboot_required": True,
+            "log": (f"excluded {len(added)} duplicate class tree(s); reboot (or recompile "
+                    "sclang) to apply — note the launcher also regenerates this each boot")}
+
+
+# ---------------------------------------------------------------------------
 # Audio-server health (B10) — jack/scsynth state + the hw:0 handoff race
 # ---------------------------------------------------------------------------
 def norns_log_path():
@@ -1012,6 +1211,8 @@ class H(http.server.SimpleHTTPRequestHandler):
                 if self._q().get("online", ["0"])[0] == "1":   # opt-in network check
                     rep["online"] = scplugins_online_version()
                 return self._json(rep)
+            if path == "/api/sclang":
+                return self._json(sclang_config_check())
             if path == "/api/version":
                 return self._json({"sha": installed_sha(),
                                    "repo": "seajaysec/ingenue", "branch": "main"})
@@ -1072,6 +1273,8 @@ class H(http.server.SimpleHTTPRequestHandler):
                 return self._json({"ok": True, "removed": name})
             if path == "/api/scplugins/heal":
                 return self._json(scplugins_heal(b.get("source", "bundled"), (b.get("url") or "").strip()))
+            if path == "/api/sclang/heal":
+                return self._json(sclang_config_heal())
             if path == "/api/self-update":
                 return self._json(self_update())
             if path == "/api/audio/restart":
@@ -1141,7 +1344,14 @@ class H(http.server.SimpleHTTPRequestHandler):
         pass
 
 
-socketserver.ThreadingTCPServer.allow_reuse_address = True
-with socketserver.ThreadingTCPServer(("0.0.0.0", PORT), H) as httpd:
-    print(f"ingenue backend on 0.0.0.0:{PORT}  (dust={DUST}, exists={os.path.isdir(CODE)})", flush=True)
-    httpd.serve_forever()
+def main():
+    socketserver.ThreadingTCPServer.allow_reuse_address = True
+    with socketserver.ThreadingTCPServer(("0.0.0.0", PORT), H) as httpd:
+        print(f"ingenue backend on 0.0.0.0:{PORT}  (dust={DUST}, exists={os.path.isdir(CODE)})", flush=True)
+        httpd.serve_forever()
+
+
+# Importable for tests/tooling; only binds the port when run as a script
+# (the device launches it via `python3 server.py 7777`).
+if __name__ == "__main__":
+    main()
