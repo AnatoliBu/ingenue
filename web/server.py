@@ -807,6 +807,59 @@ def _langport_state(port=57120):
             "bound": bound}
 
 
+# gai.conf body that makes getaddrinfo prefer IPv4 (the default precedence table
+# with the IPv4-mapped row raised to 100). osc.send to "localhost":57120 must reach
+# the IPv4-only sclang OSC listener; default ::1-first resolution mutes nb voices.
+GAI_CONF_PATH = "/etc/gai.conf"
+GAI_IPV4_PRECEDENCE = "precedence ::ffff:0:0/96  100"
+GAI_CONF_BODY = (
+    "# ingenue: prefer IPv4 so osc.send to \"localhost\":57120 reaches the IPv4-only\n"
+    "# sclang OSC listener. Default ::1-first resolution silently mutes every\n"
+    "# osc-based nb voice (polyperc, mxsynths, ...). Default precedence table with\n"
+    "# the IPv4-mapped row raised to 100.\n"
+    "label  ::1/128       0\n"
+    "label  ::/0          1\n"
+    "label  2002::/16     2\n"
+    "label ::/96          3\n"
+    "label ::ffff:0:0/96  4\n"
+    "precedence  ::1/128       50\n"
+    "precedence  ::/0          40\n"
+    "precedence  2002::/16     30\n"
+    "precedence ::/96          20\n"
+    "precedence ::ffff:0:0/96  100\n"
+)
+
+
+def _localhost_resolution(port=57120):
+    """How getaddrinfo orders 'localhost'. If an IPv6 (::1) sorts before the IPv4
+    127.0.0.1, then anything that osc.send()s to the bare name "localhost" (every
+    nb mod, matron's own OSC) hits ::1 — but sclang's OSCFunc is bound IPv4-only,
+    so the packet is dropped with no error and the voice is silent. Real norns
+    resolves localhost->127.0.0.1; 64-bit ports with systemd-resolved often don't."""
+    import socket
+    try:
+        res = socket.getaddrinfo("localhost", port, proto=socket.IPPROTO_UDP)
+    except Exception:  # noqa: BLE001
+        return None
+    fams = [r[0] for r in res]
+    return {
+        "addrs": [r[4][0] for r in res],
+        "has_v4": socket.AF_INET in fams,
+        "has_v6": socket.AF_INET6 in fams,
+        "ipv6_first": bool(fams) and fams[0] == socket.AF_INET6,
+    }
+
+
+def _gai_has_ipv4_precedence():
+    """True if /etc/gai.conf already carries our IPv4-preference line (fix staged,
+    pending the reboot that makes a fresh sclang/matron read it)."""
+    try:
+        with open(GAI_CONF_PATH) as f:
+            return GAI_IPV4_PRECEDENCE in f.read()
+    except OSError:
+        return False
+
+
 def sclang_config_check():
     """Diagnose sclang class-library config. Mirrors scplugins_status() shape."""
     machine, is64 = host_arch()
@@ -854,54 +907,105 @@ def sclang_config_check():
                        "launcher frees 57120 before sclang starts"),
             "info": lp})
 
+    # 4 (critical, fixable): "localhost" resolves to IPv6 ::1 before 127.0.0.1, but
+    # sclang's OSC listener is IPv4-only. nb mods and matron osc.send hardcode
+    # "localhost":57120 -> every osc-based nb voice is silent, no error. The common
+    # cause on 64-bit ports (systemd-resolved answers ::1-first; /etc/hosts bypassed).
+    lr = _localhost_resolution()
+    if lr and lr["ipv6_first"] and lr["has_v4"]:
+        staged = _gai_has_ipv4_precedence()
+        issues.append({
+            "code": "localhost_ipv6", "severity": "critical", "fixable": True,
+            "detail": ("\"localhost\" resolves to IPv6 ::1 before 127.0.0.1, but sclang's OSC "
+                       "listener is IPv4-only. nb mods and matron osc.send target \"localhost\":57120 "
+                       "-> every osc-based nb voice is silent with no error. The fix writes "
+                       "/etc/gai.conf to prefer IPv4." + (" Already written — reboot to apply."
+                       if staged else " Reboot to apply.")),
+            "info": lr, "already_staged": staged})
+
     return {
         "host_arch": machine, "is_64bit": is64,
         "sclang_conf": conf, "conf_found": bool(conf),
         "nested_dup_collections": len(nested),
-        "excludePaths": excl, "langport": lp,
+        "excludePaths": excl, "langport": lp, "localhost": lr,
         "issues": issues, "ok": not issues,
         "can_fix": any(i["fixable"] for i in issues),
-        "reboot_required": any(i["code"] == "langport_drift" for i in issues),
-        "hint": ("sclang config looks healthy" if not issues
-                 else f"{len(issues)} sclang config issue(s) detected"),
+        "reboot_required": any(i["code"] in ("langport_drift", "localhost_ipv6") for i in issues),
+        "hint": ("sclang / nb-voice config looks healthy" if not issues
+                 else f"{len(issues)} sclang / nb-voice issue(s) detected"),
     }
 
 
 def sclang_config_heal():
-    """Repair sclang_conf.yaml so every double-nested duplicate class tree is excluded,
-    preventing the 'duplicate Class' abort. Mirrors the launcher's generator but on
-    demand; backs up first. Takes effect on the next sclang recompile (reboot)."""
+    """Repair the two silently-fatal sclang/nb conditions, both idempotent and
+    backed up first, both taking effect on the next boot:
+      (a) double-nested duplicate class trees -> exclude them in sclang_conf.yaml
+          so sclang stops aborting the whole class library with 'duplicate Class';
+      (b) "localhost" resolving to IPv6 ::1 -> write /etc/gai.conf to prefer IPv4
+          so osc.send("localhost":57120) reaches the IPv4-only sclang OSC listener
+          and osc-based nb voices stop being silently muted."""
+    log, changed, reboot = [], False, False
+
+    # (a) duplicate class trees in sclang_conf.yaml
     conf = sclang_conf_path()
-    if not conf:
-        return {"ok": False, "error": "no sclang_conf.yaml found to repair"}
-    parsed = _parse_sclang_conf(conf)
-    if parsed is None:
-        return {"ok": False, "error": f"could not read {conf}"}
-    excl = list(parsed["excludePaths"])
-    excl_real = {os.path.realpath(p) for p in excl}
     added = []
-    for _c, inner in _nested_dup_dirs():
-        if not _excluded(os.path.realpath(inner), excl_real):
-            excl.append(inner); excl_real.add(os.path.realpath(inner)); added.append(inner)
-    if not added:
-        return {"ok": True, "changed": False, "added": [], "reboot_required": False,
-                "log": "all duplicate class trees already excluded; nothing to repair"}
-    try:
-        shutil.copy2(conf, conf + ".ingenue.bak")
-        with open(conf, "w") as f:
-            f.write("includePaths:\n")
-            for p in parsed["includePaths"]:
-                f.write(f"    - {p}\n")
-            f.write("excludePaths:\n")
-            for p in excl:
-                f.write(f"    - {p}\n")
-            f.write("postInlinePaths: []\n")
-    except OSError as e:
-        return {"ok": False, "error": f"write failed: {e}"}
-    return {"ok": True, "changed": True, "added": added, "backup": conf + ".ingenue.bak",
-            "reboot_required": True,
-            "log": (f"excluded {len(added)} duplicate class tree(s); reboot (or recompile "
-                    "sclang) to apply — note the launcher also regenerates this each boot")}
+    if conf:
+        parsed = _parse_sclang_conf(conf)
+        if parsed is None:
+            log.append(f"could not read {conf}")
+        else:
+            excl = list(parsed["excludePaths"])
+            excl_real = {os.path.realpath(p) for p in excl}
+            for _c, inner in _nested_dup_dirs():
+                if not _excluded(os.path.realpath(inner), excl_real):
+                    excl.append(inner); excl_real.add(os.path.realpath(inner)); added.append(inner)
+            if added:
+                try:
+                    shutil.copy2(conf, conf + ".ingenue.bak")
+                    with open(conf, "w") as f:
+                        f.write("includePaths:\n")
+                        for p in parsed["includePaths"]:
+                            f.write(f"    - {p}\n")
+                        f.write("excludePaths:\n")
+                        for p in excl:
+                            f.write(f"    - {p}\n")
+                        f.write("postInlinePaths: []\n")
+                    changed = True; reboot = True
+                    log.append(f"excluded {len(added)} duplicate class tree(s) in "
+                               f"{os.path.basename(conf)} (backup .ingenue.bak); note the launcher "
+                               "also regenerates this each boot")
+                except OSError as e:
+                    log.append(f"could not repair {os.path.basename(conf)}: {e}")
+
+    # (b) localhost -> IPv4 via /etc/gai.conf
+    lr = _localhost_resolution()
+    if lr and lr["ipv6_first"] and lr["has_v4"]:
+        if _gai_has_ipv4_precedence():
+            reboot = True
+            log.append("/etc/gai.conf already prefers IPv4 — reboot to apply (a fresh sclang/"
+                       "matron reads gai.conf only at start)")
+        elif not os.access(os.path.dirname(GAI_CONF_PATH) or "/", os.W_OK):
+            log.append("cannot write /etc/gai.conf (need root). Run ingenue as root, or add "
+                       "the gai.conf IPv4-precedence snippet manually, then reboot")
+        else:
+            try:
+                backup = None
+                if os.path.exists(GAI_CONF_PATH):
+                    backup = GAI_CONF_PATH + ".ingenue.bak"
+                    shutil.copy2(GAI_CONF_PATH, backup)
+                with open(GAI_CONF_PATH, "w") as f:
+                    f.write(GAI_CONF_BODY)
+                changed = True; reboot = True
+                log.append("wrote /etc/gai.conf to prefer IPv4"
+                           + (f" (backup {os.path.basename(backup)})" if backup else "")
+                           + " — osc-based nb voices will sound after a reboot")
+            except OSError as e:
+                log.append(f"could not write /etc/gai.conf: {e}")
+
+    if not log:
+        log.append("sclang / nb-voice config already healthy; nothing to repair")
+    return {"ok": True, "changed": changed, "added": added, "reboot_required": reboot,
+            "log": "\n".join(log)}
 
 
 # ---------------------------------------------------------------------------
@@ -918,7 +1022,11 @@ def norns_log_path():
 
 
 def proc_pid(name):
-    for d in os.listdir("/proc"):
+    try:
+        entries = os.listdir("/proc")
+    except OSError:
+        return None                      # no /proc (off-device) — degrade gracefully
+    for d in entries:
         if not d.isdigit():
             continue
         try:

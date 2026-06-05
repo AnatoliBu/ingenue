@@ -596,6 +596,14 @@ button{font-family:inherit}
      <button class="x" id="scp-banner-x" title="dismiss" style="background:none;border:0;cursor:pointer;font-size:15px">✕</button>
    </div>
 
+   <!-- nb-voice OSC health banner ("localhost"->::1 mutes every osc-based nb voice) -->
+   <div id="nb-banner" style="display:none;align-items:center;gap:10px;padding:8px 14px;background:color-mix(in srgb,var(--warn,#c80) 22%,var(--bg));border-bottom:1px solid color-mix(in srgb,var(--warn,#c80) 50%,var(--bg));font-size:13px">
+     <span style="font-size:15px">🔇</span>
+     <span id="nb-banner-msg" style="flex:1">nb voices are silent on this device — "localhost" resolves to IPv6 but sclang listens on IPv4.</span>
+     <button class="btn btn-install" id="nb-banner-fix" style="padding:4px 12px">Fix it</button>
+     <button class="x" id="nb-banner-x" title="dismiss" style="background:none;border:0;cursor:pointer;font-size:15px">✕</button>
+   </div>
+
    <!-- mobile top bar -->
    <div class="mtop">
      <button class="hbtn" id="m-menu" title="files"><svg viewBox="0 0 32 32"><path d="M14 4l4 4h14v22h-32v-26z"/></svg></button>
@@ -1281,6 +1289,40 @@ async function runScpHeal(){
     document.getElementById('scp-banner').style.display='none';
     if(j.ok) confirmDialog('Reboot the whole device','The 64-bit SuperCollider plugins are installed (<b>'+j.count+'</b> binaries). Now <b>power-cycle the entire device</b> — not just a norns restart — so SuperCollider loads them at boot. Then your engine scripts will make sound.', ()=>{});
   }catch(e){ jobDone(job,null,false,e.message,''); go.disabled=false; go.textContent='Install plugins'; }
+}
+
+/* ===== nb-voice OSC health: "localhost"->::1 mutes osc-based nb voices ===== */
+// Runs on every launch, transparently. Surfaces only when getaddrinfo orders
+// IPv6 ::1 before 127.0.0.1 while sclang's OSC listener is IPv4-only — every
+// nb mod and matron osc.send (hardcoded "localhost":57120) is then dropped
+// silently. The fix writes /etc/gai.conf to prefer IPv4 (needs a reboot).
+let NBH=null;                                       // last /api/sclang report
+async function checkNbVoices(){
+  try{ const r=await fetch('api/sclang',{cache:'no-store'}); if(!r.ok) return; NBH=await r.json(); }
+  catch(_){ return; }                              // off-device / no backend → silent
+  const b=document.getElementById('nb-banner'); if(!b) return;
+  const iss=(NBH.issues||[]).find(i=>i.code==='localhost_ipv6');
+  if(!iss || LS.get('nbDismiss',0)>Date.now()){ b.style.display='none'; return; }
+  document.getElementById('nb-banner-msg').innerHTML = iss.already_staged
+    ? `nb voices: the IPv4 fix is written but not yet live — <b>reboot the device</b> to make osc-based nb voices sound.`
+    : `nb voices are silent here — <b>"localhost" resolves to IPv6</b> but sclang's OSC listener is IPv4-only, so every osc-based nb voice (polyperc, mxsynths…) is muted with no error.`;
+  document.getElementById('nb-banner-fix').textContent = iss.already_staged ? 'How to apply' : 'Fix it';
+  b.style.display='flex';
+}
+async function runNbHeal(){
+  const iss=((NBH&&NBH.issues)||[]).find(i=>i.code==='localhost_ipv6')||{};
+  if(iss.already_staged){
+    confirmDialog('Reboot to apply','The IPv4 fix is already written to <span class="mono">/etc/gai.conf</span>. A running sclang/matron only reads it at startup, so <b>power-cycle the whole device</b> — then osc-based nb voices will sound.', ()=>{});
+    return;
+  }
+  const go=document.getElementById('nb-banner-fix'); go.disabled=true; go.textContent='Fixing…';
+  const job=mkJob('nb voice audio','fixing'); job.querySelector('.ilog').textContent='writing IPv4 resolution fix (/etc/gai.conf)…';
+  try{
+    const j=await (await fetch('api/sclang/heal',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'})).json();
+    jobDone(job,null,!!j.ok,(j.ok?((j.log||'')+'\n\n⚠ REBOOT THE WHOLE DEVICE to apply.'):(j.error||'fix failed')),'fixed');
+    document.getElementById('nb-banner').style.display='none';
+    if(j.ok&&j.reboot_required) confirmDialog('Reboot the whole device','The IPv4 resolution fix is written. Now <b>power-cycle the entire device</b> (not just a norns restart) so a fresh sclang/matron reads it — then every osc-based nb voice (polyperc, mxsynths, and the rest) will make sound.', ()=>{});
+  }catch(e){ jobDone(job,null,false,e.message,''); go.disabled=false; go.textContent='Fix it'; }
 }
 
 /* ===== device info (hostname · ip · arch · system) ===== */
@@ -2900,6 +2942,7 @@ function boot(){
   const rh=LS.get('replh',null); if(rh) document.documentElement.style.setProperty('--repl-h',rh);
   initSplit();
   loadCatalog().then(checkScPlugins);   // pull the real catalog, then silently check SC-plugin health
+  checkNbVoices();                      // silently check nb-voice OSC health (localhost->::1 muting)
   matronConnect();                      // live REPL + params link to matron (no-op off-device)
   initAudioHealth();                    // B10 audio-server health line in config
   setTimeout(()=>{ if(!_updChecked){ _updChecked=true; checkForUpdate(false); } }, 1800);  // quiet on-load update check
@@ -2908,6 +2951,8 @@ function boot(){
   document.getElementById('scp-banner-fix').onclick=openScp;
   document.getElementById('scp-banner-x').onclick=()=>{ document.getElementById('scp-banner').style.display='none'; LS.set('scpDismiss',Date.now()+7*24*3600*1000); };
   document.getElementById('scp-banner-msg').onclick=openScp;
+  document.getElementById('nb-banner-fix').onclick=runNbHeal;
+  document.getElementById('nb-banner-x').onclick=()=>{ document.getElementById('nb-banner').style.display='none'; LS.set('nbDismiss',Date.now()+7*24*3600*1000); };
   document.getElementById('scp-close').onclick=()=>document.getElementById('scp-overlay').classList.remove('on');
   document.getElementById('scp-skip').onclick=()=>document.getElementById('scp-overlay').classList.remove('on');
   document.getElementById('scp-overlay').addEventListener('click',e=>{if(e.target.id==='scp-overlay')e.currentTarget.classList.remove('on');});
