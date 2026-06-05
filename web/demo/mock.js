@@ -8,17 +8,21 @@
 
   // ---------- top-level branding ----------
   const DEMO_TITLE = 'ingenue (demo)';
+  // The main app force-corrects the title once on load (a `document.title =`
+  // assignment well into the body's inline scripts). Replace the setter on
+  // the Document prototype so any subsequent assignment lands on our value.
+  try {
+    const desc = Object.getOwnPropertyDescriptor(Document.prototype, 'title');
+    if (desc && desc.set) {
+      const origSet = desc.set, origGet = desc.get;
+      Object.defineProperty(Document.prototype, 'title', {
+        configurable: true,
+        get(){ return origGet.call(this); },
+        set(){ origSet.call(this, DEMO_TITLE); }
+      });
+    }
+  } catch(_){}
   document.title = DEMO_TITLE;
-  // The main app force-corrects the title once on load; keep ours sticky
-  // with a MutationObserver instead of fighting the timing.
-  function lockTitle(){
-    const tEl = document.querySelector('title');
-    if (!tEl) { setTimeout(lockTitle, 50); return; }
-    new MutationObserver(() => {
-      if (document.title !== DEMO_TITLE) document.title = DEMO_TITLE;
-    }).observe(tEl, { childList:true, characterData:true, subtree:true });
-  }
-  lockTitle();
   try { document.documentElement.classList.add('demo-mode'); } catch(_) {}
 
   function injectBranding(){
