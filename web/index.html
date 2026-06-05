@@ -5,6 +5,24 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
 <meta name="theme-color" content="#1D1F21" id="metaTheme" />
 <title>ingenue · norns</title>
+<script>
+/* demo mode: load the static-site mock layer when hosted on a Pages-style
+   host or when ?demo=1 is in the URL. ?live=1 forces real-device mode. The
+   script tag must be synchronous so window.fetch / window.WebSocket are
+   wrapped before any of the page's inline scripts run. */
+(function(){
+  try{
+    var q = location.search || '';
+    if (/[?&]live=1\b/.test(q)) return;
+    var isDemoHost = /\.github\.io$/.test(location.hostname)
+                  || location.hostname === 'localhost' && /[?&]demo=1\b/.test(q)
+                  || /[?&]demo=1\b/.test(q);
+    if (!isDemoHost) return;
+    window.__INGENUE_DEMO__ = true;
+    document.write('<script src="demo/mock.js"><\/script>');
+  }catch(_){}
+})();
+</script>
 <link rel="icon" href="favicon-32.png" sizes="32x32" type="image/png" />
 <link rel="icon" href="favicon.svg" type="image/svg+xml" />
 <link rel="apple-touch-icon" href="favicon-180.png" />

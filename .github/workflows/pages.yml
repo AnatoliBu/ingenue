@@ -1,0 +1,73 @@
+name: pages
+
+# Triggers are limited to repo-internal events:
+#   * push to main (content is already authenticated maintainer commits)
+#   * manual dispatch (collaborators only)
+# No pull_request, issue_comment, repository_dispatch — so no untrusted
+# external input is consumed anywhere in this workflow.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'web/**'
+      - '.github/workflows/pages.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: mock-coverage check
+        # Warn (don't fail) if index.html references an api/ path the demo
+        # mock doesn't mention. Early signal when a new feature adds an
+        # endpoint that would silently 404 on the demo site.
+        # Charset is constrained to [a-z0-9_/-]+ in the grep, so the values
+        # are shell-safe even if the source ever changes.
+        run: |
+          set -eu
+          grep -oE "api/[a-z0-9_/-]+" web/index.html | sort -u > /tmp/refs.txt
+          missing=""
+          while IFS= read -r path; do
+            [ -z "$path" ] && continue
+            if ! grep -qF "'$path'" web/demo/mock.js \
+               && ! grep -qF "\"$path\"" web/demo/mock.js; then
+              missing="$missing $path"
+            fi
+          done < /tmp/refs.txt
+          if [ -n "$missing" ]; then
+            echo "::warning::demo mock.js may not cover:$missing"
+          else
+            echo "all api/ paths in index.html are referenced by mock.js"
+          fi
+
+      - name: stage site
+        run: |
+          mkdir -p _site
+          cp -R web/. _site/
+
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

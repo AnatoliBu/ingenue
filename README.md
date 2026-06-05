@@ -17,6 +17,10 @@ service on :7777 and the two sit side by side, so there's zero risk to your
 setup. if you don't like it, run the uninstall script or remove the folder and
 you're exactly where you started.
 
+**poke around without a norns:** [seajaysec.github.io/ingenue](https://seajaysec.github.io/ingenue/)
+is a static demo (every device call is faked, so nothing is connected to a real
+norns, but the ui is the same one that runs on your device).
+
 ![editor](screenshots/desktop/editor.png)
 
 ## install
