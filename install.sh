@@ -104,10 +104,40 @@ record_version
 ensure_python
 PY="$(command -v python3)"
 
-# --- 5. always-on service (systemd if present, else a backgrounded launch) ---
-if command -v systemctl >/dev/null 2>&1 && [ -d /etc/systemd/system ]; then
+# --- 5. how ingenue stays running ---
+# LAUNCH MODEL — read this before "helpfully" adding a service:
+# On devices that launch ingenue FROM WITHIN the norns session (e.g. PanicOS, whose
+# port launcher Norns.sh starts `server.py $PORT` on norns launch and stops it on
+# exit), ingenue must NOT also be a systemd service. Two launchers then fight over
+# :$PORT and the loser crash-loops forever on "Address already in use". A prior
+# well-meaning install did exactly this. So: if a norns launcher already starts
+# ingenue, leave it to that — and tear down any stray service a previous install left.
+NORNS_LAUNCHER=""
+for f in /storage/roms/ports/Norns.sh /roms/ports/Norns.sh; do
+  [ -f "$f" ] && grep -qE "dust/code/ingenue|server\.py $PORT" "$f" && NORNS_LAUNCHER="$f" && break
+done
+start_detached() {   # kill by PORT (fuser), not by name (pkill -f self-matches), then relaunch
+  { fuser -k "$PORT"/tcp 2>/dev/null || pkill -f "server.py $PORT" 2>/dev/null; } || true
+  sleep 1
+  (cd "$WORK" && setsid "$PY" server.py "$PORT" >server.log 2>&1 &) || true
+}
+if [ -n "$NORNS_LAUNCHER" ]; then
+  say "ingenue is launched from norns ($NORNS_LAUNCHER) — NOT installing a systemd service (it would fight over :$PORT)"
+  if command -v systemctl >/dev/null 2>&1 && [ -e /etc/systemd/system/ingenue.service ]; then
+    say "removing a stale ingenue.service from a previous install — the norns launcher owns ingenue here"
+    priv systemctl disable --now ingenue 2>/dev/null || true
+    priv rm -f /etc/systemd/system/ingenue.service /etc/systemd/system/multi-user.target.wants/ingenue.service
+    priv systemctl daemon-reload 2>/dev/null || true
+  fi
+  start_detached
+elif command -v systemctl >/dev/null 2>&1 && [ -d /etc/systemd/system ]; then
   say "installing systemd service (persistent, auto-restart)"
-  PKILL="$(command -v pkill 2>/dev/null || echo /usr/bin/pkill)"
+  if command -v fuser >/dev/null 2>&1; then
+    PRE="ExecStartPre=-/bin/sh -c 'fuser -k $PORT/tcp 2>/dev/null; sleep 1'"
+  else
+    PKILL="$(command -v pkill 2>/dev/null || echo /usr/bin/pkill)"
+    PRE="ExecStartPre=-$PKILL -f \"server.py $PORT\""
+  fi
   TMP="$(mktemp)"
   cat > "$TMP" <<EOF
 [Unit]
@@ -116,9 +146,9 @@ After=network.target
 [Service]
 Type=simple
 WorkingDirectory=$WORK
-# Reap any stray server.py on the port (e.g. a manual/preview launch) before we
-# start — otherwise it can hold :$PORT and serve stale code. '-' = ignore no-match.
-ExecStartPre=-$PKILL -f "server.py $PORT"
+# Reclaim :$PORT from any stray/stale instance before binding — kill by PORT, not by
+# process name ('pkill -f "server.py $PORT"' self-matches and is unreliable). '-' = ignore no-match.
+$PRE
 ExecStart=$PY server.py $PORT
 Restart=always
 RestartSec=3
@@ -132,8 +162,7 @@ EOF
 else
   say "no systemd — starting now; add this line to your norns boot for persistence:"
   echo "    (cd $WORK && setsid $PY server.py $PORT >server.log 2>&1 &)"
-  pkill -f "server.py $PORT" 2>/dev/null || true
-  (cd "$WORK" && setsid "$PY" server.py "$PORT" >server.log 2>&1 &) || true
+  start_detached
 fi
 
 IP="$(python3 - <<'PY' 2>/dev/null || true
