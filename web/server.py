@@ -871,6 +871,38 @@ def health_overview():
         "experimental": True,
     })
 
+    # 3) SuperCollider plugin architecture — wrong-arch .so files (the
+    # tapedeck-installer-on-64-bit-host class). Surfaces both the count and
+    # whether ingenue's bundle can supply correct-arch replacements.
+    wrong = wrong_arch_so_files()
+    if not wrong:
+        summary = "every SuperCollider plugin matches host arch"
+        detail = ""
+    else:
+        machine, _ = host_arch()
+        want = ARCH_ELF.get(machine, "?")
+        by_dir = {}
+        for w in wrong:
+            by_dir.setdefault(os.path.dirname(w["path"]), []).append(w["basename"])
+        sample = "; ".join(f"{d}: {', '.join(sorted(set(bs))[:3])}" for d, bs in list(by_dir.items())[:3])
+        summary = (f"{len(wrong)} SuperCollider plugin .so file{'s' if len(wrong)!=1 else ''} "
+                   f"are wrong arch for this host ({want}) — scsynth silently can't load them, "
+                   f"engines that depend on them won't work")
+        detail = sample
+    checks.append({
+        "id": "sc_plugin_arch",
+        "name": "SuperCollider plugin arch",
+        "ok": not wrong,
+        "issue_count": len(wrong),
+        "summary": summary,
+        "detail": detail,
+        "can_heal": bool(wrong),
+        "heal_endpoint": "/api/scplugins/heal-wrong-arch",
+        "heal_method": "POST",
+        "heal_label": "heal wrong-arch SC plugins",
+        "experimental": True,                                 # touches system Extensions dirs
+    })
+
     return {
         "checks": checks,
         "overall_ok": all(c["ok"] for c in checks),
@@ -1339,8 +1371,13 @@ def listing(full):
 # (no duplicate-class breakage). Always recommend a FULL DEVICE REBOOT after.
 
 ELF_MACHINE = {0x28: "arm", 0xB7: "aarch64", 0x3E: "x86_64", 0x103: "loongarch"}
-# host arch (uname) -> the ELF e_machine that scsynth here can actually load
-ARCH_ELF = {"aarch64": "aarch64", "arm64": "aarch64", "x86_64": "x86_64", "amd64": "x86_64"}
+# host arch (uname) -> the ELF e_machine that scsynth here can actually load.
+# 32-bit ARM variants (armv7l on real norns, armhf etc on some ports) were
+# missing here — the gap caused scplugins_status to false-flag every present .so
+# as "wrong arch" on 32-bit hosts. Added 2026-06-06 alongside the wrong-arch heal.
+ARCH_ELF = {"aarch64": "aarch64", "arm64": "aarch64",
+            "x86_64": "x86_64", "amd64": "x86_64",
+            "armv7l": "arm", "armv6l": "arm", "armhf": "arm"}
 
 
 def elf_arch(path):
@@ -1527,6 +1564,145 @@ def scplugins_heal(source="bundled", url=""):
                 "count": len(installed), "reboot_required": True, "log": "\n".join(log)}
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
+
+
+# ---------------------------------------------------------------------------
+# Wrong-arch UGen detect + heal (F+G+I)
+# ---------------------------------------------------------------------------
+# Distinct from scplugins_status/heal above: this catches the case where a SCRIPT
+# (e.g. tapedeck's scinstaller, amenbreak's runtime "install tapedeck" button)
+# DROPS arch-mismatched .so files into a SC Extensions dir at runtime. scsynth
+# silently fails to load them; scripts run but their engines are dead.
+#
+# Validated manually 2026-06-06 on panicos (aarch64): 6 32-bit PortedPlugins .so
+# files at ~/.local/share/SuperCollider/Extensions/supercollider-plugins/ were
+# downloaded by tapedeck's scinstaller (PortedPlugins-RaspberryPi.zip is 32-bit).
+# Moving them out + dropping ingenue's bundled 64-bit copies in the same path
+# fixed tapedeck loads (scinstaller's :ready() check is filename-only, no arch
+# verify) and eliminated the silent-engine class of lfos OSC noise.
+def wrong_arch_so_files():
+    """Walk every SC Extensions dir, classify each .so by ELF arch, return list
+    of arch-mismatches against the host's scsynth ELF arch. Returns
+    [{path, basename, found_arch, want_arch}].
+
+    Used by the Health panel + the heal endpoint below."""
+    machine, _ = host_arch()
+    want = ARCH_ELF.get(machine)
+    if not want:
+        return []                                            # unknown host — can't classify
+    out = []
+    for d in sc_ext_dirs():
+        for root, _dirs, files in os.walk(d):
+            for f in files:
+                if not f.endswith(".so"):
+                    continue
+                path = os.path.join(root, f)
+                a = elf_arch(path)
+                if not a:
+                    continue                                 # not an ELF
+                if a[1] != want:
+                    out.append({"path": path, "basename": f,
+                                "found_arch": a[1], "want_arch": want})
+    return out
+
+
+def heal_wrong_arch_sc():
+    """For every wrong-arch .so found by wrong_arch_so_files():
+      1. Move it to <home>/.ingenue-backups/wrong-arch-sc/<ts>/<basename> (reversible)
+      2. If ingenue's bundled .tar.gz has a correct-arch counterpart with the
+         same basename, copy it into the SAME dir the wrong-arch was in (so
+         scripts whose installer is filename-only — like tapedeck's scinstaller
+         — find what they expect, and the user doesn't get re-prompted to
+         install the same broken zip again).
+
+    Returns {fixed_count, replaced_count, fixed:[{basename, from_dir, found_arch, replaced:bool}], backup_dir, log[]}.
+    Idempotent: re-running with no wrong-arch .so on disk is a no-op."""
+    import tarfile
+    mismatches = wrong_arch_so_files()
+    if not mismatches:
+        return {"ok": True, "fixed_count": 0, "replaced_count": 0,
+                "fixed": [], "log": ["no wrong-arch .so files found"]}
+
+    machine, _ = host_arch()
+    want = ARCH_ELF.get(machine)
+    _, _, _, home = target_owner()
+    backups_root = os.path.join(home or "/tmp", ".ingenue-backups", "wrong-arch-sc")
+    ts = time.strftime("%Y%m%dT%H%M%S")
+    backup_dir = os.path.join(backups_root, ts)
+    os.makedirs(backup_dir, exist_ok=True)
+
+    # Pre-index the bundle: basename -> tar-member-name, so we know which wrong-
+    # arch .so files we CAN swap with a correct-arch counterpart vs only move out.
+    bundle_index = {}
+    bp = bundle_path()
+    bundle_temp = None
+    if bp:
+        try:
+            with tarfile.open(bp, "r:gz") as tf:
+                for n in tf.getnames():
+                    if n.endswith(".so"):
+                        bundle_index[os.path.basename(n)] = n
+        except Exception:  # noqa: BLE001
+            pass
+
+    log = [f"backup dir: {backup_dir}"]
+    fixed = []
+    replaced_count = 0
+    extracted = {}                                           # basename -> extracted-path, to avoid re-extract
+    try:
+        for m in mismatches:
+            src = m["path"]
+            dst = os.path.join(backup_dir, m["basename"])
+            try:
+                # avoid name collisions in the backup dir for duplicate basenames
+                if os.path.exists(dst):
+                    dst = os.path.join(backup_dir, m["basename"] + "." + os.path.basename(os.path.dirname(src)))
+                os.rename(src, dst)
+                log.append(f"backed up {m['basename']} ({m['found_arch']}) → backup_dir")
+            except OSError as e:
+                log.append(f"! couldn't move {src}: {e}")
+                continue
+            # Try to drop a correct-arch counterpart from the bundle into the
+            # same dir the wrong-arch was in (preserves the path scripts check).
+            replaced = False
+            if m["basename"] in bundle_index:
+                try:
+                    if bundle_temp is None:
+                        import tempfile
+                        bundle_temp = tempfile.mkdtemp(prefix="ing_arch_heal_")
+                        with tarfile.open(bp, "r:gz") as tf:
+                            tf.extractall(bundle_temp)       # nosec: our own bundle
+                    src_in_bundle = os.path.join(bundle_temp, bundle_index[m["basename"]])
+                    dst_in_dir = os.path.join(os.path.dirname(src), m["basename"])
+                    shutil.copy2(src_in_bundle, dst_in_dir)
+                    replaced = True
+                    replaced_count += 1
+                    log.append(f"  replaced with correct-arch ({want}) copy from bundle")
+                    # match dust owner
+                    uid, gid, _, _ = target_owner()
+                    if os.getuid() == 0 and uid != 0:
+                        try: os.lchown(dst_in_dir, uid, gid)
+                        except OSError: pass
+                except Exception as e:  # noqa: BLE001
+                    log.append(f"  ! couldn't extract replacement: {e}")
+            else:
+                log.append(f"  no {want} replacement in bundle — wrong-arch removed, leave .so missing")
+            fixed.append({"basename": m["basename"],
+                          "from_dir": os.path.dirname(src),
+                          "found_arch": m["found_arch"],
+                          "replaced": replaced})
+    finally:
+        if bundle_temp:
+            shutil.rmtree(bundle_temp, ignore_errors=True)
+        uid, gid, _, _ = target_owner()
+        if os.getuid() == 0 and uid != 0:
+            try: chown_path(backups_root, uid, gid)
+            except OSError: pass
+    return {"ok": True, "fixed_count": len(fixed),
+            "replaced_count": replaced_count,
+            "fixed": fixed, "backup_dir": backup_dir,
+            "reboot_required": bool(fixed),
+            "log": "\n".join(log)}
 
 
 # ---------------------------------------------------------------------------
@@ -2189,6 +2365,15 @@ class H(http.server.SimpleHTTPRequestHandler):
                 return self._json({"ok": True, "removed": name})
             if path == "/api/scplugins/heal":
                 return self._json(scplugins_heal(b.get("source", "bundled"), (b.get("url") or "").strip()))
+            if path == "/api/scplugins/heal-wrong-arch":
+                # Move every arch-mismatched .so under SC Extensions dirs to
+                # backup, replace with bundled correct-arch where possible.
+                # See heal_wrong_arch_sc() for the rationale (panicos tapedeck
+                # silent-engine class).
+                try:
+                    return self._json(heal_wrong_arch_sc())
+                except OSError as e:
+                    return self._json({"error": str(e)}, 500)
             if path == "/api/sclang/heal":
                 return self._json(sclang_config_heal())
             if path == "/api/heal-ownership":
