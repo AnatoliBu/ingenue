@@ -355,6 +355,27 @@ button{font-family:inherit}
 .card.open .card-more{display:block}
 .card.open .desc{-webkit-line-clamp:unset}
 .more-meta{font-size:11.5px;color:var(--muted);margin-bottom:9px}
+/* per-script version row (commit · update · rollback) — only on installed cards */
+.more-version{display:flex;align-items:center;gap:8px;font-size:11.5px;color:var(--muted);margin:0 0 9px;padding:6px 0;border-top:1px dashed color-mix(in srgb,var(--trim) 50%,transparent);border-bottom:1px dashed color-mix(in srgb,var(--trim) 50%,transparent);flex-wrap:wrap}
+.ver-label{color:var(--faint);text-transform:uppercase;letter-spacing:.04em;font-size:10px}
+.ver-sha{font-family:ui-monospace,monospace;color:var(--accent2);background:color-mix(in srgb,var(--accent2) 12%,transparent);padding:1px 6px;border-radius:3px}
+.ver-when{color:var(--faint)}
+.ver-grow{flex:1}
+.ver-btn{font-size:11.5px;padding:3px 9px;border-radius:5px;background:transparent;border:1px solid color-mix(in srgb,var(--trim) 80%,transparent);color:var(--muted);cursor:pointer}
+.ver-btn:hover{color:var(--fg);border-color:var(--accent2)}
+.ver-na,.ver-loading{color:var(--faint);font-style:italic}
+/* rollback picker modal — list of past commits with click-to-roll */
+#rb-overlay .modal{max-width:580px}
+.rb-list{max-height:60vh;overflow:auto;margin-top:8px}
+.rb-item{display:grid;grid-template-columns:auto 1fr auto;gap:12px;padding:9px 4px;border-bottom:1px solid color-mix(in srgb,var(--trim) 50%,transparent);align-items:center}
+.rb-item:last-child{border-bottom:0}
+.rb-item.cur{background:color-mix(in srgb,var(--accent) 8%,transparent);border-radius:5px;padding-left:8px;padding-right:8px}
+.rb-meta{display:flex;flex-direction:column;gap:2px;min-width:96px}
+.rb-sha{font-family:ui-monospace,monospace;color:var(--accent2);font-size:12px}
+.rb-date{font-size:10.5px;color:var(--faint)}
+.rb-msg{font-size:12.5px;color:var(--fg);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.rb-cur{font-size:10.5px;color:var(--accent);padding:2px 8px;border:1px solid var(--accent);border-radius:5px;text-transform:uppercase;letter-spacing:.04em}
+.btn.rb-go{font-size:11.5px;padding:4px 11px}
 .more-links{display:flex;flex-wrap:wrap;gap:7px;margin-bottom:10px}
 .more-link{font-size:12px;text-decoration:none;color:var(--accent2);border:1px solid color-mix(in srgb,var(--accent2) 38%,transparent);
   border-radius:7px;padding:4px 9px;background:color-mix(in srgb,var(--accent2) 10%,transparent)}
@@ -821,6 +842,17 @@ button{font-family:inherit}
            <button class="btn btn-remove" id="confirm-cancel">Cancel</button>
            <button class="btn btn-install" id="confirm-ok">OK</button>
          </div>
+       </div>
+     </div>
+   </div>
+
+   <!-- rollback picker: lists last 10 commits for an installed script and lets the user pick one -->
+   <div class="overlay" id="rb-overlay">
+     <div class="modal">
+       <div class="modal-head"><div class="t" id="rb-title">roll back</div><button class="x" id="rb-close">✕</button></div>
+       <div class="modal-body">
+         <p class="trust-msg" id="rb-intro">Pick a previous commit to check out. Reversible — clicking <b>Update</b> in the script's card returns you to latest.</p>
+         <div class="rb-list" id="rb-list"></div>
        </div>
      </div>
    </div>
@@ -2025,14 +2057,39 @@ async function traceDeps(p, depth, seen){
 }
 let depPending=null;
 function depNodeRows(rep){
-  const R=(ic,k,d)=>`<div class="dep-row"><span class="dep-ic">${ic}</span><div><div class="k">${k}</div>${d?`<div class="d">${d}</div>`:''}</div></div>`;
+  const R=(ic,k,d)=>`<div class="dep-row"><span class="dep-ic">${ic}</span><div style="flex:1;min-width:0"><div class="k">${k}</div>${d?`<div class="d">${d}</div>`:''}</div></div>`;
   const rows=[];
   if(rep.nb) rows.push(R('🎹','nb voices','plays through nb — install an nb voice (the nb_* player mods) to make sound'));
   if(rep.needs_sc_ext) rows.push(R('🔌','SuperCollider engine extension',((rep.sc_extensions||[]).join(', ')||'extension')+' — installed if missing'));
   if((rep.downloads||[]).length) rows.push(R('⬇','downloads ('+rep.downloads.length+')',
     rep.downloads.map(u=>`<a href="${u}" target="_blank" rel="noopener">${u.split('/').slice(-1)[0]}</a>`).join('<br>')));
+  // Cross-script download hint: this script downloads an artifact hosted by
+  // ANOTHER norns script's repo (e.g. amenbreak fetches PortedPlugins from
+  // tapedeck/releases). The button installs the origin script too — a hint,
+  // not auto-install, because the script may not actually need the *other*
+  // script, only its release artifact.
+  (rep.download_origins||[]).forEach(o=>{
+    const status = o.installed
+      ? `<span style="color:#5c5">${o.repo} already installed</span>`
+      : `<button class="btn btn-update dep-origin-go" data-author="${esc(o.author)}" data-repo="${esc(o.repo)}" data-url="https://github.com/${esc(o.author)}/${esc(o.repo)}" style="margin-top:6px">install ${esc(o.repo)} too</button>`;
+    rows.push(R('📦',
+      `also from <code>${esc(o.author)}/${esc(o.repo)}</code>`,
+      `this script downloads <span class="mono">${esc(o.url.split('/').slice(-1)[0])}</span> from <b>${esc(o.repo)}</b>'s github releases — you might want the <b>${esc(o.repo)}</b> script itself too.<br>${status}`));
+  });
   if((rep.native||[]).length) rows.push(R('🛠','native tools',rep.native.join(', ')+' — used by the installer'));
   if(rep.install_script) rows.push(R('▶','installer','its install.sh sets up the above on device'));
+  // Bang-in-add_params warning: this mod fires every host-script param action
+  // mid-init, which crashes scripts like dreamsequence. EXPERIMENTAL auto-heal
+  // comments out the bang line (reversible via git checkout). Surfaced even
+  // when needs_setup=false — it's a property of the mod itself.
+  if((rep.mod_bangs||[]).length){
+    const lines = rep.mod_bangs.map(b=>`<span class="mono">${esc(b.file)}:${b.line}</span>`).join(', ');
+    rows.push(R('⚠️',
+      `<b>this mod calls params:bang() in add_params</b> (${lines})`,
+      `fires every <i>host script's</i> param actions mid-init — crashes scripts that define globals after their param setup (this is what broke dreamsequence + hs010). The auto-heal comments out the offending lines so the mod is safe to enable.<br>`+
+      `<button class="btn btn-update dep-heal-bang" data-name="${esc(rep.name)}" style="margin-top:6px">auto-heal (experimental)</button>`+
+      `<div style="font-size:11px;color:var(--faint);margin-top:4px">reversible: <code>git checkout -- lib/mod.lua</code> in the script restores the original</div>`));
+  }
   return rows.join('');
 }
 function depTreeHTML(node, level){
@@ -2067,7 +2124,15 @@ function anyInstallScript(n){ return !!n.install_script || (n.children||[]).some
 // at lib/nb/ and only need an nb *voice* installed, which is informational, not a clone we can run.
 // Real actions: an installer to run, files to download, an SC extension, or a REQUIRED script (an
 // external `require "x/lib"`, which becomes a child) that isn't installed yet.
-function nodeActionable(n){ return !!(n.install_script || (n.downloads||[]).length || n.needs_sc_ext || (n.missing_engines||[]).length); }
+function nodeActionable(n){
+  // download_origins that aren't already installed are also worth surfacing
+  // (the user can choose to install the origin script). mod_bangs is purely a
+  // warning + heal button — same overlay applies.
+  const uninstalledOrigins = (n.download_origins||[]).some(o => !o.installed);
+  return !!(n.install_script || (n.downloads||[]).length || n.needs_sc_ext
+            || (n.missing_engines||[]).length || uninstalledOrigins
+            || (n.mod_bangs||[]).length);
+}
 function treeNeedsAction(n){ return nodeActionable(n) || (n.children||[]).some(c=>!c.installed) || (n.children||[]).some(treeNeedsAction); }
 function findDepNode(n,name){ if(norm(n.name)===norm(name)) return n; for(const c of (n.children||[])){ const f=findDepNode(c,name); if(f) return f; } return null; }
 function openDepPlan(rep,p){
@@ -2087,6 +2152,42 @@ function openDepPlan(rep,p){
       const node=findDepNode(rep,name);
       if(node){ node.proj=url; node.needsUrl=false; }     // flips to "will be installed"; runHeal picks up node.proj
       openDepPlan(rep,p);                                 // re-render the plan with the dep now included
+    };
+  });
+  // Cross-script origin install — single-click queues the origin script
+  document.querySelectorAll('#dep-plan .dep-origin-go').forEach(b=>{
+    b.onclick = e => {
+      e.stopPropagation();
+      const repo = b.getAttribute('data-repo');
+      const url = b.getAttribute('data-url');
+      const author = b.getAttribute('data-author');
+      // Look the origin up in the catalog so we install with the same metadata as
+      // a normal catalog install (preserves tags, description, etc); fall back
+      // to a minimal stub if not in catalog.
+      const cat = (REPO.available||[]).concat(REPO.installed||[]).find(x => norm(x.n)===norm(repo) || norm(x.dir||'')===norm(repo));
+      const item = cat || {n:repo, dir:repo, a:author, proj:url, srcs:['github']};
+      b.disabled = true; b.textContent = 'queued…';
+      jobqAdd({label:repo, verb:'install', run: job => depInstall({name:repo, proj:url, dir:repo}, url, job)});
+    };
+  });
+  // Auto-heal mod_bangs — calls /api/heal-bang on this script. EXPERIMENTAL.
+  document.querySelectorAll('#dep-plan .dep-heal-bang').forEach(b=>{
+    b.onclick = async e => {
+      e.stopPropagation();
+      const name = b.getAttribute('data-name');
+      confirmDialog(
+        `auto-heal ${name}?`,
+        `This will comment out <code>params:bang()</code> calls inside <b>${name}</b>'s add_params functions. Reversible — <code>git checkout -- lib/mod.lua</code> in <code>dust/code/${name}</code> restores the original. <b>Experimental</b>: if the mod relied on the bang to apply initial defaults, those may now ship slightly different.`,
+        async () => {
+          b.disabled = true; b.textContent = 'healing…';
+          try {
+            const r = await fetch('api/heal-bang', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({name})});
+            const j = await r.json();
+            if (j.error) { b.textContent = 'failed: '+j.error; b.disabled = false; return; }
+            b.textContent = `healed ${(j.changes||[]).length} line(s) — reboot to apply`;
+            b.classList.remove('btn-update'); b.classList.add('btn-install');
+          } catch(err) { b.textContent = 'failed: '+err.message; b.disabled = false; }
+        });
     };
   });
   document.getElementById('dep-warn').style.display = anyInstallScript(rep)?'block':'none';
@@ -2362,8 +2463,116 @@ function wireCards(v,list,tab){
       if(cb.checked) selection.add(p.n); else selection.delete(p.n); updateBulkBar(); };
     const db=card.querySelector('.demo-btn'); if(db) db.onclick=e=>{e.stopPropagation();loadDemo(card,p);};
     const rb=card.querySelector('.readme-btn'); if(rb) rb.onclick=e=>{e.stopPropagation();loadReadme(card,p);};
+    // Lazy-fetch and render the version row for installed scripts. Done here
+    // (not at HTML build time) so renderRepo stays a pure string operation.
+    const verRow=card.querySelector('.more-version[data-version-for]');
+    if(verRow && HAS_BACKEND) populateVersionRow(verRow, verRow.getAttribute('data-version-for'));
     // cards stay expanded; demo embeds + README load on demand
   });
+}
+
+/* ===== per-script version row: commit · Update · Rollback ===== */
+/* Backed by /api/giturl (sha + .project metadata), /api/update (git fetch+reset),
+   /api/rollback (git checkout). Only renders on installed cards. Update +
+   Rollback drive jobs through the existing install-dock so progress is visible. */
+async function populateVersionRow(rowEl, name){
+  try{
+    const r = await fetch('api/giturl?name='+encodeURIComponent(name), {cache:'no-store'});
+    const j = await r.json();
+    if(j.error){ rowEl.innerHTML='<span class="ver-na">no git info — pre-history install</span>'; return; }
+    const sha = (j.sha||'').slice(0,7) || 'no history';
+    const md = j.project || {};
+    const installedOn = md.installed_on ? md.installed_on.slice(0,10) : '';
+    const updatedOn = md.updated_on && md.updated_on!=='0001-01-01T00:00:00Z' ? md.updated_on.slice(0,10) : '';
+    const since = updatedOn ? `updated ${updatedOn}` : (installedOn ? `installed ${installedOn}` : '');
+    rowEl.innerHTML = `
+      <span class="ver-label">commit</span>
+      <code class="ver-sha" title="${j.sha||''}">${sha}</code>
+      ${since?`<span class="ver-when">${since}</span>`:''}
+      <span class="ver-grow"></span>
+      <button class="ver-btn ver-update" title="git fetch + reset to latest origin/HEAD">↻ update</button>
+      <button class="ver-btn ver-rollback" title="check out an earlier commit">⏪ rollback ▾</button>`;
+    rowEl.querySelector('.ver-update').onclick = e => { e.stopPropagation(); doScriptUpdate(name, rowEl); };
+    rowEl.querySelector('.ver-rollback').onclick = e => { e.stopPropagation(); openRollbackPicker(name); };
+  }catch(_){ rowEl.innerHTML='<span class="ver-na">version unavailable</span>'; }
+}
+
+/* Drive a long backend job (install/heal/update/rollback) through the dock and
+   resolve when it finishes. Keeps the existing job-card UX consistent. */
+async function followBackendJob(jid, job){
+  let from=0;
+  while(true){
+    let j;
+    try{ j = await (await fetch('api/job?id='+encodeURIComponent(jid)+'&from='+from,{cache:'no-store'})).json(); }
+    catch(_){ await new Promise(r=>setTimeout(r,700)); continue; }
+    (j.lines||[]).forEach(l=>{ if(job) appendJobLog(job, l); });
+    from = j.next || from;
+    if(j.done) return j;
+    await new Promise(r=>setTimeout(r,700));
+  }
+}
+function appendJobLog(job, line){
+  const log = job && job.querySelector('.ilog');
+  if(log) log.textContent = line;
+}
+
+async function doScriptUpdate(name, rowEl){
+  const job = mkJob(name, 'updating');
+  appendJobLog(job, 'git fetch + reset --hard…');
+  try{
+    const r = await fetch('api/update', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({name})});
+    const j = await r.json();
+    if(j.error){ jobDone(job,null,false,j.error,''); return; }
+    const out = await followBackendJob(j.job, job);
+    jobDone(job,null,out.ok, out.ok?`updated ${name}`:(out.error||'update failed'),'updated');
+    if(rowEl) populateVersionRow(rowEl, name);
+  }catch(e){ jobDone(job,null,false,e.message,''); }
+}
+
+async function openRollbackPicker(name){
+  const ov = document.getElementById('rb-overlay');
+  document.getElementById('rb-title').textContent = `roll back ${name}`;
+  document.getElementById('rb-list').innerHTML = '<div class="dep-row"><span class="dep-ic">⏳</span><div><div class="k">loading commit history…</div></div></div>';
+  ov.classList.add('on');
+  try{
+    const j = await (await fetch('api/history?name='+encodeURIComponent(name),{cache:'no-store'})).json();
+    if(j.error){ document.getElementById('rb-list').innerHTML = `<div class="dep-row"><span class="dep-ic">⚠️</span><div><div class="k">${j.error}</div></div></div>`; return; }
+    const cur = j.current || '';
+    const hist = j.history || [];
+    if(!hist.length){
+      document.getElementById('rb-list').innerHTML = `<div class="dep-row"><span class="dep-ic">ℹ️</span><div><div class="k">no commit history available</div><div class="d">this script was installed by an older ingenue or by a shallow clone — full history will be present on the next reinstall via ingenue</div></div></div>`;
+      return;
+    }
+    document.getElementById('rb-list').innerHTML = hist.map(c=>{
+      const isCur = c.sha === cur;
+      return `<div class="rb-item${isCur?' cur':''}">
+        <div class="rb-meta"><code class="rb-sha">${esc(c.short)}</code><span class="rb-date">${esc((c.date||'').slice(0,10))}</span></div>
+        <div class="rb-msg" title="${esc(c.msg||'')}">${esc(c.msg||'')}</div>
+        ${isCur ? '<span class="rb-cur">current</span>' : `<button class="btn btn-update rb-go" data-sha="${esc(c.sha)}">roll back</button>`}
+      </div>`;
+    }).join('');
+    document.querySelectorAll('#rb-list .rb-go').forEach(b => {
+      b.onclick = () => {
+        const sha = b.getAttribute('data-sha');
+        confirmDialog(`roll back ${name}?`,
+          `Check out <code>${esc(sha.slice(0,7))}</code> in <b>${name}</b>. Reversible — Update returns you to latest.`,
+          async () => {
+            ov.classList.remove('on');
+            const job = mkJob(name, 'rolling back');
+            appendJobLog(job, `git checkout ${sha.slice(0,7)}…`);
+            try{
+              const r = await fetch('api/rollback', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({name, target: sha})});
+              const jj = await r.json();
+              if(jj.error){ jobDone(job,null,false,jj.error,''); return; }
+              const out = await followBackendJob(jj.job, job);
+              jobDone(job,null,out.ok, out.ok?`rolled back to ${sha.slice(0,7)}`:(out.error||'rollback failed'),'rolled back');
+              const rowEl = document.querySelector('.more-version[data-version-for="'+(window.CSS&&CSS.escape?CSS.escape(name):name)+'"]');
+              if(rowEl) populateVersionRow(rowEl, name);
+            }catch(e){ jobDone(job,null,false,e.message,''); }
+          });
+      };
+    });
+  }catch(e){ document.getElementById('rb-list').innerHTML = `<div class="dep-row"><span class="dep-ic">⚠️</span><div><div class="k">${esc(e.message)}</div></div></div>`; }
 }
 /* ===== B5: README + image carousel (norns.community / GitHub), lazy ===== */
 async function loadReadme(card,p){
@@ -2482,8 +2691,12 @@ function repoCard(p,tab){
     : (dk==='instagram'||dk==='link')
       ? `<a class="demo-ext" href="${p.demo.trim()}" target="_blank" rel="noopener">▶ ${dk==='instagram'?'watch on Instagram':'open demo'} ↗</a>`
       : `<button class="demo-btn">▶ load ${dk} demo</button>`;
+  // Installed scripts get a version row (commit SHA + Update/Rollback) below
+  // more-meta. Populated lazily by populateVersionRow on first card paint.
+  const verRow = p.inst ? `<div class="more-version" data-version-for="${esc(p.dir||p.n)}"><span class="ver-loading">loading version…</span></div>` : '';
   const more=`<div class="card-more">
       <div class="more-meta">${p.upd?`updated ${p.upd}`:'last-updated unknown'} · via ${srcNames(p)}${p.inst?` · <button class="reqs-btn" data-reqs="1">⚙ requirements</button>`:''}</div>
+      ${verRow}
       ${hasLinks?`<div class="more-links">${L(p.proj,'code')}${L(p.docU,'docs')}${L(p.discU,'discuss')}${L(p.comm,'norns.community')}</div>`:''}
       <div class="more-demo">${demoSlot}</div>
       <div class="more-readme" data-readme>${isUrl(p.proj)?'<button class="readme-btn">📖 load README</button>':''}</div>
@@ -3040,6 +3253,9 @@ function boot(){
   document.getElementById('dep-close').onclick=()=>{document.getElementById('dep-overlay').classList.remove('on');depPending=null;};
   document.getElementById('dep-overlay').addEventListener('click',e=>{if(e.target.id==='dep-overlay'){e.currentTarget.classList.remove('on');depPending=null;}});
   document.getElementById('dep-go').onclick=()=>{document.getElementById('dep-overlay').classList.remove('on'); if(depPending) runHeal(depPending.rep); depPending=null;};
+  // rollback picker modal wiring (close on X / click-outside)
+  document.getElementById('rb-close').onclick=()=>document.getElementById('rb-overlay').classList.remove('on');
+  document.getElementById('rb-overlay').addEventListener('click',e=>{if(e.target.id==='rb-overlay') e.currentTarget.classList.remove('on');});
   document.getElementById('eng-rename-go').onclick=()=>{ document.getElementById('eng-overlay').classList.remove('on');
     const nm=(document.getElementById('eng-rename').value||'').trim().replace(/[^A-Za-z0-9_]/g,'')||availableEngineName(shipEngine(enginePending.p));
     if(enginePending) proceedInstall(enginePending.p,enginePending.btn,nm); enginePending=null; };

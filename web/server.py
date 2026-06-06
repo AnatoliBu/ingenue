@@ -630,6 +630,150 @@ def git_current_sha(full):
     return ""
 
 
+# ---------------------------------------------------------------------------
+# Mod-bang detection (a.k.a. the hs010-breaks-dreamsequence pattern)
+# ---------------------------------------------------------------------------
+# Norns nb voice mods register a `player` object whose `add_params()` is called
+# during another script's nb:add_player_params loop. If that add_params does a
+# bare `params:bang()`, it fires every param action across the *host script's*
+# params set — before the host script's init has finished defining the globals
+# its own param-action callbacks reference. The host script then crashes with a
+# nil-global error. hs010 does this and silently breaks dreamsequence (and any
+# script with the same init shape). The detector and the auto-heal below catch
+# this class of bug at install time.
+def _scan_mod_bang_in_add_params(full):
+    """Return [{file, line, function}] for every `params:bang()` (no-arg) call
+    found inside an `add_params`-named function body in the script's mod files.
+    Empty list = clean. Heuristic Lua parse (function/end stack), works for the
+    typical norns mod shape; deliberately conservative."""
+    hits = []
+    candidates = []
+    for rel in ("lib/mod.lua", "mod.lua"):
+        if os.path.isfile(os.path.join(full, rel)):
+            candidates.append(rel)
+    # also pick up any top-level *_mod.lua a script might use (rare)
+    try:
+        for f in os.listdir(full):
+            if f.endswith("_mod.lua") and f not in candidates:
+                candidates.append(f)
+    except OSError:
+        return hits
+    fn_open_re = re.compile(r"^\s*(?:local\s+)?function\s+([A-Za-z0-9_:.]+)\s*\(")
+    end_re = re.compile(r"^\s*end\s*$")
+    bang_re = re.compile(r"\bparams\s*:\s*bang\s*\(\s*\)")
+    for rel in candidates:
+        path = os.path.join(full, rel)
+        try:
+            with open(path, "r", encoding="utf-8", errors="ignore") as fh:
+                lines = fh.readlines()
+        except OSError:
+            continue
+        stack = []
+        for i, raw in enumerate(lines, 1):
+            if fn_open_re.match(raw):
+                stack.append((fn_open_re.match(raw).group(1), i))
+                continue
+            if end_re.match(raw):
+                if stack:
+                    stack.pop()
+                continue
+            stripped = raw.strip()
+            if stripped.startswith("--"):
+                continue
+            if bang_re.search(stripped):
+                if any("add_params" in name for name, _ in stack):
+                    fn = next((n for n, _ in reversed(stack) if "add_params" in n), "add_params")
+                    hits.append({"file": rel, "line": i, "function": fn})
+    return hits
+
+
+def heal_mod_bang(full, emit=None):
+    """EXPERIMENTAL: comment out every `params:bang()` (no-arg) call found
+    inside an add_params function body. Reversible — the lines are commented,
+    not deleted, with an annotation explaining what ingenue did. Idempotent
+    (skips already-commented lines). Returns the list of changes.
+
+    Caveat: a mod that relied on the bang to apply initial param state may
+    now ship slightly different defaults. Reverting is `git checkout -- <file>`."""
+    hits = _scan_mod_bang_in_add_params(full)
+    if not hits:
+        if emit: emit("no bang-in-add_params calls to heal")
+        return {"ok": True, "changes": [], "message": "no bang-in-add_params calls to heal"}
+    by_file = {}
+    for h in hits:
+        by_file.setdefault(h["file"], []).append(h["line"])
+    changes = []
+    for rel, line_nos in by_file.items():
+        path = os.path.join(full, rel)
+        try:
+            with open(path, "r", encoding="utf-8", errors="ignore") as fh:
+                content = fh.readlines()
+        except OSError as e:
+            if emit: emit(f"! {rel}: {e}")
+            continue
+        for line_no in line_nos:
+            i = line_no - 1
+            if i < 0 or i >= len(content):
+                continue
+            old = content[i]
+            stripped = old.lstrip()
+            if stripped.startswith("--"):
+                continue
+            indent = old[:len(old) - len(stripped)]
+            trail = stripped.rstrip("\n")
+            new = (f"{indent}-- {trail}  "
+                   f"-- DISABLED by ingenue: bang() in add_params crashes "
+                   f"scripts with later-defined globals\n")
+            content[i] = new
+            changes.append({"file": rel, "line": line_no,
+                            "old": old.rstrip("\n"), "new": new.rstrip("\n")})
+        try:
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.writelines(content)
+        except OSError as e:
+            if emit: emit(f"! couldn't write {rel}: {e}")
+            continue
+        uid, gid, _, _ = target_owner()
+        if os.getuid() == 0 and uid != 0:
+            try: os.lchown(path, uid, gid)
+            except OSError: pass
+        if emit:
+            emit(f"patched {rel} ({len(line_nos)} line(s) commented)")
+    return {"ok": True, "changes": changes,
+            "message": f"commented {len(changes)} bang call(s); reboot to apply"}
+
+
+# ---------------------------------------------------------------------------
+# Cross-script download hint
+# ---------------------------------------------------------------------------
+# When a script's downloads point at https://github.com/<author>/<repo>/releases/...,
+# the artifact is hosted by another norns script's repo (e.g. amenbreak fetches
+# PortedPlugins from tapedeck/releases). The UI can surface this so the user
+# can choose to install the origin script too — a hint, not an automatic dep.
+def _extract_download_origins(downloads):
+    """Return [{author, repo, url, installed}] for every download URL that
+    points at another script's github releases. Deduplicated by (author, repo)."""
+    out = []
+    seen = set()
+    for url in downloads:
+        m = re.match(r"https?://github\.com/([^/]+)/([^/]+)/releases/", url)
+        if not m:
+            continue
+        author = m.group(1)
+        repo = re.sub(r"\.git$", "", m.group(2))
+        key = (author.lower(), repo.lower())
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append({
+            "author": author,
+            "repo": repo,
+            "url": url,
+            "installed": os.path.isdir(os.path.join(CODE, repo)),
+        })
+    return out
+
+
 def backup_script_dir(full, name, emit=None):
     """Move an existing script dir out of the way (instead of rmtree) when
     force-reinstalling. Goes under <CODE>/.deleted/<name>.<timestamp>/ — hidden,
@@ -1007,6 +1151,17 @@ def analyze_dir(full, name):
         "nb": nb_referenced and "nb" not in bundled,
         "bundled_libs": sorted(bundled),                 # for transparency in the UI/debug
         "native": sorted(set(native)),
+        # Hint: download URLs that point at another script's github releases.
+        # The UI surfaces this so the user can choose to install the origin
+        # script too (e.g. amenbreak's PortedPlugins.tar.gz from tapedeck/releases).
+        # Self-references are filtered (a script's own releases don't count).
+        "download_origins": [o for o in _extract_download_origins(downloads)
+                             if o["repo"].lower() != name.lower()],
+        # Warning: this script (when loaded as a mod) does `params:bang()`
+        # inside its add_params — fires every param action of the HOST script
+        # mid-init, crashing scripts that define globals later. dreamsequence
+        # vs hs010 is the canonical case. UI offers an experimental auto-heal.
+        "mod_bangs": _scan_mod_bang_in_add_params(full),
     }
     rep["needs_setup"] = bool(rep["install_script"] or rep["downloads"] or rep["needs_sc_ext"]
                               or rep["nb"] or rep["requires_scripts"] or rep["missing_engines"])
@@ -1949,6 +2104,17 @@ class H(http.server.SimpleHTTPRequestHandler):
                 return self._json(sclang_config_heal())
             if path == "/api/heal-ownership":
                 return self._json(heal_ownership())
+            if path == "/api/heal-bang":
+                # EXPERIMENTAL — comments out `params:bang()` (no-arg) calls
+                # inside add_params functions in the named mod's lib/mod.lua.
+                # Idempotent + reversible (git checkout reverts). See heal_mod_bang.
+                full, name = safe_script_dir(b.get("name"))
+                if not os.path.isdir(full):
+                    return self._json({"error": f"{name} is not installed"}, 404)
+                try:
+                    return self._json(heal_mod_bang(full))
+                except OSError as e:
+                    return self._json({"error": str(e)}, 500)
             if path == "/api/self-update":
                 return self._json(self_update())
             if path == "/api/audio/restart":
