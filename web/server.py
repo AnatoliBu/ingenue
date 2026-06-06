@@ -885,9 +885,12 @@ def health_overview():
         for w in wrong:
             by_dir.setdefault(os.path.dirname(w["path"]), []).append(w["basename"])
         sample = "; ".join(f"{d}: {', '.join(sorted(set(bs))[:3])}" for d, bs in list(by_dir.items())[:3])
-        summary = (f"{len(wrong)} SuperCollider plugin .so file{'s' if len(wrong)!=1 else ''} "
-                   f"are wrong arch for this host ({want}) — scsynth silently can't load them, "
-                   f"engines that depend on them won't work")
+        n = len(wrong)
+        verb = "is" if n == 1 else "are"
+        plural = "" if n == 1 else "s"
+        summary = (f"{n} SuperCollider plugin .so file{plural} {verb} wrong arch for this "
+                   f"host ({want}) — scsynth silently can't load {'it' if n==1 else 'them'}, "
+                   f"engines that depend on {'it' if n==1 else 'them'} won't work")
         detail = sample
     checks.append({
         "id": "sc_plugin_arch",
@@ -1401,10 +1404,21 @@ def host_arch():
 
 
 def sc_ext_dirs():
-    """Existing SuperCollider Extensions dirs scsynth may scan (system first)."""
+    """Existing SuperCollider Extensions dirs scsynth may scan (system first).
+
+    On ports (panicos etc.) HOME is set to a port-specific path like
+    /storage/roms/ports/norns/data, so os.path.expanduser('~') doesn't find
+    /home/we — BUT norns scripts (tapedeck's scinstaller, amenbreak's runtime
+    install button) hardcode '/home/we/.local/share/SuperCollider/Extensions'
+    and scsynth on panicos DOES scan that path (proven via manual swap test
+    2026-06-06 — fixing wrong-arch .so files at /home/we/... resolved the
+    silent engine load failure). So we always probe /home/we/... explicitly
+    in addition to the HOME-derived path. Dedup via realpath."""
     cands = ["/usr/share/SuperCollider/Extensions",
              "/usr/local/share/SuperCollider/Extensions",
-             os.path.expanduser("~/.local/share/SuperCollider/Extensions")]
+             os.path.expanduser("~/.local/share/SuperCollider/Extensions"),
+             "/home/we/.local/share/SuperCollider/Extensions",  # hardcoded by norns scripts
+             "/root/.local/share/SuperCollider/Extensions"]      # panicos ingenue runs as root
     # norns process HOME variants (port may set HOME elsewhere)
     for h in (os.environ.get("HOME"), os.path.join(DUST, "..")):
         if h:
