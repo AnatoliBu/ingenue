@@ -343,7 +343,8 @@ button{font-family:inherit}
 .rd-toggle svg{width:16px;height:16px;fill:currentColor;transition:transform .2s}
 .repoview.collapsed .rd-toggle svg{transform:rotate(180deg)}
 .rd-toolbar,.srcbar{transition:max-height .22s ease,opacity .15s ease,padding .22s ease;overflow:hidden;max-height:140px}
-.repoview.collapsed .rd-toolbar,.repoview.collapsed .srcbar{max-height:0;opacity:0;padding-top:0;padding-bottom:0}
+.rd-filters{transition:max-height .22s ease,opacity .15s ease;overflow:hidden;max-height:600px}   /* desktop: filters (sources + tags) collapse too, not just the search bar */
+.repoview.collapsed .rd-toolbar,.repoview.collapsed .srcbar,.repoview.collapsed .rd-filters{max-height:0;opacity:0;padding-top:0;padding-bottom:0}
 
 /* cards are always expanded (rich view) */
 .card{cursor:default}
@@ -622,14 +623,6 @@ button{font-family:inherit}
      <span id="scp-banner-msg" style="flex:1">This 64-bit norns is missing its SuperCollider plugin binaries — some scripts' engines stay silent.</span>
      <button class="btn btn-install" id="scp-banner-fix" style="padding:4px 12px">Fix it</button>
      <button class="x" id="scp-banner-x" title="dismiss" style="background:none;border:0;cursor:pointer;font-size:15px">✕</button>
-   </div>
-
-   <!-- nb-voice OSC health banner ("localhost"->::1 mutes every osc-based nb voice) -->
-   <div id="nb-banner" style="display:none;align-items:center;gap:10px;padding:8px 14px;background:color-mix(in srgb,var(--warn,#c80) 22%,var(--bg));border-bottom:1px solid color-mix(in srgb,var(--warn,#c80) 50%,var(--bg));font-size:13px">
-     <span style="font-size:15px">🔇</span>
-     <span id="nb-banner-msg" style="flex:1">nb voices are silent on this device — "localhost" resolves to IPv6 but sclang listens on IPv4.</span>
-     <button class="btn btn-install" id="nb-banner-fix" style="padding:4px 12px">Fix it</button>
-     <button class="x" id="nb-banner-x" title="dismiss" style="background:none;border:0;cursor:pointer;font-size:15px">✕</button>
    </div>
 
    <!-- mobile top bar -->
@@ -1334,39 +1327,12 @@ async function runScpHeal(){
   }catch(e){ jobDone(job,null,false,e.message,''); go.disabled=false; go.textContent='Install plugins'; }
 }
 
-/* ===== nb-voice OSC health: "localhost"->::1 mutes osc-based nb voices ===== */
-// Runs on every launch, transparently. Surfaces only when getaddrinfo orders
-// IPv6 ::1 before 127.0.0.1 while sclang's OSC listener is IPv4-only — every
-// nb mod and matron osc.send (hardcoded "localhost":57120) is then dropped
-// silently. The fix writes /etc/gai.conf to prefer IPv4 (needs a reboot).
-let NBH=null;                                       // last /api/sclang report
-async function checkNbVoices(){
-  try{ const r=await fetch('api/sclang',{cache:'no-store'}); if(!r.ok) return; NBH=await r.json(); }
-  catch(_){ return; }                              // off-device / no backend → silent
-  const b=document.getElementById('nb-banner'); if(!b) return;
-  const iss=(NBH.issues||[]).find(i=>i.code==='localhost_ipv6');
-  if(!iss || LS.get('nbDismiss',0)>Date.now()){ b.style.display='none'; return; }
-  document.getElementById('nb-banner-msg').innerHTML = iss.already_staged
-    ? `nb voices: the IPv4 fix is written but not yet live — <b>reboot the device</b> to make osc-based nb voices sound.`
-    : `nb voices are silent here — <b>"localhost" resolves to IPv6</b> but sclang's OSC listener is IPv4-only, so every osc-based nb voice (polyperc, mxsynths…) is muted with no error.`;
-  document.getElementById('nb-banner-fix').textContent = iss.already_staged ? 'How to apply' : 'Fix it';
-  b.style.display='flex';
-}
-async function runNbHeal(){
-  const iss=((NBH&&NBH.issues)||[]).find(i=>i.code==='localhost_ipv6')||{};
-  if(iss.already_staged){
-    confirmDialog('Reboot to apply','The IPv4 fix is already written to <span class="mono">/etc/gai.conf</span>. A running sclang/matron only reads it at startup, so <b>power-cycle the whole device</b> — then osc-based nb voices will sound.', ()=>{});
-    return;
-  }
-  const go=document.getElementById('nb-banner-fix'); go.disabled=true; go.textContent='Fixing…';
-  const job=mkJob('nb voice audio','fixing'); job.querySelector('.ilog').textContent='writing IPv4 resolution fix (/etc/gai.conf)…';
-  try{
-    const j=await (await fetch('api/sclang/heal',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'})).json();
-    jobDone(job,null,!!j.ok,(j.ok?((j.log||'')+'\n\n⚠ REBOOT THE WHOLE DEVICE to apply.'):(j.error||'fix failed')),'fixed');
-    document.getElementById('nb-banner').style.display='none';
-    if(j.ok&&j.reboot_required) confirmDialog('Reboot the whole device','The IPv4 resolution fix is written. Now <b>power-cycle the entire device</b> (not just a norns restart) so a fresh sclang/matron reads it — then every osc-based nb voice (polyperc, mxsynths, and the rest) will make sound.', ()=>{});
-  }catch(e){ jobDone(job,null,false,e.message,''); go.disabled=false; go.textContent='Fix it'; }
-}
+/* (Removed: the nb-voice OSC banner + heal. The detector had a substring-match
+   bug that produced a persistent "fix already written, reboot to apply" banner
+   even when the gai.conf hadn't actually been touched, and the heal couldn't be
+   verified to actually un-mute nb voices on the affected device. The other
+   sclang checks (langport drift, duplicate class trees) still ship via the
+   /api/sclang endpoint — they just no longer drive a UI banner.) */
 
 /* ===== device info (hostname · ip · arch · system) ===== */
 async function initSysInfo(){ try{ const r=await fetch('api/sysinfo',{cache:'no-store'}); if(!r.ok) return; const s=await r.json();
@@ -1896,7 +1862,7 @@ function sortCmp(a,b){
 function knownNames(){ const s=new Set(); REPO.installed.forEach(p=>s.add(p.n.toLowerCase()));
   REPO.available.forEach(p=>{ if(p.srcs.includes('community')) s.add(p.n.toLowerCase()); }); return s; }
 /* ===== B6: tag filter facet + dynamic "additional voice" (nb) tag ===== */
-let tagFilter=new Set(), filtersOpen=false;
+let tagFilter=new Set(), filtersOpen=false, hideInstalled=false;
 const NB_TAG='additional voice';
 function isNbVoice(p){ if(p.nb) return true; const t=(p.tags||[]).map(x=>String(x).toLowerCase());
   return t.includes('nb')||t.includes('n.b.')||/\bnb\b|note ?bridge|nb_|nb\//i.test(((p.d||'')+' '+(p.n||''))); }
@@ -1914,6 +1880,8 @@ function tagBar(tab){
 function repoList(tab){
   let list=repoBaseList(tab).slice();
   if(tab==='discover' && discHideKnown && !_discUser){ const k=knownNames(); list=list.filter(p=>!k.has(p.n.toLowerCase())); }
+  if(hideInstalled && tab!=='installed'){ const ins=new Set(REPO.installed.map(p=>p.n.toLowerCase()));   // "hide installed" — applies to available + discover
+    list=list.filter(p=>!p.inst && !ins.has(p.n.toLowerCase())); }
   if(repoQuery && tab!=='discover'){ const q=repoQuery.toLowerCase();   // discover searches GitHub on Enter, not live
     list=list.filter(p=>(p.n+' '+p.a+' '+(p.tags||[]).join(' ')+' '+(p.d||'')).toLowerCase().includes(q)); }
   if(tagFilter.size && tab!=='discover'){ list=list.filter(p=>{ const t=entryTags(p); return [...tagFilter].every(f=>t.includes(f)); }); }
@@ -2185,23 +2153,73 @@ function anyInstallScript(n){ return !!n.install_script || (n.children||[]).some
 // Real actions: an installer to run, files to download, an SC extension, or a REQUIRED script (an
 // external `require "x/lib"`, which becomes a child) that isn't installed yet.
 function nodeActionable(n){
-  // download_origins that aren't already installed are also worth surfacing
-  // (the user can choose to install the origin script). mod_bangs is purely a
-  // warning + heal button — same overlay applies.
+  // Anything that *could* be acted on, hard or soft. Used to decide whether to
+  // surface the deps overlay at all.
   const uninstalledOrigins = (n.download_origins||[]).some(o => !o.installed);
   return !!(n.install_script || (n.downloads||[]).length || n.needs_sc_ext
             || (n.missing_engines||[]).length || uninstalledOrigins
             || (n.mod_bangs||[]).length);
 }
+// HARD actions = something the user actually has to do (a clone, a heal),
+// distinct from soft "FYI, this script has an install.sh that's already been
+// run". Used to decide between "needs setup" wording (with Set up everything
+// button) vs "prerequisites look satisfied" wording (informational only).
+//   - Uninstalled child script -> HARD (must clone)
+//   - Missing engine that has no resolvable provider catalog entry -> HARD
+//   - mod_bangs found -> HARD (auto-heal needed)
+//   - install_script / downloads / needs_sc_ext on an INSTALLED node -> SOFT
+//     (the install.sh has presumably already run; the user can re-run it from
+//     the deps modal if they want, but it's not required)
+function hardActionsOnNode(n){
+  const uninstalledOrigins = (n.download_origins||[]).some(o => !o.installed);
+  if((n.mod_bangs||[]).length) return true;
+  if(uninstalledOrigins) return true;
+  // missing_engines is hard only when the provider can't be resolved (we have
+  // no script to point at). If we resolved a provider, it'll appear as a child
+  // and its installed-ness is what matters — recursion below covers that.
+  // For uninstalled nodes we treat install_script / downloads / sc_ext as hard
+  // (their install.sh almost certainly hasn't run yet) — for already-installed
+  // nodes they're soft.
+  if(!n.installed && (n.install_script || (n.downloads||[]).length || n.needs_sc_ext || (n.missing_engines||[]).length)) return true;
+  return false;
+}
 function treeNeedsAction(n){ return nodeActionable(n) || (n.children||[]).some(c=>!c.installed) || (n.children||[]).some(treeNeedsAction); }
+function treeHasHardActions(n){
+  // Tree-level hard-action check: any uninstalled child anywhere, any
+  // hard-action on any node anywhere. Drives the "needs setup" vs "prereqs
+  // look satisfied" framing in the dep overlay.
+  if(hardActionsOnNode(n)) return true;
+  for(const c of (n.children||[])){
+    if(!c.installed) return true;
+    if(treeHasHardActions(c)) return true;
+  }
+  return false;
+}
 function findDepNode(n,name){ if(norm(n.name)===norm(name)) return n; for(const c of (n.children||[])){ const f=findDepNode(c,name); if(f) return f; } return null; }
 function openDepPlan(rep,p){
   depPending={rep,p};
-  const act=treeNeedsAction(rep), n=(rep.children||[]).length;
-  document.getElementById('dep-title').textContent = act?'this script needs setup':'requirements';
-  document.getElementById('dep-intro').innerHTML = act
-    ? `<b>${rep.name}</b> needs more than a clone to run${n?` — and pulls in ${n} other script${n>1?'s':''} down the line`:''}:`
-    : `<b>${rep.name}</b> requirements:`;
+  const hard = treeHasHardActions(rep);
+  const surface = treeNeedsAction(rep);   // any actionable item at all (for showing the rows)
+  const n = (rep.children||[]).length;
+  // Three framings:
+  //   1. hard actions remain  -> "needs setup" + "Set up everything" CTA
+  //   2. surface only (informational soft items, e.g. install.sh on an
+  //      already-installed dep) -> "prerequisites" + "looks satisfied" intro,
+  //      hide CTA (nothing required)
+  //   3. nothing to surface    -> "requirements" + minimal intro
+  let title, intro;
+  if(hard){
+    title = 'this script needs setup';
+    intro = `<b>${rep.name}</b> needs more than a clone to run${n?` — and pulls in ${n} other script${n>1?'s':''} down the line`:''}:`;
+  } else if(surface){
+    title = 'prerequisites look satisfied';
+    intro = `<b>${rep.name}</b>'s prerequisites all appear installed on this device — confirm by loading the script on the norns. The setup items below would re-run the same steps if you click them, but they're not required.`;
+  } else {
+    title = 'requirements';
+    intro = `<b>${rep.name}</b> requirements:`;
+  }
+  document.getElementById('dep-title').textContent = title;
+  document.getElementById('dep-intro').innerHTML = intro;
   document.getElementById('dep-plan').innerHTML=depPlanHTML(rep);
   document.querySelectorAll('#dep-plan .dep-url-go').forEach(b=>{   // user supplies a url for an un-resolved dep
     b.onclick=()=>{
@@ -2251,12 +2269,18 @@ function openDepPlan(rep,p){
     };
   });
   document.getElementById('dep-warn').style.display = anyInstallScript(rep)?'block':'none';
-  document.getElementById('dep-go').style.display = act?'':'none';
+  // Show "Set up everything" only when there's hard work to do. When the tree
+  // is satisfied (soft-only or nothing), hide the button — the dep-skip /
+  // close buttons remain so user can dismiss.
+  document.getElementById('dep-go').style.display = hard?'':'none';
+  // Skip → Close when nothing's required.
+  document.getElementById('dep-skip').textContent = hard ? 'Skip for now' : 'Close';
   document.getElementById('dep-overlay').classList.add('on');
 }
 // install + heal the whole graph, deepest-first: a script's required scripts are present (and set up) before its own installer runs.
 async function runHeal(root){
   async function heal(node){
+    // 1) explicit dep children (requires_scripts + missing_engines) — clone if needed, recurse
     for(const child of (node.children||[])){
       if(!child.installed){                                // clone the dependency from whatever source resolved it
         const url = child.proj || ((REPO.available.find(x=>norm(x.n)===norm(child.name))||{}).proj);
@@ -2264,6 +2288,26 @@ async function runHeal(root){
           await jobqAdd({label:child.name, verb:'dependency', run:job=>depInstall(child,url,job)});   // queue it (serial, no 409)
       }
       await heal(child);                                   // recurse: the dependency's own deps + installer
+    }
+    // 2) download_origins — scripts whose releases this node pulls artifacts from
+    //   (amenbreak's PortedPlugins.tar.gz from tapedeck/releases is the canonical case).
+    //   If the origin isn't on the device yet, queue an install for it. Look the origin
+    //   up in the catalog so the install carries proper metadata; fall back to a stub.
+    for(const o of (node.download_origins||[])){
+      if(o.installed) continue;
+      if((REPO.installed||[]).some(x => norm(x.n)===norm(o.repo) || norm(x.dir||'')===norm(o.repo))) continue;
+      const url = `https://github.com/${o.author}/${o.repo}`;
+      const cat = (REPO.available||[]).find(x => norm(x.n)===norm(o.repo));
+      const child = cat
+        ? Object.assign({}, cat, {dir: cat.dir||cat.n, proj: cat.proj||url})
+        : {name:o.repo, dir:o.repo, proj:url};
+      await jobqAdd({label:o.repo, verb:'origin', run:job=>depInstall(child, url, job)});
+      // also walk the origin's own deps after it's installed — fire one analysis +
+      // recurse so chains like amenbreak->tapedeck->(tapedeck's own deps) resolve fully
+      try{
+        const subRep = await fetchDeps(o.repo);
+        if(subRep){ subRep.installed = true; subRep.dir = o.repo; subRep.children = subRep.children || []; await heal(subRep); }
+      }catch(_){}
     }
     if(node.install_script) await runSetup(node.name);     // run this node's installer (downloads/builds, port-proofed)
   }
@@ -2778,10 +2822,11 @@ function srcBar(tab){
     const c=SRC[id].color, on=srcFilter.has(id);
     return `<span class="srcchip ${on?'on':'off'}" data-src="${id}" style="--c:${c}"><i></i>${SRC[id].name}</span>`;
   }).join('');
+  const hideInst = `<span class="srcchip ${hideInstalled?'on':''}" data-hideinst="1" style="--c:var(--ok,#6c6)"><i></i>${hideInstalled?'hiding installed':'hide installed'}</span>`;
   const extra = tab==='discover'
     ? `<span class="srcchip ${discMineOnly?'on':''}" data-minerepos="1" style="--c:#7fbfff"><i></i>${discMineOnly?'only your repos':'only my repos'}</span>`
      +`<span class="srcchip ${discHideKnown?'on':''}" data-hideknown="1" style="--c:var(--accent)"><i></i>${discHideKnown?'hiding ':'hide '}already in catalog/installed</span>` : '';
-  return `<div class="srcbar"><span class="lbl">sources</span>${chips}<span class="srcchip add" data-addsrc="1">+ add</span>${extra}</div>`;
+  return `<div class="srcbar"><span class="lbl">sources</span>${chips}<span class="srcchip add" data-addsrc="1">+ add</span>${hideInst}${extra}</div>`;
 }
 function renderRepo(){
   const v=document.getElementById('repoview'); const tab=repoTab;
@@ -2854,6 +2899,7 @@ function renderRepo(){
     else { const t=b.innerHTML; b.innerHTML='✓ done'; setTimeout(()=>{b.innerHTML=t;},900); }
   });
   v.querySelectorAll('[data-hideknown]').forEach(c=>c.onclick=()=>{ discHideKnown=!discHideKnown; renderRepo(); });
+  v.querySelectorAll('[data-hideinst]').forEach(c=>c.onclick=()=>{ hideInstalled=!hideInstalled; renderRepo(); });
   const dcu=document.getElementById('disc-clearuser'); if(dcu) dcu.onclick=()=>{ _discUser=null; _discLoaded=false; ghSearch('',1); };
   v.querySelectorAll('[data-minerepos]').forEach(c=>c.onclick=()=>{ discMineOnly=!discMineOnly; _discUser=null; _discLoaded=false; ghSearch('',1); });
   v.querySelectorAll('[data-page]').forEach(b=>b.onclick=()=>{ const p=+b.dataset.page; if(p>=1 && !b.disabled) ghSearch(_discQuery,p); });
@@ -3257,7 +3303,6 @@ function boot(){
   const rh=LS.get('replh',null); if(rh) document.documentElement.style.setProperty('--repl-h',rh);
   initSplit();
   loadCatalog().then(checkScPlugins);   // pull the real catalog, then silently check SC-plugin health
-  checkNbVoices();                      // silently check nb-voice OSC health (localhost->::1 muting)
   matronConnect();                      // live REPL + params link to matron (no-op off-device)
   initAudioHealth();                    // B10 audio-server health line in config
   initHealth();                         // unified multi-check health panel (ownership + mod compatibility + …)
@@ -3267,8 +3312,6 @@ function boot(){
   document.getElementById('scp-banner-fix').onclick=openScp;
   document.getElementById('scp-banner-x').onclick=()=>{ document.getElementById('scp-banner').style.display='none'; LS.set('scpDismiss',Date.now()+7*24*3600*1000); };
   document.getElementById('scp-banner-msg').onclick=openScp;
-  document.getElementById('nb-banner-fix').onclick=runNbHeal;
-  document.getElementById('nb-banner-x').onclick=()=>{ document.getElementById('nb-banner').style.display='none'; LS.set('nbDismiss',Date.now()+7*24*3600*1000); };
   document.getElementById('scp-close').onclick=()=>document.getElementById('scp-overlay').classList.remove('on');
   document.getElementById('scp-skip').onclick=()=>document.getElementById('scp-overlay').classList.remove('on');
   document.getElementById('scp-overlay').addEventListener('click',e=>{if(e.target.id==='scp-overlay')e.currentTarget.classList.remove('on');});

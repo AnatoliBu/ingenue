@@ -1620,35 +1620,11 @@ def _langport_state(port=57120):
             "bound": bound}
 
 
-# gai.conf body that makes getaddrinfo prefer IPv4 (the default precedence table
-# with the IPv4-mapped row raised to 100). osc.send to "localhost":57120 must reach
-# the IPv4-only sclang OSC listener; default ::1-first resolution mutes nb voices.
-GAI_CONF_PATH = "/etc/gai.conf"
-GAI_IPV4_PRECEDENCE = "precedence ::ffff:0:0/96  100"
-GAI_CONF_BODY = (
-    "# ingenue: prefer IPv4 so osc.send to \"localhost\":57120 reaches the IPv4-only\n"
-    "# sclang OSC listener. Default ::1-first resolution silently mutes every\n"
-    "# osc-based nb voice (polyperc, mxsynths, ...). Default precedence table with\n"
-    "# the IPv4-mapped row raised to 100.\n"
-    "label  ::1/128       0\n"
-    "label  ::/0          1\n"
-    "label  2002::/16     2\n"
-    "label ::/96          3\n"
-    "label ::ffff:0:0/96  4\n"
-    "precedence  ::1/128       50\n"
-    "precedence  ::/0          40\n"
-    "precedence  2002::/16     30\n"
-    "precedence ::/96          20\n"
-    "precedence ::ffff:0:0/96  100\n"
-)
-
-
 def _localhost_resolution(port=57120):
-    """How getaddrinfo orders 'localhost'. If an IPv6 (::1) sorts before the IPv4
-    127.0.0.1, then anything that osc.send()s to the bare name "localhost" (every
-    nb mod, matron's own OSC) hits ::1 — but sclang's OSCFunc is bound IPv4-only,
-    so the packet is dropped with no error and the voice is silent. Real norns
-    resolves localhost->127.0.0.1; 64-bit ports with systemd-resolved often don't."""
+    """How getaddrinfo orders 'localhost'. Kept as a diagnostic in the
+    sclang_config_check report; no longer drives a heal (the IPv4-precedence
+    fix this enabled produced a misleading persistent banner and could not be
+    verified to actually change nb-voice behaviour on the affected device)."""
     import socket
     try:
         res = socket.getaddrinfo("localhost", port, proto=socket.IPPROTO_UDP)
@@ -1661,16 +1637,6 @@ def _localhost_resolution(port=57120):
         "has_v6": socket.AF_INET6 in fams,
         "ipv6_first": bool(fams) and fams[0] == socket.AF_INET6,
     }
-
-
-def _gai_has_ipv4_precedence():
-    """True if /etc/gai.conf already carries our IPv4-preference line (fix staged,
-    pending the reboot that makes a fresh sclang/matron read it)."""
-    try:
-        with open(GAI_CONF_PATH) as f:
-            return GAI_IPV4_PRECEDENCE in f.read()
-    except OSError:
-        return False
 
 
 def sclang_config_check():
@@ -1720,21 +1686,17 @@ def sclang_config_check():
                        "launcher frees 57120 before sclang starts"),
             "info": lp})
 
-    # 4 (critical, fixable): "localhost" resolves to IPv6 ::1 before 127.0.0.1, but
-    # sclang's OSC listener is IPv4-only. nb mods and matron osc.send hardcode
-    # "localhost":57120 -> every osc-based nb voice is silent, no error. The common
-    # cause on 64-bit ports (systemd-resolved answers ::1-first; /etc/hosts bypassed).
-    lr = _localhost_resolution()
-    if lr and lr["ipv6_first"] and lr["has_v4"]:
-        staged = _gai_has_ipv4_precedence()
-        issues.append({
-            "code": "localhost_ipv6", "severity": "critical", "fixable": True,
-            "detail": ("\"localhost\" resolves to IPv6 ::1 before 127.0.0.1, but sclang's OSC "
-                       "listener is IPv4-only. nb mods and matron osc.send target \"localhost\":57120 "
-                       "-> every osc-based nb voice is silent with no error. The fix writes "
-                       "/etc/gai.conf to prefer IPv4." + (" Already written — reboot to apply."
-                       if staged else " Reboot to apply.")),
-            "info": lr, "already_staged": staged})
+    # NOTE: a "localhost resolves IPv6-first" check used to live here (with a
+    # /etc/gai.conf-based heal). Removed 2026-06-06 — the detector had a
+    # substring-match bug (matched the commented-out documentation line in the
+    # default gai.conf, so it would falsely report "already_staged"), the heal
+    # could not be verified to actually change nb-voice behaviour on the
+    # affected device, and the persistent "reboot to apply" banner misled users
+    # into thinking they had a real problem. If nb-voice silence ever turns
+    # out to be a real localhost-resolution issue on some setup, reintroduce
+    # this with a runtime UDP-probe test (send to "localhost":57120 from
+    # python, verify sclang received it) rather than a getaddrinfo guess.
+    lr = _localhost_resolution()                                          # kept for diagnostics
 
     return {
         "host_arch": machine, "is_64bit": is64,
@@ -1743,20 +1705,19 @@ def sclang_config_check():
         "excludePaths": excl, "langport": lp, "localhost": lr,
         "issues": issues, "ok": not issues,
         "can_fix": any(i["fixable"] for i in issues),
-        "reboot_required": any(i["code"] in ("langport_drift", "localhost_ipv6") for i in issues),
+        "reboot_required": any(i["code"] == "langport_drift" for i in issues),
         "hint": ("sclang / nb-voice config looks healthy" if not issues
                  else f"{len(issues)} sclang / nb-voice issue(s) detected"),
     }
 
 
 def sclang_config_heal():
-    """Repair the two silently-fatal sclang/nb conditions, both idempotent and
-    backed up first, both taking effect on the next boot:
+    """Repair the silently-fatal sclang/nb config conditions, idempotent and
+    backed up first, taking effect on the next boot:
       (a) double-nested duplicate class trees -> exclude them in sclang_conf.yaml
-          so sclang stops aborting the whole class library with 'duplicate Class';
-      (b) "localhost" resolving to IPv6 ::1 -> write /etc/gai.conf to prefer IPv4
-          so osc.send("localhost":57120) reaches the IPv4-only sclang OSC listener
-          and osc-based nb voices stop being silently muted."""
+          so sclang stops aborting the whole class library with 'duplicate Class'.
+    (The /etc/gai.conf IPv4-precedence heal that used to live here was removed —
+    see the note in sclang_config_check for why.)"""
     log, changed, reboot = [], False, False
 
     # (a) duplicate class trees in sclang_conf.yaml
@@ -1790,30 +1751,8 @@ def sclang_config_heal():
                 except OSError as e:
                     log.append(f"could not repair {os.path.basename(conf)}: {e}")
 
-    # (b) localhost -> IPv4 via /etc/gai.conf
-    lr = _localhost_resolution()
-    if lr and lr["ipv6_first"] and lr["has_v4"]:
-        if _gai_has_ipv4_precedence():
-            reboot = True
-            log.append("/etc/gai.conf already prefers IPv4 — reboot to apply (a fresh sclang/"
-                       "matron reads gai.conf only at start)")
-        elif not os.access(os.path.dirname(GAI_CONF_PATH) or "/", os.W_OK):
-            log.append("cannot write /etc/gai.conf (need root). Run ingenue as root, or add "
-                       "the gai.conf IPv4-precedence snippet manually, then reboot")
-        else:
-            try:
-                backup = None
-                if os.path.exists(GAI_CONF_PATH):
-                    backup = GAI_CONF_PATH + ".ingenue.bak"
-                    shutil.copy2(GAI_CONF_PATH, backup)
-                with open(GAI_CONF_PATH, "w") as f:
-                    f.write(GAI_CONF_BODY)
-                changed = True; reboot = True
-                log.append("wrote /etc/gai.conf to prefer IPv4"
-                           + (f" (backup {os.path.basename(backup)})" if backup else "")
-                           + " — osc-based nb voices will sound after a reboot")
-            except OSError as e:
-                log.append(f"could not write /etc/gai.conf: {e}")
+    # (b) the /etc/gai.conf IPv4-precedence heal that used to live here was
+    # removed — see sclang_config_check for the rationale.
 
     if not log:
         log.append("sclang / nb-voice config already healthy; nothing to repair")
