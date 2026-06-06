@@ -3,3 +3,4 @@ certs/
 __pycache__/
 .DS_Store
 .playwright-mcp/
+screenshots/
