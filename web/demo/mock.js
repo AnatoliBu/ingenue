@@ -239,8 +239,8 @@
     });
   }
   async function fsRead(rel){
-    if (rel === "code/awake/awake.lua")           return (awakeSrc   ??= await getText("demo/fixtures/awake.lua")) || "-- demo\n";
-    if (rel === "code/awake/lib/halfsecond.lua")  return (halfsecSrc ??= await getText("demo/fixtures/halfsecond.lua")) || "-- demo lib\n";
+    if (rel === "code/awake/awake.lua")           return (awakeSrc   ??= await getText("demo/data/awake.lua")) || "-- demo\n";
+    if (rel === "code/awake/lib/halfsecond.lua")  return (halfsecSrc ??= await getText("demo/data/halfsecond.lua")) || "-- demo lib\n";
     // generic placeholder for everything else
     return `-- demo: ${rel}\n-- this file isn't bundled in the static demo.\n-- install ingenue on a norns to see real script source.\n`;
   }
@@ -328,10 +328,10 @@
 
     async _getCurrentParams(){
       if (this._currentScript === 'at_sea'){
-        paramsAtsea ??= await getJSON('demo/fixtures/params_atsea.json');
+        paramsAtsea ??= await getJSON('demo/data/params_atsea.json');
         return paramsAtsea || { script:'at_sea', params:[] };
       }
-      paramsAwake ??= await getJSON('demo/fixtures/params_awake.json');
+      paramsAwake ??= await getJSON('demo/data/params_awake.json');
       return paramsAwake || { script:'awake', params:[] };
     }
 
