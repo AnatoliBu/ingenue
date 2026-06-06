@@ -407,6 +407,20 @@ def stream_proc(cmd, cwd, emit, timeout=900, shell=False, run_as=None):
 # vendor deps via .gitmodules. Maiden does both correctly — ingenue now matches.
 PROJECT_METADATA_FILENAME = ".project"
 
+# Whitelist for git refs accepted by /api/install (sha=) and /api/rollback
+# (target=). Permits SHAs, tags, branch names, HEAD~N — rejects anything starting
+# with `-` (would be misread as a CLI flag by git checkout) and any character
+# outside the git-ref-safe set. Defense-in-depth: even though we also pass
+# `--end-of-options` to git, the regex stops malformed input at the API edge.
+_SAFE_GIT_REF_RE = re.compile(r"^[A-Za-z0-9._/~^@][A-Za-z0-9._/~^@-]{0,249}$")
+
+
+def _safe_git_ref(s):
+    """True iff `s` is a git ref-shaped string we'll accept from user input.
+    Used by /api/install (sha) and /api/rollback (target) to reject argv
+    flag-smuggling attempts like `--upload-pack=/path/to/evil`."""
+    return bool(s and isinstance(s, str) and _SAFE_GIT_REF_RE.match(s))
+
 
 def do_clone(full, url, emit, sha=None, catalog_entry=None, recurse_submodules=True):
     """Stream a full `git clone` into `full`. Preserves history for rollback,
@@ -425,8 +439,12 @@ def do_clone(full, url, emit, sha=None, catalog_entry=None, recurse_submodules=T
     if rc != 0:
         return False, (f"git clone exited {rc}" if rc is not None else "git clone timed out")
     if sha:
+        if not _safe_git_ref(sha):
+            return False, f"refused unsafe ref {sha!r}"
         emit(f"$ git -C {os.path.basename(full)} checkout {sha}")
-        rc2 = stream_proc(["git", "-C", full, "checkout", sha],
+        # --end-of-options stops git treating a `-`-prefixed sha as a flag (belt
+        # and suspenders with _safe_git_ref above).
+        rc2 = stream_proc(["git", "-C", full, "checkout", "--end-of-options", sha],
                           None, emit, timeout=60, run_as=run_as)
         if rc2 != 0:
             return False, f"git checkout {sha} failed (rc={rc2})"
@@ -492,10 +510,14 @@ def do_rollback(full, target, emit):
     installed via do_clone (i.e., has full history)."""
     if not os.path.isdir(os.path.join(full, ".git")):
         return False, "not a managed git repo (no .git) — rollback unavailable"
+    if not _safe_git_ref(target):
+        return False, f"refused unsafe ref {target!r}"
     uid, gid, _, _ = target_owner()
     run_as = _run_as_target()
     emit(f"$ git -C {os.path.basename(full)} checkout {target}")
-    rc = stream_proc(["git", "-C", full, "checkout", target],
+    # --end-of-options prevents a `-`-prefixed target from being parsed as a
+    # flag; the regex above rejects the same case at the API edge.
+    rc = stream_proc(["git", "-C", full, "checkout", "--end-of-options", target],
                      None, emit, timeout=60, run_as=run_as)
     if rc != 0:
         return False, f"git checkout {target} exited {rc}"
