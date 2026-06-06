@@ -744,6 +744,141 @@ def heal_mod_bang(full, emit=None):
 
 
 # ---------------------------------------------------------------------------
+# Multi-check health overview
+# ---------------------------------------------------------------------------
+# Single endpoint that aggregates every health check ingenue knows about, so
+# the configuration sheet can show a unified "health checks" panel instead of
+# scattered banners. Each check is self-describing (name, status, summary,
+# detail, heal action) so the UI renders them generically — adding a new
+# check means appending to the aggregator, no UI work.
+def health_mod_bangs():
+    """Scan every installed script for params:bang() inside add_params (the
+    dreamsequence-class bug). Cross-references with system.mods so we know
+    which hits are actually loaded at boot — disabled mods with bangs are
+    flagged informationally but don't count as active issues."""
+    enabled = set(read_enabled_mods())
+    issues = []
+    try:
+        names = sorted(os.listdir(CODE))
+    except OSError:
+        return {"issues": [], "active_issues": [], "scanned": 0,
+                "enabled_mods": sorted(enabled)}
+    for name in names:
+        if name.startswith(".") or name == "ingenue":
+            continue
+        full = os.path.join(CODE, name)
+        if not os.path.isdir(full):
+            continue
+        for h in _scan_mod_bang_in_add_params(full):
+            issues.append({"script": name, **h, "enabled": name in enabled})
+    return {
+        "issues": issues,
+        "active_issues": [i for i in issues if i["enabled"]],
+        "scanned": len(names),
+        "enabled_mods": sorted(enabled),
+    }
+
+
+def heal_all_mod_bangs(only_enabled=True):
+    """Run heal_mod_bang on every installed dir that has bang-in-add_params
+    hits. Defaults to only-enabled (those that load at boot — disabled mods
+    can stay broken since they don't run). Returns per-script result list."""
+    enabled = set(read_enabled_mods()) if only_enabled else None
+    results = []
+    try:
+        names = sorted(os.listdir(CODE))
+    except OSError as e:
+        return {"ok": False, "error": str(e), "results": []}
+    for name in names:
+        if name.startswith(".") or name == "ingenue":
+            continue
+        full = os.path.join(CODE, name)
+        if not os.path.isdir(full):
+            continue
+        if enabled is not None and name not in enabled:
+            continue
+        hits = _scan_mod_bang_in_add_params(full)
+        if not hits:
+            continue
+        r = heal_mod_bang(full)
+        results.append({"script": name, **r})
+    return {"ok": True, "results": results,
+            "patched_scripts": [r["script"] for r in results if r.get("changes")],
+            "total_lines_patched": sum(len(r.get("changes", [])) for r in results)}
+
+
+def health_overview():
+    """Multi-check aggregator. Each entry is a self-describing row the UI
+    renders generically. New checks slot in by appending here — the UI
+    doesn't need per-check code.
+
+    Currently includes: script ownership, mod params:bang() compatibility.
+    Candidates to add next: stale .deleted backups, missing data dirs for
+    scripts whose install.sh would have created them, partial-clone scripts
+    that can't roll back."""
+    checks = []
+
+    # 1) script ownership
+    own = ownership_status()
+    target = own["target"]["name"]
+    if own["ok"]:
+        summary = f"every script in dust/code owned by {target}"
+        detail = ""
+    else:
+        n = own["mismatch_count"]
+        summary = f"{n} script{'' if n==1 else 's'} own-mismatch — should be {target}"
+        detail = ", ".join(f"{m['name']} (currently {m['current']})" for m in own["mismatches"])
+    checks.append({
+        "id": "ownership",
+        "name": "script ownership",
+        "ok": own["ok"],
+        "issue_count": own["mismatch_count"],
+        "summary": summary,
+        "detail": detail,
+        "can_heal": own["can_heal"],
+        "heal_endpoint": "/api/heal-ownership",
+        "heal_method": "POST",
+        "heal_label": "heal ownership",
+    })
+
+    # 2) mod compatibility — bang in add_params (dreamsequence-class crashes)
+    bangs = health_mod_bangs()
+    active = bangs["active_issues"]
+    dormant = [i for i in bangs["issues"] if not i["enabled"]]
+    if not active:
+        if dormant:
+            summary = f"all enabled mods clean ({len(dormant)} disabled mod{'s' if len(dormant)!=1 else ''} also has bang-in-add_params but isn't loaded)"
+        else:
+            summary = "no mod calls params:bang() in add_params"
+        detail = ""
+    else:
+        scripts = sorted({i["script"] for i in active})
+        summary = (f"{len(scripts)} enabled mod{'s' if len(scripts)!=1 else ''} "
+                   f"call params:bang() in add_params — crashes scripts that "
+                   f"define globals after their param setup (e.g. dreamsequence)")
+        detail = ", ".join(f"{i['script']}:{i['file']}:{i['line']}" for i in active)
+    checks.append({
+        "id": "mod_bangs",
+        "name": "mod compatibility",
+        "ok": not active,
+        "issue_count": len(active),
+        "summary": summary,
+        "detail": detail,
+        "can_heal": bool(active),
+        "heal_endpoint": "/api/health/bangs/heal",
+        "heal_method": "POST",
+        "heal_label": "auto-heal",
+        "experimental": True,
+    })
+
+    return {
+        "checks": checks,
+        "overall_ok": all(c["ok"] for c in checks),
+        "issue_count": sum(c["issue_count"] for c in checks),
+    }
+
+
+# ---------------------------------------------------------------------------
 # Cross-script download hint
 # ---------------------------------------------------------------------------
 # When a script's downloads point at https://github.com/<author>/<repo>/releases/...,
@@ -2021,6 +2156,10 @@ class H(http.server.SimpleHTTPRequestHandler):
                 return self._json(sysinfo())
             if path == "/api/ownership":
                 return self._json(ownership_status())
+            if path == "/api/health":
+                # Multi-check aggregator for the config Health panel.
+                # Self-describing — see health_overview().
+                return self._json(health_overview())
             if path == "/api/audio":
                 return self._json(audio_status())
             if path == "/api/mods":
@@ -2104,6 +2243,17 @@ class H(http.server.SimpleHTTPRequestHandler):
                 return self._json(sclang_config_heal())
             if path == "/api/heal-ownership":
                 return self._json(heal_ownership())
+            if path == "/api/health/bangs/heal":
+                # Batch heal: scans all installed mods, patches every
+                # bang-in-add_params line in enabled mods at once. Body may
+                # set {only_enabled:false} to also patch disabled mods.
+                only_enabled = True
+                if isinstance(b, dict) and "only_enabled" in b:
+                    only_enabled = bool(b["only_enabled"])
+                try:
+                    return self._json(heal_all_mod_bangs(only_enabled=only_enabled))
+                except OSError as e:
+                    return self._json({"error": str(e)}, 500)
             if path == "/api/heal-bang":
                 # EXPERIMENTAL — comments out `params:bang()` (no-arg) calls
                 # inside add_params functions in the named mod's lib/mod.lua.

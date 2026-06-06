@@ -355,6 +355,13 @@ button{font-family:inherit}
 .card.open .card-more{display:block}
 .card.open .desc{-webkit-line-clamp:unset}
 .more-meta{font-size:11.5px;color:var(--muted);margin-bottom:9px}
+/* multi-check health panel — sub-section header + per-check rows + nested
+   detail (long lists of mismatched script names etc.). Lives under device · norns. */
+#health-section{display:flex;flex-direction:column;gap:0;margin-top:6px;border-top:1px dashed color-mix(in srgb,var(--trim) 50%,transparent);padding-top:8px}
+.health-header{border-bottom:1px solid color-mix(in srgb,var(--trim) 50%,transparent);padding-bottom:6px;margin-bottom:2px}
+.health-row{align-items:flex-start;padding:6px 0}
+.health-row .k{padding-top:2px;color:var(--muted)}
+.health-detail{font-size:11px;color:var(--faint);margin-top:3px;line-height:1.45;word-break:break-word}
 /* per-script version row (commit · update · rollback) — only on installed cards */
 .more-version{display:flex;align-items:center;gap:8px;font-size:11.5px;color:var(--muted);margin:0 0 9px;padding:6px 0;border-top:1px dashed color-mix(in srgb,var(--trim) 50%,transparent);border-bottom:1px dashed color-mix(in srgb,var(--trim) 50%,transparent);flex-wrap:wrap}
 .ver-label{color:var(--faint);text-transform:uppercase;letter-spacing:.04em;font-size:10px}
@@ -748,9 +755,10 @@ button{font-family:inherit}
          <div class="cfg-row" id="audio-row" style="display:none"><span class="k">audio server</span>
            <span class="v" id="audio-state" style="width:auto;flex:1;font-family:inherit">checking…</span>
            <button class="rd-pill-btn" id="audio-restart" style="display:none;margin:0">restart audio</button></div>
-         <div class="cfg-row" id="own-row" style="display:none"><span class="k">script ownership</span>
-           <span class="v" id="own-state" style="width:auto;flex:1;font-family:inherit">checking…</span>
-           <button class="rd-pill-btn" id="own-heal" style="display:none;margin:0">Heal installations</button></div>
+         <!-- Multi-check health panel (driven by /api/health). Renders one row
+              per check (ownership / mod compatibility / future). Each check is
+              self-describing via the API so the renderer is generic. -->
+         <div id="health-section" style="display:none"></div>
 
          <div class="cfg-foot" style="margin-top:24px;padding-top:14px;border-top:1px solid var(--trim);display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;font-size:12px;color:var(--muted)">
            <span>ingenue — a modern editor for norns · inspired by <a href="https://monome.org/docs/norns/maiden/" target="_blank" rel="noopener" style="color:var(--muted)">maiden</a></span>
@@ -1381,43 +1389,95 @@ function renderAudio(a){
     catch(e){ st.textContent=e.message; } btn.disabled=false; btn.textContent='restart audio'; };
 }
 
-/* ===== script-ownership health (config row + Heal installations button) =====
-   Detects scripts in dust/code/ whose unix owner doesn't match the dust owner
-   (typically `we` on norns). A mismatch means a prior ingenue ran as root and
-   left root-owned files behind that maiden — running as `we` — can't manage.
-   The Heal button chowns everything back to the right user. Idempotent and
-   safe to re-run; only does work when there's actual drift. */
-async function initOwnership(){
-  try{ const r=await fetch('api/ownership',{cache:'no-store'}); if(!r.ok) return; renderOwnership(await r.json()); }
-  catch(_){ }
+/* ===== multi-check health panel (drives the Health section in config) =====
+   Calls /api/health which returns a list of self-describing check rows
+   ({id, name, ok, issue_count, summary, detail, can_heal, heal_endpoint,
+   heal_method, heal_label, experimental?}). Renders each generically, so
+   adding a new check is a backend-only change. Heal buttons call each
+   check's own endpoint and trigger a recheck after.
+
+   Replaces the prior single-check initOwnership/renderOwnership pair —
+   ownership is now just one row in the same panel. */
+async function initHealth(){
+  try{
+    const r = await fetch('api/health', {cache:'no-store'});
+    if(!r.ok) return;
+    renderHealth(await r.json());
+  } catch(_){}
 }
-function renderOwnership(o){
+
+function renderHealth(h){
   document.getElementById('dev-sec').style.display='';
-  const row=document.getElementById('own-row'); row.style.display='';
-  const st=document.getElementById('own-state'), btn=document.getElementById('own-heal');
-  const tgt=o.target?o.target.name:'?';
-  if(o.ok){
-    st.innerHTML=`<span style="color:#5c5">● healthy</span> — every script owned by <span class="mono">${tgt}</span>`;
-    btn.style.display='none'; return;
-  }
-  // Mismatch: list a sample so the user knows which scripts the heal will touch.
-  const sample=(o.mismatches||[]).slice(0,4).map(m=>`${m.name} <span style="color:var(--faint)">(${m.current})</span>`).join(', ');
-  const more=(o.mismatch_count||0)>4?` +${o.mismatch_count-4} more`:'';
-  st.innerHTML=`<span style="color:var(--warn,#c80)">● ${o.mismatch_count} mismatch</span> — should be <span class="mono">${tgt}</span>: ${sample}${more}`;
-  if(o.can_heal){ btn.style.display=''; btn.disabled=false; btn.textContent='Heal installations'; }
-  else { btn.style.display='none';
-    st.innerHTML += ` <span style="color:var(--faint)">(ingenue can't chown — needs to run as root or as ${tgt})</span>`; }
-  btn.onclick=async()=>{
-    btn.disabled=true; btn.textContent='healing…';
-    try{ const j=await (await fetch('api/heal-ownership',{method:'POST'})).json();
-      if(j.error){ st.innerHTML='<span style="color:var(--err)">heal failed</span> — '+j.error; btn.disabled=false; btn.textContent='Heal installations'; return; }
-      const names=(j.fixed||[]).map(f=>f.name).slice(0,6).join(', ');
-      const more2=(j.fixed_count||0)>6?` +${j.fixed_count-6}`:'';
-      st.innerHTML=`<span style="color:#5c5">● healed ${j.fixed_count}</span> — ${names}${more2}`;
-      // Re-check so the row reflects current reality (any errors persist as a non-ok state).
-      setTimeout(initOwnership, 800);
-    } catch(e){ st.innerHTML='<span style="color:var(--err)">heal failed</span> — '+e.message; btn.disabled=false; btn.textContent='Heal installations'; }
+  const sec = document.getElementById('health-section');
+  if(!sec) return;
+  sec.style.display='';
+  const failing = (h.checks||[]).filter(c => !c.ok).length;
+  const header = `
+    <div class="cfg-row health-header">
+      <span class="k" style="font-weight:600">health</span>
+      <span class="v" style="width:auto;flex:1;font-family:inherit">${
+        h.overall_ok
+          ? '<span style="color:#5c5">● all checks healthy</span>'
+          : `<span style="color:var(--warn,#c80)">● ${h.issue_count} issue${h.issue_count===1?'':'s'} across ${failing} check${failing===1?'':'s'}</span>`
+      }</span>
+      <button class="rd-pill-btn" id="health-recheck" style="margin:0" title="re-run all checks">↻ recheck</button>
+    </div>`;
+  const rowsHtml = (h.checks||[]).map(c => {
+    const status = c.ok
+      ? '<span style="color:#5c5">●</span>'
+      : '<span style="color:var(--warn,#c80)">●</span>';
+    const heal = (!c.ok && c.can_heal)
+      ? `<button class="rd-pill-btn health-heal-btn"
+            data-endpoint="${esc(c.heal_endpoint)}"
+            data-method="${esc(c.heal_method||'POST')}"
+            data-label="${esc(c.heal_label||'heal')}"
+            data-experimental="${c.experimental?1:0}"
+            title="${c.experimental?'experimental — modifies installed files':'idempotent — safe to re-run'}"
+            style="margin:0">${c.experimental?'⚗ ':''}${esc(c.heal_label||'heal')}</button>`
+      : '';
+    const detail = c.detail
+      ? `<div class="health-detail">${esc(c.detail)}</div>`
+      : '';
+    return `<div class="cfg-row health-row">
+      <span class="k">${esc(c.name)}</span>
+      <span class="v" style="width:auto;flex:1;font-family:inherit">${status} ${esc(c.summary)}${detail}</span>
+      ${heal}
+    </div>`;
+  }).join('');
+  sec.innerHTML = header + rowsHtml;
+  document.getElementById('health-recheck').onclick = () => {
+    const b = document.getElementById('health-recheck');
+    b.disabled = true; b.textContent = '…';
+    initHealth().finally(() => { b.disabled = false; b.textContent = '↻ recheck'; });
   };
+  sec.querySelectorAll('.health-heal-btn').forEach(b => {
+    b.onclick = async () => {
+      const endpoint = b.getAttribute('data-endpoint').replace(/^\//, '');
+      const method = b.getAttribute('data-method') || 'POST';
+      const label = b.getAttribute('data-label') || 'heal';
+      const experimental = b.getAttribute('data-experimental') === '1';
+      const go = async () => {
+        b.disabled = true; b.textContent = label + '…';
+        try{
+          const r = await fetch(endpoint, {
+            method,
+            headers: {'Content-Type':'application/json'},
+            body: method==='POST' ? '{}' : undefined
+          });
+          const j = await r.json();
+          if(j.error){ b.textContent = 'failed: '+j.error; b.disabled = false; return; }
+          setTimeout(initHealth, 500);   // refresh whole panel after heal
+        } catch(e){ b.textContent = 'failed: '+e.message; b.disabled = false; }
+      };
+      if(experimental){
+        confirmDialog('experimental auto-heal',
+          'This heal modifies installed script files in place. Reversible via <code>git checkout</code> in each touched script, but if a mod relied on the patched behaviour its defaults may shift. Proceed?',
+          go);
+      } else {
+        go();
+      }
+    };
+  });
 }
 
 /* ===== B8 mods manager (own sheet — installed + installable community mods, with card detail) ===== */
@@ -3093,7 +3153,7 @@ function renderSrc(){
   });
 }
 function openCfg(){ buildThemeGrid(document.getElementById('theme-filter').value); renderGh(); renderSrc();
-  initSysInfo(); initAudioHealth(); initOwnership();         // device-info section (no-op off-device)
+  initSysInfo(); initAudioHealth(); initHealth();            // device-info section (no-op off-device)
   document.getElementById('overlay').classList.add('on'); }
 function closeCfg(){ document.getElementById('overlay').classList.remove('on'); }
 
@@ -3200,7 +3260,7 @@ function boot(){
   checkNbVoices();                      // silently check nb-voice OSC health (localhost->::1 muting)
   matronConnect();                      // live REPL + params link to matron (no-op off-device)
   initAudioHealth();                    // B10 audio-server health line in config
-  initOwnership();                      // script-ownership health + Heal installations
+  initHealth();                         // unified multi-check health panel (ownership + mod compatibility + …)
   setTimeout(()=>{ if(!_updChecked){ _updChecked=true; checkForUpdate(false); } }, 1800);  // quiet on-load update check
   document.addEventListener('keydown',e=>{ if((e.metaKey||e.ctrlKey)&&e.key==='s'){ e.preventDefault(); saveActive(); } });  // Ctrl/Cmd-S saves to device
   // SC-plugin (64-bit UGen) banner + modal wiring
