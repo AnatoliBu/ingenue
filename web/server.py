@@ -16,7 +16,7 @@ API (confined to the dust tree):
   POST /api/install  {name,url,force} -> git clone url into dust/code/name
   POST /api/remove   {name}           -> delete dust/code/name
 """
-import http.server, socketserver, os, sys, json, re, shutil, subprocess, threading, urllib.parse, urllib.request, datetime, pwd
+import http.server, socketserver, os, sys, json, re, shutil, subprocess, threading, urllib.parse, urllib.request, datetime, pwd, time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 
@@ -395,28 +395,240 @@ def stream_proc(cmd, cwd, emit, timeout=900, shell=False, run_as=None):
     return rc
 
 
-def do_clone(full, url, emit):
-    """Stream a git clone into `full`. Drops to the dust owner (typically `we`)
-    when we're running as root, so cloned files don't end up root-owned and
-    leave maiden (running as `we`) unable to manage them. Returns (ok, error|None)."""
+# ---------------------------------------------------------------------------
+# Maiden-parity install: full clone (history preserved → rollback possible),
+# submodule recursion (scripts that vendor deps via submodule actually get them),
+# .project metadata write (maiden-readable), and optional SHA pin (so a known-
+# good commit can be installed when latest main is broken).
+#
+# Why this matters: the old `--depth 1` clone made it impossible to roll a
+# script back to a working commit when upstream regressed, and the lack of
+# submodule recursion silently produced incomplete installs for scripts that
+# vendor deps via .gitmodules. Maiden does both correctly — ingenue now matches.
+PROJECT_METADATA_FILENAME = ".project"
+
+
+def do_clone(full, url, emit, sha=None, catalog_entry=None, recurse_submodules=True):
+    """Stream a full `git clone` into `full`. Preserves history for rollback,
+    recurses submodules so scripts that vendor deps via .gitmodules get them,
+    and writes a maiden-compatible .project metadata file. Drops to the dust
+    owner before exec. Returns (ok, error|None)."""
     uid, gid, name, _ = target_owner()
     run_as = _run_as_target()
     as_suffix = f"  (as {name})" if run_as[0] else ""
-    emit(f"$ git clone {url}{as_suffix}")
-    rc = stream_proc(["git", "clone", "--depth", "1", "--progress", url, full],
-                     None, emit, timeout=180, run_as=run_as)
+    args = ["git", "clone", "--progress"]
+    if recurse_submodules:
+        args.append("--recurse-submodules")
+    args += [url, full]
+    emit(f"$ {' '.join(args)}{as_suffix}")
+    rc = stream_proc(args, None, emit, timeout=300, run_as=run_as)
     if rc != 0:
         return False, (f"git clone exited {rc}" if rc is not None else "git clone timed out")
-    # Backstop: if drop-privs didn't apply (e.g. ingenue is root but dust/code
-    # is also root-owned -> target_owner == us == root, no drop happens, but
-    # then we'd never reach here in a problem state). If anything *did* end up
-    # mis-owned, chown the whole tree so maiden can manage it.
+    if sha:
+        emit(f"$ git -C {os.path.basename(full)} checkout {sha}")
+        rc2 = stream_proc(["git", "-C", full, "checkout", sha],
+                          None, emit, timeout=60, run_as=run_as)
+        if rc2 != 0:
+            return False, f"git checkout {sha} failed (rc={rc2})"
+    # Backstop chown — primary guarantee is the preexec_fn in stream_proc, but
+    # if drop-privs didn't apply (e.g. dust is root-owned -> target == root),
+    # this is a no-op.
     if os.getuid() == 0 and uid != 0:
         n = chown_path(full, uid, gid)
         if n:
             emit(f"chown {name}:{name} ({n} entries)")
+    write_project_metadata(full, url, catalog_entry=catalog_entry, emit=emit)
     emit("✓ cloned — run SYSTEM > RESTART to load it")
     return True, None
+
+
+def do_update(full, emit):
+    """Update an existing managed git repo without destroying it: `git fetch`
+    then `git reset --hard origin/<default-branch>`. Preserves untracked files
+    (like .project metadata or user-added files), and crucially preserves the
+    .git directory so rollback remains possible. Returns (ok, error|None).
+
+    Use this instead of `rmtree + clone` when the user wants the latest version
+    of a script they already have — matches maiden's `Update` semantics."""
+    if not os.path.isdir(os.path.join(full, ".git")):
+        return False, "not a managed git repo (no .git directory) — reinstall instead"
+    uid, gid, name, _ = target_owner()
+    run_as = _run_as_target()
+    emit("$ git fetch origin --recurse-submodules")
+    rc = stream_proc(["git", "-C", full, "fetch", "origin", "--recurse-submodules"],
+                     None, emit, timeout=180, run_as=run_as)
+    if rc != 0:
+        return False, f"git fetch exited {rc}"
+    # discover the default branch from origin's HEAD ref; fall back to origin/main
+    default_ref = "origin/main"
+    try:
+        r = subprocess.run(["git", "-C", full, "symbolic-ref", "refs/remotes/origin/HEAD"],
+                           capture_output=True, text=True, timeout=10)
+        if r.returncode == 0 and r.stdout.strip():
+            default_ref = r.stdout.strip().replace("refs/remotes/", "")
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+    emit(f"$ git reset --hard {default_ref}")
+    rc = stream_proc(["git", "-C", full, "reset", "--hard", default_ref],
+                     None, emit, timeout=60, run_as=run_as)
+    if rc != 0:
+        return False, f"git reset --hard exited {rc}"
+    # bring submodules up-to-date too
+    if os.path.isfile(os.path.join(full, ".gitmodules")):
+        emit("$ git submodule update --init --recursive")
+        stream_proc(["git", "-C", full, "submodule", "update", "--init", "--recursive"],
+                    None, emit, timeout=180, run_as=run_as)
+    if os.getuid() == 0 and uid != 0:
+        chown_path(full, uid, gid)
+    update_project_metadata(full, emit=emit)
+    emit("✓ updated — run SYSTEM > RESTART to reload")
+    return True, None
+
+
+def do_rollback(full, target, emit):
+    """Check out an arbitrary git ref (SHA, tag, or relative ref like HEAD~1)
+    in an installed script. Lets the user undo an upgrade that regressed,
+    pin to a known-good commit, etc. Requires the script to have been
+    installed via do_clone (i.e., has full history)."""
+    if not os.path.isdir(os.path.join(full, ".git")):
+        return False, "not a managed git repo (no .git) — rollback unavailable"
+    uid, gid, _, _ = target_owner()
+    run_as = _run_as_target()
+    emit(f"$ git -C {os.path.basename(full)} checkout {target}")
+    rc = stream_proc(["git", "-C", full, "checkout", target],
+                     None, emit, timeout=60, run_as=run_as)
+    if rc != 0:
+        return False, f"git checkout {target} exited {rc}"
+    # update submodule pinning to the rolled-back commit
+    if os.path.isfile(os.path.join(full, ".gitmodules")):
+        stream_proc(["git", "-C", full, "submodule", "update", "--init", "--recursive"],
+                    None, emit, timeout=180, run_as=run_as)
+    if os.getuid() == 0 and uid != 0:
+        chown_path(full, uid, gid)
+    emit(f"✓ rolled back to {target} — run SYSTEM > RESTART to reload")
+    return True, None
+
+
+def write_project_metadata(full, source_url, catalog_entry=None, emit=None):
+    """Write maiden-compatible .project JSON. Preserves a prior file's
+    installed_on if present (we only set it on FIRST install). Makes ingenue-
+    installed scripts indistinguishable to maiden, and gives the UI a place
+    to read provenance from."""
+    path = os.path.join(full, PROJECT_METADATA_FILENAME)
+    now = datetime.datetime.now().astimezone().isoformat(timespec="seconds")
+    existing = read_project_metadata(full)
+    md = {
+        "file_info": {"version": 1, "kind": "project_metadata"},
+        "installed_on": (existing or {}).get("installed_on") or now,
+        "updated_on": now if existing else "0001-01-01T00:00:00Z",
+        "project_url": source_url,
+    }
+    if catalog_entry:
+        md["catalog_entry"] = catalog_entry
+    elif existing and "catalog_entry" in existing:
+        md["catalog_entry"] = existing["catalog_entry"]
+    try:
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(md, f, indent=2)
+        if emit:
+            emit(f"wrote {PROJECT_METADATA_FILENAME}")
+        uid, gid, _, _ = target_owner()
+        if os.getuid() == 0 and uid != 0:
+            try: os.lchown(path, uid, gid)
+            except OSError: pass
+    except OSError as e:
+        if emit:
+            emit(f"! couldn't write .project: {e}")
+
+
+def update_project_metadata(full, emit=None):
+    """Bump only the updated_on timestamp; preserve everything else. Used by
+    do_update after a successful fetch+reset."""
+    md = read_project_metadata(full)
+    if not md:
+        # script wasn't managed via .project metadata — write a fresh one from git remote
+        url = git_remote(full)
+        if url:
+            write_project_metadata(full, url, emit=emit)
+        return
+    md["updated_on"] = datetime.datetime.now().astimezone().isoformat(timespec="seconds")
+    path = os.path.join(full, PROJECT_METADATA_FILENAME)
+    try:
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(md, f, indent=2)
+        if emit:
+            emit(f"updated {PROJECT_METADATA_FILENAME} timestamp")
+    except OSError as e:
+        if emit:
+            emit(f"! couldn't update .project: {e}")
+
+
+def read_project_metadata(full):
+    """Read .project if present, else None. Tolerant of malformed JSON."""
+    path = os.path.join(full, PROJECT_METADATA_FILENAME)
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return None
+
+
+def git_history(full, n=10):
+    """Recent commits for the UI rollback picker. Returns
+    [{sha, short, date, msg}], newest first."""
+    if not os.path.isdir(os.path.join(full, ".git")):
+        return []
+    try:
+        r = subprocess.run(
+            ["git", "-C", full, "log", f"-{int(n)}",
+             "--format=%H%x09%h%x09%cI%x09%s"],
+            capture_output=True, text=True, timeout=15)
+        if r.returncode != 0:
+            return []
+        out = []
+        for ln in r.stdout.splitlines():
+            parts = ln.split("\t", 3)
+            if len(parts) == 4:
+                out.append({"sha": parts[0], "short": parts[1],
+                            "date": parts[2], "msg": parts[3]})
+        return out
+    except (OSError, subprocess.TimeoutExpired, ValueError):
+        return []
+
+
+def git_current_sha(full):
+    """The currently checked-out SHA (or '' if not a git repo / detached)."""
+    try:
+        r = subprocess.run(["git", "-C", full, "rev-parse", "HEAD"],
+                           capture_output=True, text=True, timeout=10)
+        if r.returncode == 0:
+            return r.stdout.strip()
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+    return ""
+
+
+def backup_script_dir(full, name, emit=None):
+    """Move an existing script dir out of the way (instead of rmtree) when
+    force-reinstalling. Goes under <CODE>/.deleted/<name>.<timestamp>/ — hidden,
+    not on the installed list, but recoverable for a while if the user changes
+    their mind. Returns the backup path."""
+    backups_root = os.path.join(CODE, ".deleted")
+    os.makedirs(backups_root, exist_ok=True)
+    ts = time.strftime("%Y%m%dT%H%M%S")
+    bak = os.path.join(backups_root, f"{name}.{ts}")
+    os.rename(full, bak)
+    if emit:
+        emit(f"backed up prior {name} → {os.path.relpath(bak, CODE)}")
+    # match dust owner so future cleanup doesn't need root
+    uid, gid, _, _ = target_owner()
+    if os.getuid() == 0 and uid != 0:
+        try:
+            os.lchown(backups_root, uid, gid)
+            chown_path(bak, uid, gid)
+        except OSError:
+            pass
+    return bak
 
 
 def self_update():
@@ -1595,7 +1807,22 @@ class H(http.server.SimpleHTTPRequestHandler):
                 full, name = safe_script_dir(self._q().get("name", [""])[0])
                 if not os.path.isdir(full):
                     return self._json({"error": "not installed"}, 404)
-                return self._json({"name": name, "url": git_remote(full)})
+                # Now also surfaces current SHA + maiden-style .project metadata
+                # (installed_on / updated_on / catalog_entry) so the UI can
+                # render install provenance and offer rollback.
+                md = read_project_metadata(full)
+                return self._json({"name": name, "url": git_remote(full),
+                                   "sha": git_current_sha(full),
+                                   "project": md})
+            if path == "/api/history":
+                # Last 10 commits for the UI rollback picker. Empty if the
+                # script wasn't cloned with full history (older ingenue installs).
+                full, name = safe_script_dir(self._q().get("name", [""])[0])
+                if not os.path.isdir(full):
+                    return self._json({"error": "not installed"}, 404)
+                return self._json({"name": name,
+                                   "current": git_current_sha(full),
+                                   "history": git_history(full)})
             if path == "/api/installed":
                 return self._json(sorted(d for d in os.listdir(CODE)
                                          if os.path.isdir(os.path.join(CODE, d))
@@ -1744,16 +1971,54 @@ class H(http.server.SimpleHTTPRequestHandler):
             if path == "/api/install":
                 full, name = safe_script_dir(b.get("name"))
                 url = (b.get("url") or "").strip()
+                sha = (b.get("sha") or "").strip() or None
+                catalog_entry = b.get("catalog_entry") if isinstance(b.get("catalog_entry"), dict) else None
                 if not url.startswith(("http://", "https://", "git@")):
                     return self._json({"error": "no/invalid git url"}, 400)
                 if os.path.isdir(full):
                     if b.get("force"):
-                        shutil.rmtree(full)
+                        # Non-destructive replace: move the prior tree to
+                        # <CODE>/.deleted/<name>.<timestamp>/ instead of rmtree.
+                        # Recoverable if the user (or another agent) realises
+                        # the reinstall was a mistake; the .deleted dir is
+                        # hidden so it doesn't pollute the installed list.
+                        try:
+                            backup_script_dir(full, name)
+                        except OSError as e:
+                            return self._json({"error": f"backup-rename failed: {e}"}, 500)
                     else:
                         return self._json({"error": f"{name} already installed"}, 409)
                 # Same worker+lock model as heal: streams the clone, 409 if busy.
                 jid, busy = start_job("install", name, "install",
-                                      lambda emit: do_clone(full, url, emit))
+                                      lambda emit: do_clone(full, url, emit,
+                                                             sha=sha, catalog_entry=catalog_entry))
+                if busy:
+                    return self._json({"error": busy}, 409)
+                return self._json({"ok": True, "job": jid, "name": name})
+            if path == "/api/update":
+                # git fetch + reset --hard, non-destructive — preserves .project,
+                # untracked user files, and crucially the .git directory so
+                # rollback remains possible. The maiden-equivalent of pull-on-update.
+                full, name = safe_script_dir(b.get("name"))
+                if not os.path.isdir(full):
+                    return self._json({"error": f"{name} is not installed"}, 404)
+                jid, busy = start_job("update", name, "update",
+                                      lambda emit: do_update(full, emit))
+                if busy:
+                    return self._json({"error": busy}, 409)
+                return self._json({"ok": True, "job": jid, "name": name})
+            if path == "/api/rollback":
+                # Roll a script back to an arbitrary git ref (SHA, tag, HEAD~1).
+                # Requires the script to have been cloned with history (do_clone
+                # since b62+). UI surfaces last 10 commits via /api/history.
+                full, name = safe_script_dir(b.get("name"))
+                target = (b.get("target") or "").strip()
+                if not target:
+                    return self._json({"error": "target SHA or ref required"}, 400)
+                if not os.path.isdir(full):
+                    return self._json({"error": f"{name} is not installed"}, 404)
+                jid, busy = start_job("rollback", name, "rollback",
+                                      lambda emit: do_rollback(full, target, emit))
                 if busy:
                     return self._json({"error": busy}, 409)
                 return self._json({"ok": True, "job": jid, "name": name})
