@@ -911,16 +911,27 @@ def _extract_download_origins(downloads):
 
 def backup_script_dir(full, name, emit=None):
     """Move an existing script dir out of the way (instead of rmtree) when
-    force-reinstalling. Goes under <CODE>/.deleted/<name>.<timestamp>/ — hidden,
-    not on the installed list, but recoverable for a while if the user changes
-    their mind. Returns the backup path."""
-    backups_root = os.path.join(CODE, ".deleted")
+    force-reinstalling. Stored under <dust-owner-home>/.ingenue-backups/<name>.<ts>/.
+
+    Critical placement note: norns's sclang scans the ENTIRE dust tree
+    recursively for class files (sclang_conf.yaml's includePaths typically
+    list /home/we/dust, not /home/we/dust/code). So any backup stored anywhere
+    under dust — even hidden — leaves Engine_X.sc files visible to scsynth's
+    class compiler and produces 'DUPLICATE ENGINES' against the fresh install.
+    Found 2026-06-06 the hard way: dust/code/.deleted/ broke amenbreak load,
+    then dust/.ingenue-deleted/ broke it again. Anywhere outside dust is fine
+    — the dust owner's home dir is the natural choice (persistent, owned by
+    the right user, not on the installed list).
+
+    Returns the backup path."""
+    _, _, _, home = target_owner()
+    backups_root = os.path.join(home or "/tmp", ".ingenue-backups")
     os.makedirs(backups_root, exist_ok=True)
     ts = time.strftime("%Y%m%dT%H%M%S")
     bak = os.path.join(backups_root, f"{name}.{ts}")
     os.rename(full, bak)
     if emit:
-        emit(f"backed up prior {name} → {os.path.relpath(bak, CODE)}")
+        emit(f"backed up prior {name} → ~/.ingenue-backups/{name}.{ts}")
     # match dust owner so future cleanup doesn't need root
     uid, gid, _, _ = target_owner()
     if os.getuid() == 0 and uid != 0:
