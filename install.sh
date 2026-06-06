@@ -138,6 +138,36 @@ elif command -v systemctl >/dev/null 2>&1 && [ -d /etc/systemd/system ]; then
     PKILL="$(command -v pkill 2>/dev/null || echo /usr/bin/pkill)"
     PRE="ExecStartPre=-$PKILL -f \"server.py $PORT\""
   fi
+  # Run as the user who owns the dust tree (typically `we` on norns) — NOT root.
+  # If the service runs as root, every `git clone` and script install.sh creates
+  # root-owned files in dust/code, and maiden (running as `we`) then can't
+  # manage them: `unlinkat … permission denied`, silent remove failures, the
+  # script becomes un-editable from maiden. We surface this in ingenue's
+  # Configuration > Heal installations row too, but doing it right at install
+  # time avoids creating the breakage in the first place.
+  SVC_USER=""; SVC_GROUP=""
+  if [ -d "$DUST/code" ]; then
+    # `stat -c` (GNU coreutils, which norns has) — gives us the owner name+group
+    SVC_USER="$(stat -c '%U' "$DUST/code" 2>/dev/null || true)"
+    SVC_GROUP="$(stat -c '%G' "$DUST/code" 2>/dev/null || true)"
+  fi
+  # Reject root/UNKNOWN — those won't fix the bug. Prefer `we` if it exists as
+  # a fallback (a real norns without dust would be unusual but possible).
+  if [ -z "$SVC_USER" ] || [ "$SVC_USER" = "root" ] || [ "$SVC_USER" = "UNKNOWN" ]; then
+    if id we >/dev/null 2>&1; then
+      SVC_USER="we"; SVC_GROUP="$(id -gn we 2>/dev/null || echo we)"
+    fi
+  fi
+  USER_LINES=""
+  if [ -n "$SVC_USER" ] && [ "$SVC_USER" != "root" ]; then
+    USER_LINES="User=$SVC_USER"$'\n'"Group=${SVC_GROUP:-$SVC_USER}"
+    say "service will run as $SVC_USER:${SVC_GROUP:-$SVC_USER} (matches dust/code owner)"
+    # Make sure WorkingDirectory and our writable artifacts (.version, server.log)
+    # are owned by the service user, or systemd will fail to start the unit.
+    priv chown -R "$SVC_USER:${SVC_GROUP:-$SVC_USER}" "$WORK" 2>/dev/null || true
+  else
+    say "warn: couldn't determine a non-root user for the service — running as root (scripts may be created root-owned; use Configuration > Heal installations after)"
+  fi
   TMP="$(mktemp)"
   cat > "$TMP" <<EOF
 [Unit]
@@ -146,6 +176,7 @@ After=network.target
 [Service]
 Type=simple
 WorkingDirectory=$WORK
+$USER_LINES
 # Reclaim :$PORT from any stray/stale instance before binding — kill by PORT, not by
 # process name ('pkill -f "server.py $PORT"' self-matches and is unreliable). '-' = ignore no-match.
 $PRE

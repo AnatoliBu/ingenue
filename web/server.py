@@ -16,7 +16,7 @@ API (confined to the dust tree):
   POST /api/install  {name,url,force} -> git clone url into dust/code/name
   POST /api/remove   {name}           -> delete dust/code/name
 """
-import http.server, socketserver, os, sys, json, re, shutil, subprocess, threading, urllib.parse, urllib.request, datetime
+import http.server, socketserver, os, sys, json, re, shutil, subprocess, threading, urllib.parse, urllib.request, datetime, pwd
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 
@@ -53,6 +53,199 @@ def installed_sha():
             return f.read().strip()
     except Exception:
         return ""
+
+
+# ---------------------------------------------------------------------------
+# Script ownership — install as the dust owner, not as root
+# ---------------------------------------------------------------------------
+# Real norns runs everything as `we` (uid 1000); maiden, matron, even SuperCollider.
+# If ingenue is launched as root (e.g. an old systemd unit, or a launcher that
+# didn't drop privs), then `git clone` and the script's install.sh end up making
+# root-owned files in dust/code/<script>/ — and maiden (running as `we`) then
+# fails to manage them: `unlinkat … permission denied`, "Remove" silently leaves
+# files behind, the script becomes un-editable from maiden.
+#
+# Fix: every subprocess that *creates* files in dust/code drops to the user who
+# owns dust/code (typically `we`). Operations that need root (sclang_conf.yaml
+# writes, scsynth Extensions installs, systemctl restart) keep root.
+#
+# We use preexec_fn (which runs after fork(), before exec()) to setuid in the
+# child. That's the smallest correct change: ingenue itself can keep its root
+# powers for the heal endpoints that need them, while clones/installers run
+# under the right uid from the start (no chown race window).
+_target_owner_cache = None
+
+
+def target_owner():
+    """The (uid, gid, name, home) scripts in dust/code SHOULD belong to. Computed
+    from dust/code's own ownership (the canonical source — whatever user owns
+    dust/code is whoever runs the rest of norns), falling back to `we`, falling
+    back to the current process. Cached for the life of the server."""
+    global _target_owner_cache
+    if _target_owner_cache is not None:
+        return _target_owner_cache
+    uid = gid = None
+    name = home = None
+    try:
+        st = os.stat(CODE)
+        if st.st_uid != 0:                    # dust owned by a real user
+            uid, gid = st.st_uid, st.st_gid
+            try:
+                p = pwd.getpwuid(uid)
+                name, home = p.pw_name, p.pw_dir
+            except KeyError:
+                name = str(uid)
+    except OSError:
+        pass
+    if uid is None:                           # dust missing / root-owned -> try we
+        try:
+            p = pwd.getpwnam("we")
+            uid, gid, name, home = p.pw_uid, p.pw_gid, p.pw_name, p.pw_dir
+        except KeyError:
+            pass
+    if uid is None:                           # last resort: ourselves
+        uid, gid = os.getuid(), os.getgid()
+        try:
+            p = pwd.getpwuid(uid)
+            name, home = p.pw_name, p.pw_dir
+        except KeyError:
+            name = str(uid); home = os.environ.get("HOME", "/")
+    _target_owner_cache = (uid, gid, name, home or os.environ.get("HOME", "/"))
+    return _target_owner_cache
+
+
+def _drop_privs_to(uid, gid):
+    """preexec_fn factory — drop supplementary groups, setgid, setuid in the
+    forked child before exec. Silently no-ops if we lack the privilege (the
+    parent isn't root); ordering matters because setuid eats the cap to setgid."""
+    def _do():
+        try: os.setgroups([])     # drop supplementary groups; ignore if not root
+        except OSError: pass
+        try: os.setgid(gid)
+        except OSError: pass
+        try: os.setuid(uid)
+        except OSError: pass
+        os.umask(0o022)
+    return _do
+
+
+def _run_as_target():
+    """Return (preexec_fn, env_overlay) suitable for stream_proc(run_as=...), or
+    (None, None) when we're already running as the target user (no drop needed).
+    env_overlay sets HOME/USER/LOGNAME so git etc. don't read /root/.gitconfig."""
+    uid, gid, name, home = target_owner()
+    if os.getuid() == uid:
+        return (None, None)
+    if os.getuid() != 0:
+        # Not root, and not the target — we can't switch. Return no-op so the
+        # caller doesn't fight us; chown_path afterward will still try.
+        return (None, None)
+    return (_drop_privs_to(uid, gid),
+            {"HOME": home or "/", "USER": name, "LOGNAME": name})
+
+
+def ownership_status():
+    """Report ownership mismatches in dust/code against the target owner.
+    Used by the Heal Installations row in the configuration sheet.
+
+    Skips ingenue's own dir (the editor sometimes legitimately runs as a
+    different user than the scripts) and hidden dirs. Returns a sample of
+    mismatches (max 12) and the total count, so the UI can say e.g.
+    "3 script(s) own-mismatch — Heal"."""
+    uid, gid, name, _ = target_owner()
+    bad = []
+    try:
+        for d in sorted(os.listdir(CODE)):
+            if d == "ingenue" or d.startswith("."):
+                continue
+            full = os.path.join(CODE, d)
+            try:
+                st = os.lstat(full)
+                if st.st_uid != uid or st.st_gid != gid:
+                    try: cur_user = pwd.getpwuid(st.st_uid).pw_name
+                    except KeyError: cur_user = str(st.st_uid)
+                    bad.append({"name": d, "current": cur_user,
+                                "uid": st.st_uid, "gid": st.st_gid})
+            except OSError:
+                continue
+    except OSError:
+        pass
+    return {
+        "target": {"uid": uid, "gid": gid, "name": name},
+        "running_as": {"uid": os.getuid(), "name": pwd.getpwuid(os.getuid()).pw_name
+                       if _safe_getpwuid(os.getuid()) else str(os.getuid())},
+        "mismatches": bad[:12],
+        "mismatch_count": len(bad),
+        "ok": len(bad) == 0,
+        # We can heal if we're root (always) or already running as the target.
+        "can_heal": len(bad) > 0 and (os.getuid() == 0 or os.getuid() == uid),
+    }
+
+
+def _safe_getpwuid(uid):
+    try: return pwd.getpwuid(uid)
+    except KeyError: return None
+
+
+def heal_ownership():
+    """Walk dust/code and chown every script tree to the target owner. Skips
+    ingenue's own dir. Idempotent. Requires root (or already being the target
+    user, in which case the only mismatches we can fix are dirs another user
+    set our own uid on — uncommon)."""
+    uid, gid, name, _ = target_owner()
+    if os.getuid() != 0 and os.getuid() != uid:
+        return {"error": f"ingenue isn't running as root or as {name} ({uid}) — "
+                          f"can't chown other users' files"}
+    fixed, errors = [], []
+    try:
+        entries = sorted(os.listdir(CODE))
+    except OSError as e:
+        return {"error": str(e)}
+    for d in entries:
+        if d == "ingenue" or d.startswith("."):
+            continue
+        full = os.path.join(CODE, d)
+        try:
+            st = os.lstat(full)
+            if st.st_uid == uid and st.st_gid == gid:
+                continue                  # already right; no walk needed
+            try: cur_user = pwd.getpwuid(st.st_uid).pw_name
+            except KeyError: cur_user = str(st.st_uid)
+            n = chown_path(full, uid, gid)
+            fixed.append({"name": d, "from": cur_user,
+                          "to": name, "entries": n})
+        except OSError as e:
+            errors.append({"name": d, "error": str(e)})
+    return {"ok": True, "target": {"uid": uid, "gid": gid, "name": name},
+            "fixed": fixed, "fixed_count": len(fixed),
+            "errors": errors}
+
+
+def chown_path(path, uid, gid):
+    """Recursively chown path to (uid, gid). Idempotent: leaves already-correct
+    entries alone (so the walk is cheap on re-runs). Uses lchown (doesn't
+    follow symlinks — important for git symlinks). Returns the number of
+    entries touched (including ones that were already correct)."""
+    n = 0
+    try:
+        st = os.lstat(path)
+        if st.st_uid != uid or st.st_gid != gid:
+            os.lchown(path, uid, gid)
+        n = 1
+    except OSError:
+        return 0
+    if os.path.isdir(path) and not os.path.islink(path):
+        for root, dirs, files in os.walk(path, followlinks=False):
+            for entry in dirs + files:
+                p = os.path.join(root, entry)
+                try:
+                    st = os.lstat(p)
+                    if st.st_uid != uid or st.st_gid != gid:
+                        os.lchown(p, uid, gid)
+                    n += 1
+                except OSError:
+                    continue
+    return n
 
 
 # Serializes /api/install, /api/heal, and /api/self-update against each other.
@@ -159,12 +352,24 @@ def start_job(kind, name, what, fn):
     return jid, None
 
 
-def stream_proc(cmd, cwd, emit, timeout=900, shell=False):
+def stream_proc(cmd, cwd, emit, timeout=900, shell=False, run_as=None):
     """Run cmd, streaming stdout+stderr to emit() on every \\n or \\r boundary
     (so git --progress and build tools update live). Returns the exit code, or
-    None if it was killed by the timeout."""
+    None if it was killed by the timeout.
+
+    run_as=(preexec_fn, env_overlay) (typically from _run_as_target()) drops
+    privileges to that user in the child before exec and merges env_overlay
+    (HOME/USER/LOGNAME) so git, npm, etc. don't read the wrong dotfiles."""
+    preexec = None
+    child_env = None
+    if run_as:
+        preexec, overlay = run_as
+        if overlay:
+            child_env = dict(os.environ)
+            child_env.update(overlay)
     p = subprocess.Popen(cmd, cwd=cwd, shell=shell,
-                         stdout=subprocess.PIPE, stderr=subprocess.STDOUT, bufsize=0)
+                         stdout=subprocess.PIPE, stderr=subprocess.STDOUT, bufsize=0,
+                         preexec_fn=preexec, env=child_env)
     killer = threading.Timer(timeout, p.kill)
     killer.daemon = True
     killer.start()
@@ -191,12 +396,25 @@ def stream_proc(cmd, cwd, emit, timeout=900, shell=False):
 
 
 def do_clone(full, url, emit):
-    """Stream a git clone into `full`. Returns (ok, error|None)."""
-    emit(f"$ git clone {url}")
+    """Stream a git clone into `full`. Drops to the dust owner (typically `we`)
+    when we're running as root, so cloned files don't end up root-owned and
+    leave maiden (running as `we`) unable to manage them. Returns (ok, error|None)."""
+    uid, gid, name, _ = target_owner()
+    run_as = _run_as_target()
+    as_suffix = f"  (as {name})" if run_as[0] else ""
+    emit(f"$ git clone {url}{as_suffix}")
     rc = stream_proc(["git", "clone", "--depth", "1", "--progress", url, full],
-                     None, emit, timeout=180)
+                     None, emit, timeout=180, run_as=run_as)
     if rc != 0:
         return False, (f"git clone exited {rc}" if rc is not None else "git clone timed out")
+    # Backstop: if drop-privs didn't apply (e.g. ingenue is root but dust/code
+    # is also root-owned -> target_owner == us == root, no drop happens, but
+    # then we'd never reach here in a problem state). If anything *did* end up
+    # mis-owned, chown the whole tree so maiden can manage it.
+    if os.getuid() == 0 and uid != 0:
+        n = chown_path(full, uid, gid)
+        if n:
+            emit(f"chown {name}:{name} ({n} entries)")
     emit("✓ cloned — run SYSTEM > RESTART to load it")
     return True, None
 
@@ -309,14 +527,29 @@ def run_install(full, emit=None):
     downloads + tar extracts run in Python (native gzip/xz, no BusyBox-tar / GNU-tar
     differences), /home/we/dust is translated to the real dust, and other commands
     (builds, etc.) fall back to the shell. `emit(line)` (optional) receives each log
-    line live so the UI can follow along; shell builds stream their output too."""
+    line live so the UI can follow along; shell builds stream their output too.
+
+    Shell subcommands drop privileges to the dust owner (typically `we`) when
+    ingenue is running as root — so anything the installer creates lands owned
+    by the right user. Python-native steps (urlretrieve, makedirs, tar extract)
+    run in ingenue's own process and are chowned after the fact via fixown()."""
     import shlex, tarfile, zipfile
     emit = emit or (lambda *_: None)
     log = []
 
+    uid, gid, name, _ = target_owner()
+    run_as = _run_as_target()
+    needs_chown = os.getuid() == 0 and uid != 0
+
     def add(msg):
         log.append(msg)
         emit(msg)
+
+    def fixown(p):
+        """Match the target owner for paths we created in-process (not in a child)."""
+        if needs_chown:
+            try: os.lchown(p, uid, gid)
+            except OSError: pass
 
     rel = find_installer(full)
     if not rel:
@@ -339,6 +572,7 @@ def run_install(full, emit=None):
                 d = line[3:].strip()
                 cwd = d if os.path.isabs(d) else os.path.normpath(os.path.join(cwd, d))
                 os.makedirs(cwd, exist_ok=True)
+                fixown(cwd)
             elif re.search(r"\b(wget|curl)\b", line) and re.search(r"https?://", line):
                 url = re.search(r"(https?://\S+)", line).group(1).rstrip("\"'")
                 om = re.search(r"-[oO]\s+(\S+)", line)
@@ -346,6 +580,7 @@ def run_install(full, emit=None):
                 dest = os.path.join(cwd, out)
                 emit(f"↓ downloading {out} …")
                 urllib.request.urlretrieve(url, dest)
+                fixown(dest)
                 add(f"downloaded {out} ({os.path.getsize(dest)} bytes)")
             elif line.startswith("tar "):
                 fm = re.search(r"(\S+\.(?:tar\.gz|tgz|tar\.xz|tar|zip))\b", line)
@@ -356,6 +591,8 @@ def run_install(full, emit=None):
                         with zipfile.ZipFile(p) as z: z.extractall(cwd)
                     else:
                         with tarfile.open(p) as t: t.extractall(cwd)
+                    if needs_chown:
+                        chown_path(cwd, uid, gid)   # extracted files inherited our uid; fix
                     add(f"extracted {os.path.basename(p)}")
             elif line.startswith("rm "):
                 for f in shlex.split(line)[1:]:
@@ -365,10 +602,14 @@ def run_install(full, emit=None):
             elif line.startswith("mkdir"):
                 for d in shlex.split(line)[1:]:
                     if not d.startswith("-"):
-                        os.makedirs(d if os.path.isabs(d) else os.path.join(cwd, d), exist_ok=True)
+                        p = d if os.path.isabs(d) else os.path.join(cwd, d)
+                        os.makedirs(p, exist_ok=True)
+                        fixown(p)
             else:
                 emit(f"$ {line}")
-                rc = stream_proc(line, cwd, emit, timeout=900, shell=True)   # build output streams live
+                # build output streams live; drops privs to dust-owner so any
+                # files this command creates aren't root-owned
+                rc = stream_proc(line, cwd, emit, timeout=900, shell=True, run_as=run_as)
                 if rc != 0:
                     ok = False
                     log.append(f"$ {line} -> exit {rc}")
@@ -377,6 +618,15 @@ def run_install(full, emit=None):
         except Exception as e:  # noqa: BLE001
             ok = False
             add(f"! {line[:60]} -> {e}")
+    # Belt-and-suspenders: chown the whole tree once at the end so anything
+    # the installer created that escaped our per-step ownership fixups still
+    # ends up owned correctly. Idempotent — already-correct entries are no-ops.
+    if needs_chown:
+        try:
+            n = chown_path(full, uid, gid)
+            add(f"chown {name}:{name} ({n} entries)")
+        except OSError as e:
+            add(f"! chown {name}:{name} -> {e}")
     return ok, "\n".join(log)
 
 
@@ -435,6 +685,34 @@ def analyze_remote(url):
 
 
 def analyze_dir(full, name):
+    # First pass: catalogue which support libraries this script *bundles* under
+    # its own lib/<X>/ tree. A bundled lib is a dir at lib/<X>/ that contains
+    # at least one .lua (or .sc/.sh) file — i.e. the script ships its own copy.
+    # Bundled libs are NOT a missing dep (the script's own require's resolve
+    # locally), AND their internal source must be excluded from the blob — the
+    # bundled copy's own self-references would otherwise trip the dep regex
+    # below (e.g. dreamsequence bundles lib/nb/lib/nb.lua, whose own `require
+    # "nb/..."` calls used to falsely flag dreamsequence as needing nb).
+    bundled = set()
+    lib_root = os.path.join(full, "lib")
+    if os.path.isdir(lib_root):
+        try:
+            for d in os.listdir(lib_root):
+                sub = os.path.join(lib_root, d)
+                if not os.path.isdir(sub) or d.startswith("."):
+                    continue
+                has_code = False
+                for r, _ds, fs in os.walk(sub):
+                    if ".git" in r:
+                        continue
+                    if any(f.endswith((".lua", ".sc", ".sh")) for f in fs):
+                        has_code = True; break
+                if has_code:
+                    bundled.add(d.lower())
+        except OSError:
+            pass
+    bundled_prefixes = tuple(os.path.join("lib", b) + os.sep for b in bundled)
+
     texts, files = [], []
     for root, dirs, fs in os.walk(full):
         if ".git" in root:
@@ -442,6 +720,8 @@ def analyze_dir(full, name):
         for f in fs:
             rel = os.path.relpath(os.path.join(root, f), full)
             files.append(rel)
+            if rel.startswith(bundled_prefixes):     # don't read bundled lib code into the blob
+                continue
             if f.endswith((".lua", ".sh", ".sc")):
                 try:
                     with open(os.path.join(root, f), "r", encoding="utf-8", errors="ignore") as fh:
@@ -455,8 +735,10 @@ def analyze_dir(full, name):
     sc_ext = sorted(set(re.findall(r"([A-Za-z0-9_]+_scsynth\.so)", blob)))
     # library names can contain dots/hyphens (mx.samples, mx.synths, 4-big-knobs) — the old
     # [A-Za-z0-9_]+ class silently dropped those, so dotted deps never flagged for heal.
+    # Also filter out anything the script bundles under its own lib/<X>/ — those require's
+    # resolve locally and are not missing.
     reqs = sorted(set(r for r in re.findall(r"require[\s(]+['\"]([A-Za-z0-9_.\-]+)/lib", blob)
-                      if r not in (name, "core") and r.strip(".")))
+                      if r not in (name, "core") and r.strip(".") and r.lower() not in bundled))
     native = []
     if any(f.endswith("go.mod") for f in files): native.append("go")
     if any(f.endswith("Makefile") for f in files): native.append("make")
@@ -472,6 +754,12 @@ def analyze_dir(full, name):
                     for f in files if re.match(r"Engine_.+\.sc$", os.path.basename(f))}
     missing_engines = sorted(e for e in engines
                              if e.lower() not in avail and e.lower() not in self_engines)
+    # nb is flagged ONLY if the script references it externally AND doesn't ship
+    # its own bundled copy under lib/nb/. Scripts that vendor nb (dreamsequence,
+    # at_sea, etc.) self-resolve their require's and don't need the standalone
+    # nb script installed — flagging them as needing nb was a recurring false
+    # positive that drove agents to re-install nb-voice onto already-working setups.
+    nb_referenced = bool(re.search(r"require[\s(]+['\"]nb/|/nb/lib|nb_voice|nb:add", blob))
     rep = {
         "name": name,
         "git_url": git_remote(full),                     # inferred clone url — enables reinstall/update off-catalog
@@ -482,7 +770,8 @@ def analyze_dir(full, name):
         "requires_scripts": reqs,
         "engines": engines,
         "missing_engines": missing_engines,              # engine.name targets not installed on device
-        "nb": bool(re.search(r"require[\s(]+['\"]nb/|/nb/lib|nb_voice|nb:add", blob)),
+        "nb": nb_referenced and "nb" not in bundled,
+        "bundled_libs": sorted(bundled),                 # for transparency in the UI/debug
         "native": sorted(set(native)),
     }
     rep["needs_setup"] = bool(rep["install_script"] or rep["downloads"] or rep["needs_sc_ext"]
@@ -1326,6 +1615,8 @@ class H(http.server.SimpleHTTPRequestHandler):
                                    "repo": "seajaysec/ingenue", "branch": "main"})
             if path == "/api/sysinfo":
                 return self._json(sysinfo())
+            if path == "/api/ownership":
+                return self._json(ownership_status())
             if path == "/api/audio":
                 return self._json(audio_status())
             if path == "/api/mods":
@@ -1377,12 +1668,38 @@ class H(http.server.SimpleHTTPRequestHandler):
                 full, name = safe_script_dir(b.get("name"))
                 if not os.path.isdir(full):
                     return self._json({"error": f"{name} is not installed"}, 404)
-                shutil.rmtree(full)
+                # rmtree(onerror=...) lets us collect per-file errors instead of
+                # aborting on the first one. Then verify nothing survived — that's
+                # the only honest signal of "actually removed". The historical bug
+                # we're closing: a root-owned script (from a prior buggy ingenue
+                # install) couldn't be removed by a non-root ingenue, but the old
+                # path either swallowed errors or surfaced a generic 500; the UI
+                # showed "removed" but the dir was still on disk.
+                errs = []
+                def _rmerr(fn, p, einfo):
+                    errs.append({"path": os.path.relpath(p, full) or ".",
+                                 "error": str(einfo[1])})
+                shutil.rmtree(full, onerror=_rmerr)
+                if os.path.exists(full):
+                    survivors = []
+                    for root, dirs, files in os.walk(full):
+                        for x in dirs + files:
+                            survivors.append(os.path.relpath(os.path.join(root, x), full))
+                            if len(survivors) >= 8: break
+                        if len(survivors) >= 8: break
+                    return self._json({
+                        "error": f"{name} not fully removed — {len(survivors)} item(s) remain",
+                        "survivors": survivors,
+                        "first_errors": errs[:5],
+                        "hint": "open Configuration > Heal Installations to fix ownership, then retry"
+                    }, 500)
                 return self._json({"ok": True, "removed": name})
             if path == "/api/scplugins/heal":
                 return self._json(scplugins_heal(b.get("source", "bundled"), (b.get("url") or "").strip()))
             if path == "/api/sclang/heal":
                 return self._json(sclang_config_heal())
+            if path == "/api/heal-ownership":
+                return self._json(heal_ownership())
             if path == "/api/self-update":
                 return self._json(self_update())
             if path == "/api/audio/restart":
