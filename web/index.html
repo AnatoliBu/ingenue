@@ -2767,9 +2767,24 @@ function wireCards(v,list,tab){
     // Lazy-fetch and render the version row for installed scripts. Done here
     // (not at HTML build time) so renderRepo stays a pure string operation.
     const verRow=card.querySelector('.more-version[data-version-for]');
-    if(verRow && HAS_BACKEND) populateVersionRow(verRow, verRow.getAttribute('data-version-for'));
+    if(verRow && HAS_BACKEND) queueVersionRow(verRow, verRow.getAttribute('data-version-for'));
     // cards stay expanded; demo embeds + README load on demand
   });
+}
+// /api/giturl is one git call on the device per installed card; with hundreds of
+// installed scripts, firing them all at once (esp. across repeated re-renders)
+// exhausts the browser's connection pool (ERR_INSUFFICIENT_RESOURCES) and wedges
+// the UI. Funnel them through a small concurrency-limited queue, and skip rows
+// that were detached by a re-render before their turn came up.
+const VERQ={q:[],active:0,max:4};
+function queueVersionRow(rowEl,name){ VERQ.q.push([rowEl,name]); pumpVerQ(); }
+function pumpVerQ(){
+  while(VERQ.active<VERQ.max && VERQ.q.length){
+    const [r,n]=VERQ.q.shift();
+    if(!r||!r.isConnected) continue;             // dropped by a re-render — don't fetch
+    VERQ.active++;
+    Promise.resolve(populateVersionRow(r,n)).catch(()=>{}).finally(()=>{ VERQ.active--; pumpVerQ(); });
+  }
 }
 
 /* ===== per-script version row: commit · Update · Rollback ===== */
@@ -2856,13 +2871,27 @@ function wireUpdStrip(root){
   (root||document).querySelectorAll('[data-updfilter]').forEach(b=>b.onclick=()=>{updFilter=!updFilter;renderRepo();});
   (root||document).querySelectorAll('[data-updcheck]').forEach(b=>b.onclick=()=>checkUpdates(true));
 }
-function refreshUpdStrip(){    // light in-place refresh of strip + grid badges (keeps search focus)
-  const v=document.getElementById('repoview'); if(!v||repoTab!=='installed') return;
+function refreshUpdStrip(){    // in-place refresh of strip + badges only — NO updateGrid (would refire
+  const v=document.getElementById('repoview'); if(!v||repoTab!=='installed') return;  // every card's giturl)
   const html=updStripHTML(); const cur=v.querySelector('.upd-strip');
   const tmp=document.createElement('div'); tmp.innerHTML=html; const nu=tmp.firstElementChild;
   if(cur){ if(nu) cur.replaceWith(nu); else cur.remove(); }
   else if(nu){ const head=v.querySelector('.rd-cathead'); if(head) head.after(nu); }
-  wireUpdStrip(v); updateGrid();
+  wireUpdStrip(v); applyUpdBadges();
+}
+function applyUpdBadges(){     // toggle ↻update badges on already-rendered installed cards — no re-render, no fetch
+  const v=document.getElementById('repoview'); if(!v||repoTab!=='installed') return;
+  const byName={}; v.querySelectorAll('.rd-grid .card[data-pn]').forEach(c=>{ byName[c.getAttribute('data-pn')]=c; });
+  REPO.installed.forEach(p=>{
+    const card=byName[p.dir||p.n]; if(!card) return;   // getAttribute returns the decoded name
+    const nm=card.querySelector('.nm'); if(!nm) return;
+    const have=nm.querySelector('.okb.upd');
+    if(p.upd_avail && !have){
+      const s=document.createElement('span'); s.className='okb upd';
+      s.innerHTML=`<svg viewBox="0 0 32 32"><path d="${I.refresh}"/></svg>update`;
+      nm.appendChild(document.createTextNode(' ')); nm.appendChild(s);
+    } else if(!p.upd_avail && have){ have.remove(); }
+  });
 }
 function applyUpdResults(res){
   updProgress={done:res.done||0,total:res.total||0};
@@ -3079,7 +3108,7 @@ function repoCard(p,tab){
       <div class="more-demo">${demoSlot}</div>
       <div class="more-readme" data-readme>${isUrl(p.proj)?'<button class="readme-btn">📖 load README</button>':''}</div>
     </div>`;
-  return `<div class="card open${p.gh?' gh':''}" ${p.gh?`style="--srcc:${SRC[(p.srcs||[])[0]]?SRC[(p.srcs||[])[0]].color:'var(--trim)'}"`:''}>
+  return `<div class="card open${p.gh?' gh':''}" data-pn="${esc(p.dir||p.n)}" ${p.gh?`style="--srcc:${SRC[(p.srcs||[])[0]]?SRC[(p.srcs||[])[0]].color:'var(--trim)'}"`:''}>
     <div class="head"><label class="csel" title="select for bulk install"><input type="checkbox" data-sel ${selection.has(p.n)?'checked':''}></label><div class="id">
       <div class="nm">${p.n} ${badge}${lock}</div><div class="by">by <a href="#" data-author="${esc(ghOwner(p)||p.a||'')}" title="see this author's norns repos">${esc(p.a)}</a></div></div>
       <div class="act-row">${actions}</div></div>
