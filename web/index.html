@@ -446,8 +446,10 @@ button{font-family:inherit}
 /* compact wrapping grid — reads left→right, top-left is first in SELECT; uses the
    horizontal space so many more rows are visible at once */
 .fav-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:4px 8px}
-.fav-row{display:flex;align-items:center;gap:6px;padding:3px 5px 3px 4px;border:1px solid var(--trim);border-radius:6px;background:color-mix(in srgb,var(--fg) 3%,transparent);min-width:0}
+.fav-row{display:flex;align-items:center;gap:6px;padding:3px 5px 3px 4px;border:1px solid var(--trim);border-radius:6px;background:color-mix(in srgb,var(--fg) 3%,transparent);min-width:0;
+  user-select:none;-webkit-user-select:none;-webkit-touch-callout:none}   /* mobile: no text-select/callout fighting the drag */
 .fav-row.favd{cursor:grab}
+.fav-row.lifted{opacity:.6;border-color:var(--accent2);box-shadow:0 2px 8px rgba(0,0,0,.35);background:color-mix(in srgb,var(--accent2) 14%,var(--bg))}  /* touch long-press pickup */
 .fav-row.favd:active{cursor:grabbing}
 .fav-row.drag{opacity:.35}
 .fav-row.over{border-color:var(--accent2);box-shadow:0 0 0 1px var(--accent2) inset}
@@ -3136,6 +3138,36 @@ function wireFav(v){
     row.addEventListener('drop',e=>{ e.preventDefault(); row.classList.remove('over'); const to=+row.dataset.i;
       if(dragI==null||dragI===to) return; const a=_favOrder.slice(), m=a.splice(dragI,1)[0];
       a.splice(dragI<to?to-1:to,0,m); _favOrder=a; saveFav(); });
+  });
+  // touch reorder (mobile): native HTML5 DnD doesn't fire from touch, so the
+  // whole row is a long-press handle — hold ~200ms to pick up, then drag. A
+  // quick move before pickup is left to scroll the list; a tap on ★ still toggles.
+  let td=null;   // {from,to,el,picked,x,y,timer}
+  const clearOver=()=>v.querySelectorAll('.fav-row.over').forEach(x=>x.classList.remove('over'));
+  v.querySelectorAll('.fav-row.favd').forEach(row=>{
+    row.addEventListener('touchstart',e=>{
+      if(e.target.closest('.star')) return;                         // let ★ taps through
+      const t=e.touches[0];
+      td={from:+row.dataset.i,to:null,el:row,picked:false,x:t.clientX,y:t.clientY,
+          timer:setTimeout(()=>{ if(td){ td.picked=true; row.classList.add('lifted'); try{navigator.vibrate&&navigator.vibrate(12);}catch(_){} } },200)};
+    },{passive:true});
+    row.addEventListener('touchmove',e=>{
+      if(!td) return;
+      const t=e.touches[0];
+      if(!td.picked){                                               // moved before pickup -> it's a scroll, bail
+        if(Math.abs(t.clientX-td.x)>8||Math.abs(t.clientY-td.y)>8){ clearTimeout(td.timer); td=null; }
+        return;
+      }
+      e.preventDefault();                                           // block scroll/selection while lifted
+      const el=document.elementFromPoint(t.clientX,t.clientY);
+      const tgt=el&&el.closest('.fav-row.favd');
+      clearOver();
+      if(tgt&&tgt!==td.el){ tgt.classList.add('over'); td.to=+tgt.dataset.i; } else td.to=null;
+    },{passive:false});
+    const end=()=>{ if(!td) return; clearTimeout(td.timer); const d=td; td=null; clearOver(); d.el.classList.remove('lifted');
+      if(d.picked&&d.to!=null&&d.to!==d.from){ const a=_favOrder.slice(), m=a.splice(d.from,1)[0]; a.splice(d.from<d.to?d.to-1:d.to,0,m); _favOrder=a; saveFav(); } };
+    row.addEventListener('touchend',end);
+    row.addEventListener('touchcancel',end);
   });
 }
 async function saveFav(){
