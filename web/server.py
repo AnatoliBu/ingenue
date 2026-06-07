@@ -2834,7 +2834,40 @@ class H(http.server.SimpleHTTPRequestHandler):
         pass
 
 
+# Stale relics from older layouts that additive installs (cp -r) left behind.
+# install.sh now prunes orphans on update — but that only runs from the NEXT update
+# (the OLD install.sh runs the update that first delivers this build). This sweep
+# runs in the freshly-installed server.py at startup, so the existing fleet —
+# however old their install.sh — is cleaned on their FIRST update to this build.
+# It's the retroactive counterpart to install.sh's general prune: a tiny explicit
+# list (no source reference needed at runtime), scoped to ingenue's OWN dir so it
+# can never touch user scripts. Add an entry whenever a shipped path is removed
+# or relocated; install.sh's prune is the backstop for anything forgotten here.
+_STALE_RELICS = (
+    "demo/fixtures",   # demo .lua moved to demo/data/ — old copies showed up in norns SELECT
+)
+
+
+def sweep_stale_relics():
+    here = os.path.realpath(HERE)
+    for rel in _STALE_RELICS:
+        p = os.path.realpath(os.path.join(here, rel))
+        if p == here or not p.startswith(here + os.sep):   # never escape ingenue's own dir
+            continue
+        if not os.path.lexists(p):
+            continue
+        try:
+            if os.path.isdir(p) and not os.path.islink(p):
+                shutil.rmtree(p)
+            else:
+                os.remove(p)
+            print(f"swept stale relic: {rel}", flush=True)
+        except OSError as e:
+            print(f"could not sweep relic {rel}: {e}", flush=True)
+
+
 def main():
+    sweep_stale_relics()                       # retroactively clean old-layout orphans on boot
     socketserver.ThreadingTCPServer.allow_reuse_address = True
     with socketserver.ThreadingTCPServer(("0.0.0.0", PORT), H) as httpd:
         print(f"ingenue backend on 0.0.0.0:{PORT}  (dust={DUST}, exists={os.path.isdir(CODE)})", flush=True)
