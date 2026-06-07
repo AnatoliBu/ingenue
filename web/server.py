@@ -16,7 +16,7 @@ API (confined to the dust tree):
   POST /api/install  {name,url,force} -> git clone url into dust/code/name
   POST /api/remove   {name}           -> delete dust/code/name
 """
-import http.server, socketserver, os, sys, json, re, shutil, subprocess, threading, urllib.parse, urllib.request, datetime, pwd, time, io, zipfile
+import http.server, socketserver, os, sys, json, re, shutil, subprocess, threading, urllib.parse, urllib.request, datetime, pwd, time, io, zipfile, concurrent.futures
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 
@@ -290,12 +290,17 @@ class Job:
         self.done = False
         self.ok = None
         self.error = None
+        self.results = None      # optional structured payload (e.g. update-check)
         self._lk = threading.Lock()
 
     def emit(self, msg):
         with self._lk:
             for ln in (str(msg).splitlines() or [""]):
                 self.lines.append(ln)
+
+    def set_results(self, payload):
+        with self._lk:
+            self.results = payload
 
     def finish(self, ok, error=None):
         with self._lk:
@@ -307,7 +312,7 @@ class Job:
         with self._lk:
             return {"name": self.name, "kind": self.kind, "lines": self.lines[frm:],
                     "next": len(self.lines), "done": self.done, "ok": self.ok,
-                    "error": self.error}
+                    "error": self.error, "results": self.results}
 
 
 def _new_job(kind, name):
@@ -350,6 +355,139 @@ def start_job(kind, name, what, fn):
             _release_busy()
     threading.Thread(target=work, daemon=True).start()
     return jid, None
+
+
+def start_bg_job(kind, name, fn):
+    """Spawn a read-only background job that does NOT take the install busy-lock
+    (it writes nothing, so it can safely run alongside installs). fn(job) ->
+    (ok, error|None). Returns the job id."""
+    jid, job = _new_job(kind, name)
+
+    def work():
+        try:
+            ok, err = fn(job)
+            job.finish(bool(ok), err)
+        except Exception as e:  # noqa: BLE001
+            job.emit(f"! {e}")
+            job.finish(False, str(e))
+    threading.Thread(target=work, daemon=True).start()
+    return jid
+
+
+# Track the in-flight update-check so repeated visits to the Installed tab reuse
+# the running scan instead of spawning a second one.
+_check_job_id = None
+
+
+def _git_capture(args, run_as=None, timeout=30):
+    """Run a git command and capture output, honoring run_as (drop-privs +
+    HOME overlay) so it behaves like stream_proc but returns stdout instead of
+    streaming. Returns (rc, stdout, stderr)."""
+    preexec, env_overlay = (run_as or (None, None))
+    env = {**os.environ, **env_overlay} if env_overlay else None
+    try:
+        r = subprocess.run(args, capture_output=True, text=True,
+                           timeout=timeout, preexec_fn=preexec, env=env)
+        return r.returncode, r.stdout, r.stderr
+    except subprocess.TimeoutExpired:
+        return 124, "", "timed out"
+    except OSError as e:
+        return 1, "", str(e)
+
+
+def _check_one_update(full, name, run_as):
+    """Is the installed script at `full` behind its upstream? Uses `git ls-remote`
+    (no clone, no GitHub API token, works on any host, not subject to GitHub's
+    60-req/hr REST limit) to read the remote tip of the branch `do_update` would
+    reset to, and compares it to local HEAD. Returns a result dict."""
+    res = {"name": name, "behind": False, "branch": None,
+           "local": None, "remote": None, "error": None}
+    if not os.path.isdir(os.path.join(full, ".git")):
+        res["error"] = "not a git repo"
+        return res
+    local = _git_out(full, ["rev-parse", "HEAD"])
+    if not local:
+        res["error"] = "no local HEAD"
+        return res
+    res["local"] = local
+    # Mirror do_update's target: prefer the current branch's upstream, else
+    # origin/HEAD's branch, else the remote's default (HEAD via ls-remote).
+    remote, branch = "origin", ""
+    up = _git_out(full, ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"])
+    if up and "/" in up:
+        remote, branch = up.split("/", 1)
+    else:
+        head = _git_out(full, ["symbolic-ref", "refs/remotes/origin/HEAD"])
+        if head:
+            branch = head.rsplit("/", 1)[-1]
+    url = _git_out(full, ["remote", "get-url", remote]) or _git_out(full, ["remote", "get-url", "origin"])
+    if not url:
+        res["error"] = "no remote url"
+        return res
+
+    def _tip(ref):
+        rc, out, err = _git_capture(["git", "ls-remote", url, ref], run_as=run_as, timeout=30)
+        if rc != 0:
+            tail = (err.strip().splitlines() or [""])[-1]
+            return "", (tail or f"ls-remote rc={rc}")
+        for line in out.splitlines():
+            parts = line.split()
+            if len(parts) >= 2:
+                return parts[0], None
+        return "", "ref not found on remote"
+
+    remote_sha, err = _tip(("refs/heads/" + branch) if branch else "HEAD")
+    if not remote_sha and branch:                       # branch gone? fall back to remote default
+        remote_sha, err = _tip("HEAD")
+    if not remote_sha:
+        res["error"] = (err or "no remote ref")[:140]
+        return res
+    res["branch"] = branch or "HEAD"
+    res["remote"] = remote_sha
+    res["behind"] = (local != remote_sha)
+    return res
+
+
+def do_check_updates(job):
+    """Scan every git-managed script in dust/code in parallel and report which
+    are behind upstream. Streams progress (and incremental structured results)
+    into the job so the UI can render a live progress bar + badges."""
+    run_as = _run_as_target()
+    repos = []
+    try:
+        for name in sorted(os.listdir(CODE)):
+            if name == "ingenue":                       # ingenue self-update is a separate flow
+                continue
+            full = os.path.join(CODE, name)
+            if os.path.isdir(os.path.join(full, ".git")):
+                repos.append((name, full))
+    except OSError as e:
+        return False, str(e)
+    total = len(repos)
+    job.emit(f"checking {total} installed scripts for updates…")
+    job.set_results({"total": total, "done": 0, "items": []})
+    results, lock, state = [], threading.Lock(), {"done": 0}
+
+    def worker(item):
+        nm, full = item
+        try:
+            r = _check_one_update(full, nm, run_as)
+        except Exception as e:  # noqa: BLE001
+            r = {"name": nm, "behind": False, "error": str(e)[:140]}
+        with lock:
+            state["done"] += 1
+            results.append(r)
+            job.set_results({"total": total, "done": state["done"], "items": list(results)})
+            tag = "↑ update available" if r.get("behind") else \
+                  ("err: " + r["error"] if r.get("error") else "up to date")
+            job.emit(f"[{state['done']}/{total}] {nm}: {tag}")
+
+    if repos:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=12) as ex:
+            list(ex.map(worker, repos))
+    n = sum(1 for r in results if r.get("behind"))
+    job.emit(f"✓ {n} update(s) available across {total} scripts")
+    return True, None
 
 
 def stream_proc(cmd, cwd, emit, timeout=900, shell=False, run_as=None):
@@ -460,6 +598,55 @@ def do_clone(full, url, emit, sha=None, catalog_entry=None, recurse_submodules=T
     return True, None
 
 
+def _git_out(full, args):
+    """Run a read-only git query in `full`; return stripped stdout, or '' on any
+    failure. For local ref lookups (no network, no writes)."""
+    try:
+        r = subprocess.run(["git", "-C", full] + args,
+                           capture_output=True, text=True, timeout=15)
+        return r.stdout.strip() if r.returncode == 0 else ""
+    except (OSError, subprocess.TimeoutExpired):
+        return ""
+
+
+def _resolve_update_ref(full, run_as, emit):
+    """Determine the remote-tracking ref `git reset --hard` should target when
+    updating a script.
+
+    The old code hardcoded a fallback to `origin/main`, which silently broke
+    every script whose default branch is `master` *and* whose
+    refs/remotes/origin/HEAD was unset — which is the common case for scripts
+    installed by maiden or older ingenue (the full-clone path that sets
+    origin/HEAD is recent). Those updates failed with an opaque
+    "git reset --hard exited 128".
+
+    Resolution order:
+      1. refs/remotes/origin/HEAD (the true remote default) — populate it with
+         `remote set-head --auto` first, since older installs lack it.
+      2. the upstream of the currently checked-out branch (e.g. origin/master).
+      3. the current branch name mapped onto origin/, if that ref exists.
+      4. origin/main or origin/master — whichever actually exists.
+    Returns a ref like 'origin/master', or '' if nothing resolved."""
+    if not _git_out(full, ["symbolic-ref", "refs/remotes/origin/HEAD"]):
+        # network call (we just fetched, so the remote is reachable); also
+        # permanently repairs origin/HEAD so future updates take the fast path.
+        stream_proc(["git", "-C", full, "remote", "set-head", "origin", "--auto"],
+                    None, lambda _l: None, timeout=30, run_as=run_as)
+    head = _git_out(full, ["symbolic-ref", "refs/remotes/origin/HEAD"])
+    if head:
+        return head.replace("refs/remotes/", "")
+    up = _git_out(full, ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"])
+    if up:
+        return up
+    cur = _git_out(full, ["rev-parse", "--abbrev-ref", "HEAD"])
+    if cur and cur != "HEAD" and _git_out(full, ["rev-parse", "--verify", "--quiet", f"origin/{cur}"]):
+        return f"origin/{cur}"
+    for cand in ("origin/main", "origin/master"):
+        if _git_out(full, ["rev-parse", "--verify", "--quiet", cand]):
+            return cand
+    return ""
+
+
 def do_update(full, emit):
     """Update an existing managed git repo without destroying it: `git fetch`
     then `git reset --hard origin/<default-branch>`. Preserves untracked files
@@ -477,15 +664,13 @@ def do_update(full, emit):
                      None, emit, timeout=180, run_as=run_as)
     if rc != 0:
         return False, f"git fetch exited {rc}"
-    # discover the default branch from origin's HEAD ref; fall back to origin/main
-    default_ref = "origin/main"
-    try:
-        r = subprocess.run(["git", "-C", full, "symbolic-ref", "refs/remotes/origin/HEAD"],
-                           capture_output=True, text=True, timeout=10)
-        if r.returncode == 0 and r.stdout.strip():
-            default_ref = r.stdout.strip().replace("refs/remotes/", "")
-    except (OSError, subprocess.TimeoutExpired):
-        pass
+    # Resolve which remote branch to reset to. Robust against unset
+    # origin/HEAD and non-main default branches (see _resolve_update_ref).
+    default_ref = _resolve_update_ref(full, run_as, emit)
+    if not default_ref:
+        return False, ("couldn't determine the upstream branch to update to "
+                       "(no origin/HEAD, no tracking branch, and neither "
+                       "origin/main nor origin/master exist)")
     emit(f"$ git reset --hard {default_ref}")
     rc = stream_proc(["git", "-C", full, "reset", "--hard", default_ref],
                      None, emit, timeout=60, run_as=run_as)
@@ -2913,6 +3098,16 @@ class H(http.server.SimpleHTTPRequestHandler):
                 if busy:
                     return self._json({"error": busy}, 409)
                 return self._json({"ok": True, "job": jid, "name": name})
+            if path == "/api/updates/check":
+                # Read-only scan of all installed scripts for available updates.
+                # Does NOT take the busy-lock (writes nothing); reuses any
+                # in-flight scan so repeat Installed-tab visits don't pile up.
+                global _check_job_id
+                existing = get_job(_check_job_id) if _check_job_id else None
+                if existing and not existing.done:
+                    return self._json({"ok": True, "job": _check_job_id, "already": True})
+                _check_job_id = start_bg_job("check-updates", "updates", do_check_updates)
+                return self._json({"ok": True, "job": _check_job_id})
             if path == "/api/update":
                 # git fetch + reset --hard, non-destructive — preserves .project,
                 # untracked user files, and crucially the .git directory so

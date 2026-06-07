@@ -349,6 +349,17 @@ button{font-family:inherit}
 /* cards are always expanded (rich view) */
 .card{cursor:default}
 .okb.upd{color:var(--accent2)!important;background:color-mix(in srgb,var(--accent2) 18%,transparent)!important}
+/* installed-tab update-detection strip */
+.upd-strip{display:flex;align-items:center;gap:10px;margin:0 4px 12px;font-size:12.5px;color:var(--muted);flex-wrap:wrap}
+.upd-strip .ispin{width:13px;height:13px;border:2px solid var(--trim);border-top-color:var(--accent2);border-radius:50%;animation:isp .7s linear infinite;flex:0 0 auto}
+.upd-strip .upd-bar{flex:1;min-width:120px;height:5px;border-radius:3px;background:var(--trim);overflow:hidden}
+.upd-strip .upd-fill{display:block;height:100%;background:var(--accent2);transition:width .3s ease}
+.upd-chip{border:1px solid var(--accent2);background:color-mix(in srgb,var(--accent2) 14%,transparent);color:var(--accent2);
+  font:inherit;font-size:12.5px;font-weight:600;padding:5px 11px;border-radius:11px;cursor:pointer}
+.upd-chip.on{background:var(--accent2);color:var(--bg)}
+.upd-none{color:var(--ok,#6c6);font-weight:600}
+.upd-recheck{border:1px solid var(--trim);background:transparent;color:var(--muted);font:inherit;font-size:12px;padding:5px 10px;border-radius:11px;cursor:pointer}
+.upd-recheck:hover{color:var(--fg);border-color:var(--fg)}
 .pill{cursor:pointer}
 .expand-cue{color:var(--muted);font-size:11px;transition:transform .18s;margin-left:2px}
 .card.open .expand-cue{transform:rotate(180deg)}
@@ -2039,6 +2050,8 @@ function knownNames(){ const s=new Set(); REPO.installed.forEach(p=>s.add(p.n.to
   REPO.available.forEach(p=>{ if(p.srcs.includes('community')) s.add(p.n.toLowerCase()); }); return s; }
 /* ===== B6: tag filter facet + dynamic "additional voice" (nb) tag ===== */
 let tagFilter=new Set(), filtersOpen=false, hideInstalled=false;
+// per-script update detection (installed tab): scanned via /api/updates/check
+let updChecking=false, updCheckedAt=0, updFilter=false, updProgress={done:0,total:0};
 const NB_TAG='additional voice';
 function isNbVoice(p){ if(p.nb) return true; const t=(p.tags||[]).map(x=>String(x).toLowerCase());
   return t.includes('nb')||t.includes('n.b.')||/\bnb\b|note ?bridge|nb_|nb\//i.test(((p.d||'')+' '+(p.n||''))); }
@@ -2061,6 +2074,7 @@ function repoList(tab){
   if(repoQuery && tab!=='discover'){ const q=repoQuery.toLowerCase();   // discover searches GitHub on Enter, not live
     list=list.filter(p=>(p.n+' '+p.a+' '+(p.tags||[]).join(' ')+' '+(p.d||'')).toLowerCase().includes(q)); }
   if(tagFilter.size && tab!=='discover'){ list=list.filter(p=>{ const t=entryTags(p); return [...tagFilter].every(f=>t.includes(f)); }); }
+  if(updFilter && tab==='installed'){ list=list.filter(p=>p.upd_avail); }   // "updates available" facet
   return list.sort(sortCmp);
 }
 function updateGrid(){
@@ -2812,8 +2826,85 @@ async function doScriptUpdate(name, rowEl){
     if(j.error){ jobDone(job,null,false,j.error,''); return; }
     const out = await followBackendJob(j.job, job);
     jobDone(job,null,out.ok, out.ok?`updated ${name}`:(out.error||'update failed'),'updated');
+    if(out.ok) clearUpdAvail(name);          // it's now at upstream — drop the badge
     if(rowEl) populateVersionRow(rowEl, name);
   }catch(e){ jobDone(job,null,false,e.message,''); }
+}
+/* ===== per-script update DETECTION (installed tab) ===== */
+/* Backed by POST /api/updates/check -> a read-only background job that ls-remotes
+   every installed git repo in parallel and reports which are behind upstream.
+   No GitHub token (kept browser-only by design); works on any git host. */
+function clearUpdAvail(name){ const p=REPO.installed.find(x=>norm(x.dir||x.n)===norm(name)); if(p) p.upd_avail=0;
+  if(repoTab==='installed') refreshUpdStrip(); }
+function updStripHTML(){
+  if(!HAS_BACKEND) return '';
+  const N=REPO.installed.filter(p=>p.upd_avail).length;
+  if(updChecking){
+    const pct=updProgress.total?Math.round(updProgress.done/updProgress.total*100):0;
+    return `<div class="upd-strip checking"><span class="ispin"></span><span>checking for updates… ${updProgress.done}/${updProgress.total}</span>`
+      +`<span class="upd-bar"><span class="upd-fill" style="width:${pct}%"></span></span></div>`;
+  }
+  if(updCheckedAt){
+    const chip = N
+      ? `<button class="upd-chip ${updFilter?'on':''}" data-updfilter="1">⬆ updates available (${N})</button>`
+      : `<span class="upd-none">✓ all scripts up to date</span>`;
+    return `<div class="upd-strip">${chip}<button class="upd-recheck" data-updcheck="1">↻ re-check</button></div>`;
+  }
+  return '';
+}
+function wireUpdStrip(root){
+  (root||document).querySelectorAll('[data-updfilter]').forEach(b=>b.onclick=()=>{updFilter=!updFilter;renderRepo();});
+  (root||document).querySelectorAll('[data-updcheck]').forEach(b=>b.onclick=()=>checkUpdates(true));
+}
+function refreshUpdStrip(){    // light in-place refresh of strip + grid badges (keeps search focus)
+  const v=document.getElementById('repoview'); if(!v||repoTab!=='installed') return;
+  const html=updStripHTML(); const cur=v.querySelector('.upd-strip');
+  const tmp=document.createElement('div'); tmp.innerHTML=html; const nu=tmp.firstElementChild;
+  if(cur){ if(nu) cur.replaceWith(nu); else cur.remove(); }
+  else if(nu){ const head=v.querySelector('.rd-cathead'); if(head) head.after(nu); }
+  wireUpdStrip(v); updateGrid();
+}
+function applyUpdResults(res){
+  updProgress={done:res.done||0,total:res.total||0};
+  const map={}; (res.items||[]).forEach(it=>{ map[norm(it.name)]=it; });
+  REPO.installed.forEach(p=>{ const it=map[norm(p.dir||p.n)]; if(it){ p.upd_avail=it.behind?1:0; p.upd_branch=it.branch; p.upd_err=it.error||''; } });
+}
+async function checkUpdates(force){
+  if(!HAS_BACKEND || updChecking) return;
+  if(!force && updCheckedAt) return;          // cached this session — manual ↻ re-check overrides
+  updChecking=true; updFilter=false; updProgress={done:0,total:REPO.installed.length};
+  refreshUpdStrip();
+  let jid=null;
+  try{ const j=await (await fetch('api/updates/check',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'})).json(); jid=j.job; }
+  catch(e){ updChecking=false; refreshUpdStrip(); return; }
+  if(!jid){ updChecking=false; refreshUpdStrip(); return; }
+  let from=0, dead=0;
+  const tick=async()=>{
+    let j=null;
+    try{ j=await (await fetch('api/job?id='+encodeURIComponent(jid)+'&from='+from,{cache:'no-store'})).json(); }
+    catch(e){ if(++dead>8){ updChecking=false; refreshUpdStrip(); return; } return void setTimeout(tick,1000); }
+    dead=0;
+    if(j.gone){ updChecking=false; updCheckedAt=Date.now(); refreshUpdStrip(); return; }
+    if(j.results) applyUpdResults(j.results);
+    if(typeof j.next==='number') from=j.next;
+    if(j.done){ updChecking=false; updCheckedAt=Date.now(); refreshUpdStrip(); return; }
+    refreshUpdStrip();
+    setTimeout(tick,800);
+  };
+  tick();
+}
+async function updateAllBehind(){              // "Update all" on installed = update only the behind ones, serialized
+  const behind=REPO.installed.filter(p=>p.upd_avail);
+  if(!behind.length){ checkUpdates(true); return; }
+  behind.forEach(p=>{ const nm=p.dir||p.n;
+    jobqAdd({label:nm, verb:'updating', run:(job)=>new Promise(async resolve=>{
+      appendJobLog(job,'git fetch + reset --hard…');
+      try{ const j=await (await fetch('api/update',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:nm})})).json();
+        if(j.error){ jobDone(job,null,false,j.error,''); return resolve(false); }
+        pollJob(job,j.job,{label:'updated',onDone:(ok)=>{ if(ok) clearUpdAvail(nm); resolve(ok); }});
+      }catch(e){ jobDone(job,null,false,e.message,''); resolve(false); }
+    })});
+  });
 }
 
 async function openRollbackPicker(name){
@@ -3057,7 +3148,7 @@ function renderRepo(){
         ${sortSel}${allBtn}
         ${tab!=='discover'?`<button class="rd-filtertoggle" id="rd-filttog">⚲ filters${(srcFilter.size<SRC_ORDER.length||tagFilter.size)?' <span class="fct">'+(tagFilter.size+(SRC_ORDER.length-srcFilter.size))+'</span>':''}</button>`:''}
       </div><div class="rd-filters${filtersOpen?' open':''}" id="rd-filters">${tab==='installed'?'':srcBar(tab)}${tab!=='discover'?tagBar(tab):''}</div></div>
-    <div class="rd-scroll"><div>${head}<div class="rd-grid">${list.map(p=>repoCard(p,tab)).join('')||`<div class="gh-empty"><p>nothing here yet.</p></div>`}</div>${pager}</div></div>
+    <div class="rd-scroll"><div>${head}${tab==='installed'?updStripHTML():''}<div class="rd-grid">${list.map(p=>repoCard(p,tab)).join('')||`<div class="gh-empty"><p>nothing here yet.</p></div>`}</div>${pager}</div></div>
     <div class="bulkbar" id="bulkbar"></div>`;
   v.querySelectorAll('[data-rt]').forEach(b=>b.onclick=()=>{repoTab=b.dataset.rt;repoQuery='';_discUser=null;selection.clear();renderRepo();});
   v.querySelectorAll('[data-selall]').forEach(b=>b.onclick=()=>{
@@ -3079,8 +3170,11 @@ function renderRepo(){
   const ss=document.getElementById('rd-sort'); if(ss) ss.addEventListener('change',e=>{sortMode=e.target.value;updateGrid();});
   v.querySelectorAll('[data-act]').forEach(b=>b.onclick=()=>{
     if(b.dataset.act==='search'){ const i=document.getElementById('rd-q'); _discUser=null; ghSearch(i?i.value:'',1); }
+    else if(repoTab==='installed'){ updateAllBehind(); }   // "Update all" = update the scripts found behind
     else { const t=b.innerHTML; b.innerHTML='✓ done'; setTimeout(()=>{b.innerHTML=t;},900); }
   });
+  wireUpdStrip(v);
+  if(tab==='installed' && HAS_BACKEND && !updCheckedAt && !updChecking) checkUpdates(false);   // auto-scan on first visit
   v.querySelectorAll('[data-hideknown]').forEach(c=>c.onclick=()=>{ discHideKnown=!discHideKnown; renderRepo(); });
   v.querySelectorAll('[data-hideinst]').forEach(c=>c.onclick=()=>{ hideInstalled=!hideInstalled; renderRepo(); });
   const dcu=document.getElementById('disc-clearuser'); if(dcu) dcu.onclick=()=>{ _discUser=null; _discLoaded=false; ghSearch('',1); };
