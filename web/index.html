@@ -891,7 +891,7 @@ button{font-family:inherit}
 </div>
 
 <script>
-const BUILD='b62 · 2026-06-04 · serial install queue (multi-select queues + shows progress, no more 409s)';
+const BUILD='b63 · 2026-06-06 · REPL ;-shortcuts: ;install <url>, ;load <name>, ;restart, ;clear, ;help';
 console.log('%cingenue build: '+BUILD,'color:#DEB887;font-weight:bold');
 
 /* ===== self-update: on load, ask github if main is ahead of the installed commit ===== */
@@ -1794,9 +1794,78 @@ function matronSend(lua){ if(matronReady){ try{ matronWS.send(new TextEncoder().
 function replSubmit(){
   const inp=document.getElementById('replin'); const v=inp.value.trim(); if(!v) return;
   replPrint(`&gt;&gt; <span class="cmd">${esc(v)}</span>`);
-  if(matronReady){ matronSend(v); inp.value=''; hideAC(); return; }   // REAL: stream from device
-  replPrint('<span class="meta"># no live matron link — open ingenue on the device to run commands</span>');
   inp.value=''; hideAC();
+  // ';'-prefixed shortcuts (maiden parity). Intercepted client-side so matron
+  // never sees them as Lua — typing ;install <url> would otherwise raise
+  // "attempt to call a string value" and the user's muscle memory breaks.
+  if(v.charCodeAt(0)===59){ replSlashCmd(v.slice(1).trim()); return; }
+  if(matronReady){ matronSend(v); return; }   // REAL: stream from device
+  replPrint('<span class="meta"># no live matron link — open ingenue on the device to run commands</span>');
+}
+
+/* ';' REPL shortcuts (maiden-style) — keep this list and ;help in sync */
+function replSlashHelp(){
+  replPrint('<span class="meta"># shortcuts:  ;install &lt;url&gt;  ·  ;load &lt;name&gt;  ·  ;restart  ·  ;clear  ·  ;help</span>');
+}
+function replSlashCmd(rest){
+  if(!rest){ replSlashHelp(); return; }
+  const sp=rest.indexOf(' ');
+  const cmd=(sp<0?rest:rest.slice(0,sp)).toLowerCase();
+  // strip slack/discord-style <...> URL-wrapping and stray quotes from the arg
+  const arg=(sp<0?'':rest.slice(sp+1)).trim().replace(/^[<"']+|[>"']+$/g,'');
+  if(cmd==='install') return replInstallFromUrl(arg);
+  if(cmd==='restart'){
+    if(!matronReady){ replPrint('<span class="meta"># no live matron link</span>'); return; }
+    matronSend('norns.script.restart()'); return;
+  }
+  if(cmd==='load'){
+    if(!arg){ replPrint('<span class="err"># usage: ;load &lt;name&gt;</span>'); return; }
+    if(!matronReady){ replPrint('<span class="meta"># no live matron link</span>'); return; }
+    const nm=arg.replace(/[^A-Za-z0-9_.-]/g,'');   // dust/code dir names are this strict
+    matronSend(`norns.script.load("code/${nm}/${nm}.lua")`); return;
+  }
+  if(cmd==='clear'){ out().innerHTML=''; return; }
+  if(cmd==='help'||cmd==='?'){ replSlashHelp(); return; }
+  replPrint(`<span class="err"># unknown shortcut: ;${esc(cmd)} — try ;help</span>`);
+}
+async function replInstallFromUrl(url){
+  if(!/^https?:\/\//.test(url)){
+    replPrint('<span class="err"># ;install needs an http(s) git URL</span>'); return;
+  }
+  if(!HAS_BACKEND){
+    replPrint('<span class="meta"># no backend — open ingenue on the device to install</span>'); return;
+  }
+  const name=url.replace(/\.git$/,'').split('/').filter(Boolean).pop();
+  if(!name){ replPrint('<span class="err"># couldn’t derive script name from URL</span>'); return; }
+  replPrint(`<span class="meta"># installing ${esc(name)} from ${esc(url)}…</span>`);
+  let started;
+  try{
+    const r=await fetch('api/install',{method:'POST',headers:{'Content-Type':'application/json'},
+                                        body:JSON.stringify({name,url})});
+    started=await r.json().catch(()=>({}));
+    if(!r.ok||started.error){
+      replPrint(`<span class="err"># install: ${esc(started.error||r.statusText)}</span>`); return;
+    }
+  }catch(e){ replPrint(`<span class="err"># install start failed: ${esc(e.message)}</span>`); return; }
+  let from=0;
+  while(true){
+    let snap;
+    try{ snap=await (await fetch(`api/job?id=${encodeURIComponent(started.job)}&from=${from}`,{cache:'no-store'})).json(); }
+    catch(e){ replPrint(`<span class="err"># job poll: ${esc(e.message)}</span>`); return; }
+    if(snap.gone){ replPrint('<span class="err"># install job not found — did the service restart?</span>'); return; }
+    (snap.lines||[]).forEach(ln=>replPrint('<span class="ok">'+esc(ln)+'</span>'));
+    if(typeof snap.next==='number') from=snap.next;
+    if(snap.done){
+      if(snap.ok){
+        replPrint(`<span class="sys"># ✓ ${esc(name)} installed — run SYSTEM &gt; RESTART (or ;restart) to load</span>`);
+        if(typeof refreshInstalled==='function') refreshInstalled();
+      }else{
+        replPrint(`<span class="err"># install failed: ${esc(snap.error||'unknown')}</span>`);
+      }
+      return;
+    }
+    await new Promise(r=>setTimeout(r,500));
+  }
 }
 function esc(s){return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
 
