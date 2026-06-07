@@ -891,7 +891,7 @@ button{font-family:inherit}
 </div>
 
 <script>
-const BUILD='b63 · 2026-06-06 · maiden-parity ;-shortcuts (;install/;restart/;start/;stop) + WS keepalive + quiet quick-reconnect';
+const BUILD='b64 · 2026-06-06 · ;-cmd autocomplete (matches existing Lua AC), maiden-parity dispatch, WS keepalive';
 console.log('%cingenue build: '+BUILD,'color:#DEB887;font-weight:bold');
 
 /* ===== self-update: on load, ask github if main is ahead of the installed commit ===== */
@@ -1912,13 +1912,33 @@ async function replInstallFromUrl(url){
 function esc(s){return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
 
 /* autocomplete */
+// ;-cmd completions — kept in sync with replSlashCmd's switch above.
+// Signature column doubles as the "needs an argument" flag: non-empty → AC
+// inserts a trailing space (invite the arg); empty → just the command.
+const SLASH_CMDS = [
+  [';install','<url>','install a script from a git URL'],
+  [';restart','','reload current script (matron tab) / restart audio (sc tab)'],
+  [';start','','(matron/sc start unsupported via ingenue — power-cycle)'],
+  [';stop','','(matron/sc stop unsupported via ingenue — power-cycle)'],
+];
 let acItems=[], acIdx=-1;
-function curToken(v){ const m=v.match(/[\w.:]*$/); return m?m[0]:''; }
+// curToken returns the trailing identifier under the cursor that AC should
+// complete on. Two modes: when the line is ';' + word-chars only (still
+// typing the command name, before any space/arg) we return the whole
+// ';<word>' so AC matches against SLASH_CMDS. Otherwise the usual Lua-token
+// regex applies (word chars + dot + colon), so ';install <url>' falls
+// through to normal behaviour past the space.
+function curToken(v){
+  const sm=v.match(/^;[\w]*$/); if(sm) return sm[0];
+  const m=v.match(/[\w.:]*$/); return m?m[0]:'';
+}
 function updateAC(){
   const inp=document.getElementById('replin'); const tok=curToken(inp.value);
   const ac=document.getElementById('ac');
   if(tok.length<1){ hideAC(); return; }
-  acItems=FUNCS.filter(f=>f[0].toLowerCase().includes(tok.toLowerCase())).slice(0,8);
+  const slashMode=tok.startsWith(';');
+  const source=slashMode?SLASH_CMDS:FUNCS;
+  acItems=source.filter(f=>f[0].toLowerCase().includes(tok.toLowerCase())).slice(0,8);
   if(!acItems.length){ hideAC(); return; }
   acIdx=0;
   ac.innerHTML=acItems.map((f,i)=>
@@ -1928,7 +1948,12 @@ function updateAC(){
 }
 function acceptAC(i){
   const inp=document.getElementById('replin'); const f=acItems[i]; if(!f) return;
-  inp.value=inp.value.replace(/[\w.:]*$/, f[0]+(f[1]&&f[1]!==''?'(':''));
+  if(f[0].startsWith(';')){
+    // ;-cmd: replace the whole ';<word>' token; trailing space iff the cmd takes an arg
+    inp.value=inp.value.replace(/^;[\w]*$/, f[0]+(f[1]?' ':''));
+  } else {
+    inp.value=inp.value.replace(/[\w.:]*$/, f[0]+(f[1]&&f[1]!==''?'(':''));
+  }
   hideAC(); inp.focus();
 }
 function hideAC(){ document.getElementById('ac').classList.remove('show'); acItems=[]; acIdx=-1; }
