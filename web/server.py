@@ -1198,7 +1198,9 @@ def favorites_overview():
                               "tag": "uninstalled" if gone else "missing"})
     for s in scripts:
         s["fav"] = s["file"] in fav_set
-    return {"favorites": favorites, "scripts": scripts}
+    hidden = [{"name": e["name"], "file": e["file"], "rel": e["rel"],
+               "stash_ok": e.get("stash_ok", True)} for e in read_hidden()]
+    return {"favorites": favorites, "scripts": scripts, "hidden": hidden}
 
 
 def set_favorites(order):
@@ -1221,6 +1223,124 @@ def set_favorites(order):
                             "path": os.path.dirname(ff) + "/"})
     write_favorites(entries)
     return len(entries)
+
+
+# ---------------------------------------------------------------------------
+# Hide scripts from norns' SELECT menu (experimental)
+# ---------------------------------------------------------------------------
+# norns only hides a .lua if its path under dust/code contains a /lib|data|crow|
+# test|docs/ segment. The only way to hide an arbitrary entrypoint is to move it
+# out of code/. We move ONLY the .lua (never the .sc — sclang scans the whole
+# dust tree for engines, so moving engine files risks DUPLICATE ENGINES; see
+# backup_script_dir). The .lua is stashed under the dust owner's home in
+# ~/.ingenue-hidden/<rel> (outside dust → invisible to norns, survives ingenue
+# reinstalls), and a manifest.json there maps every stash back to its origin so
+# hides are always undoable. Mods (lib/mod.lua) are already in an excluded path,
+# so they can never be hidden by accident.
+def hidden_root(create=False):
+    _, _, _, home = target_owner()
+    root = os.path.join(home or "/tmp", ".ingenue-hidden")
+    if create:
+        os.makedirs(root, exist_ok=True)
+        uid, gid, _, _ = target_owner()
+        if os.getuid() == 0 and uid != 0:
+            try: os.lchown(root, uid, gid)
+            except OSError: pass
+    return root
+
+
+def read_hidden():
+    """The hidden-scripts manifest, each entry annotated with whether its stash
+    file is still present (stash_ok). Tolerates a missing/corrupt manifest."""
+    try:
+        with open(os.path.join(hidden_root(), "manifest.json")) as f:
+            data = json.load(f)
+        if not isinstance(data, list):
+            return []
+    except (OSError, ValueError):
+        return []
+    out = []
+    for e in data:
+        if not isinstance(e, dict) or "file" not in e or "rel" not in e:
+            continue
+        stash = e.get("stash") or os.path.join(hidden_root(), e["rel"])
+        e = dict(e); e["stash_ok"] = os.path.isfile(stash)
+        out.append(e)
+    return out
+
+
+def _write_hidden(entries):
+    root = hidden_root(create=True)
+    p = os.path.join(root, "manifest.json")
+    tmp = p + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump(entries, f, indent=2)
+    os.replace(tmp, p)
+    uid, gid, _, _ = target_owner()
+    if os.getuid() == 0 and uid != 0:
+        try: os.lchown(p, uid, gid)
+        except OSError: pass
+
+
+def hide_entrypoint(file):
+    """Move a .lua entrypoint out of dust/code into the hidden stash. Returns its
+    display name. shutil.move handles a home/dust filesystem boundary."""
+    if not isinstance(file, str):
+        raise ValueError("file required")
+    code = os.path.realpath(CODE)
+    full = os.path.realpath(file)
+    if not (full.startswith(code + os.sep)) or not full.endswith(".lua"):
+        raise ValueError("not a script entrypoint under dust/code")
+    if not os.path.isfile(full):
+        raise ValueError("file not found")
+    rel = os.path.relpath(full, code).replace(os.sep, "/")
+    if "/" not in rel:
+        raise ValueError("refusing to hide a top-level code/*.lua")
+    if any(("/" + seg + "/") in rel for seg in _FAVORITE_SKIP_DIRS):
+        raise ValueError("already hidden by norns convention")
+    stash = os.path.join(hidden_root(create=True), rel)
+    os.makedirs(os.path.dirname(stash), exist_ok=True)
+    if os.path.exists(stash):                    # stale stash for the same rel — keep both
+        stash = stash + "." + time.strftime("%Y%m%dT%H%M%S")
+    shutil.move(full, stash)
+    uid, gid, _, _ = target_owner()
+    if os.getuid() == 0 and uid != 0:
+        try: chown_path(stash, uid, gid)
+        except OSError: pass
+    entries = [e for e in read_hidden() if e.get("file") != full]
+    entries.append({"name": _entry_name(rel), "file": full, "rel": rel,
+                    "stash": stash, "ts": time.strftime("%Y-%m-%dT%H:%M:%S")})
+    _write_hidden(entries)
+    return _entry_name(rel)
+
+
+def unhide_entrypoint(file):
+    """Restore a hidden .lua to its original code/ path. If the original already
+    exists again (e.g. the script was reinstalled), just drop the stale stash."""
+    file = os.path.realpath(file) if isinstance(file, str) else file
+    entries = read_hidden()
+    match = next((e for e in entries if e.get("file") == file), None)
+    if not match:
+        raise ValueError("not in hidden manifest")
+    orig = match["file"]
+    stash = match.get("stash") or os.path.join(hidden_root(), match["rel"])
+    restored = False
+    if os.path.exists(orig):
+        if os.path.isfile(stash):
+            try: os.remove(stash)
+            except OSError: pass
+    else:
+        if not os.path.isfile(stash):
+            raise ValueError("stashed file is missing — cannot restore")
+        os.makedirs(os.path.dirname(orig), exist_ok=True)
+        shutil.move(stash, orig)
+        uid, gid, _, _ = target_owner()
+        if os.getuid() == 0 and uid != 0:
+            try: os.lchown(orig, uid, gid)
+            except OSError: pass
+        restored = True
+    _write_hidden([e for e in entries if e.get("file") != file])
+    return restored
 
 
 def git_remote(full):
@@ -2536,6 +2656,10 @@ class H(http.server.SimpleHTTPRequestHandler):
                 if not isinstance(b.get("order"), list):
                     return self._json({"error": "order must be a list of file paths"}, 400)
                 return self._json({"ok": True, "count": set_favorites(b["order"])})
+            if path == "/api/hide":
+                return self._json({"ok": True, "name": hide_entrypoint(b.get("file"))})
+            if path == "/api/unhide":
+                return self._json({"ok": True, "restored": unhide_entrypoint(b.get("file"))})
             if path == "/api/remove":
                 full, name = safe_script_dir(b.get("name"))
                 if not os.path.isdir(full):

@@ -461,6 +461,10 @@ button{font-family:inherit}
 .fav-row .star{background:none;border:0;color:var(--muted);cursor:pointer;font:inherit;font-size:14px;line-height:1;padding:1px 3px;flex:0 0 auto;border-radius:5px}
 .fav-row .star:hover{color:var(--fg)}
 .fav-row .star.on{color:var(--accent2,#fc6)}
+.fav-row .eye{background:none;border:0;color:var(--muted);cursor:pointer;padding:1px 3px;flex:0 0 auto;border-radius:5px;display:inline-grid;place-items:center}
+.fav-row .eye svg{width:15px;height:15px;fill:currentColor;display:block}
+.fav-row .eye:hover{color:var(--fg)}
+.fav-row .eye.restore:hover{color:var(--accent2,#fc6)}
 .favview .fav-empty{color:var(--faint);padding:8px 4px;font-size:13px;grid-column:1/-1}
 .favview .fav-saving{margin-left:auto;color:var(--faint);font-size:11px;font-family:ui-monospace,monospace}
 .modsview .rd-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(360px,1fr));gap:12px;padding:10px 12px}
@@ -3085,8 +3089,10 @@ function renderRepo(){
    keyed on absolute file path). Array order == on-device order (top of SELECT +
    KEY_NEXT_FAVORITE cycle). We read /api/favorites, let the user toggle + reorder,
    and POST the full ordered file list back; the backend rewrites the Lua table. */
-let _favData={favorites:[],scripts:[]};
+let _favData={favorites:[],scripts:[],hidden:[]};
 let _favOrder=[];                 // ordered favorite file paths — source of truth for edits
+const EYE_OPEN='<svg viewBox="0 0 32 32"><path d="M16 6C8.5 6 2.5 12.6 1 16c1.5 3.4 7.5 10 15 10s13.5-6.6 15-10c-1.5-3.4-7.5-10-15-10zm0 16a6 6 0 110-12 6 6 0 010 12zm0-3.2a2.8 2.8 0 100-5.6 2.8 2.8 0 000 5.6z"/></svg>';
+const EYE_SHUT='<svg viewBox="0 0 32 32"><path d="M16 6C8.5 6 2.5 12.6 1 16c1.5 3.4 7.5 10 15 10s13.5-6.6 15-10c-1.5-3.4-7.5-10-15-10zm0 16a6 6 0 110-12 6 6 0 010 12zm0-3.2a2.8 2.8 0 100-5.6 2.8 2.8 0 000 5.6z"/><line x1="5" y1="4" x2="27" y2="28" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"/></svg>';
 async function renderFav(){
   const v=document.getElementById('favview');
   if(!HAS_BACKEND){ v.innerHTML='<div class="fv-top"><span class="pv-title">FAVORITES</span></div><div class="fav-scroll"><div class="fav-empty">favorites need the on-device backend.</div></div>'; return; }
@@ -3113,19 +3119,33 @@ function paintFav(){
       <button class="star on" title="remove from favorites" data-unfav>★</button></div>`;
   const unfavRow=e=>`<div class="fav-row" data-file="${esc(e.file)}">
       <span class="fav-name" title="${esc(e.file)}">${esc(e.name)}</span>
+      <button class="eye" title="hide from norns SELECT menu" data-hide>${EYE_OPEN}</button>
       <button class="star" title="add to favorites" data-fav>☆</button></div>`;
+  const hidden=(_favData.hidden||[]).slice().sort((a,b)=>a.name.toLowerCase().localeCompare(b.name.toLowerCase()));
+  const hiddenRow=e=>`<div class="fav-row missing" data-file="${esc(e.file)}">
+      <span class="fav-name" title="${esc(e.file)}">${esc(e.name)}</span>${e.stash_ok===false?'<span class="miss-tag">stash gone</span>':''}
+      <button class="eye restore" title="restore to norns SELECT menu" data-unhide ${e.stash_ok===false?'disabled':''}>${EYE_SHUT}</button></div>`;
   v.innerHTML=`<div class="fv-top"><span class="pv-title">FAVORITES</span><span class="fav-saving" id="fav-saving"></span></div>
     <div class="fav-scroll">
       <div class="fav-sec"><div class="fav-sec-h">on device <span class="ct">${favs.length}</span><span class="hint">drag to reorder — top-left is first in the SELECT menu</span></div>
         <div class="fav-grid">${favs.length?favs.map(favRow).join(''):'<div class="fav-empty">no favorites yet — add some from below ↓</div>'}</div></div>
-      <div class="fav-sec"><div class="fav-sec-h">all scripts <span class="ct">${unfav.length}</span><span class="hint">alphabetical</span></div>
+      <div class="fav-sec"><div class="fav-sec-h">all scripts <span class="ct">${unfav.length}</span><span class="hint">☆ favorite · 👁 hide from SELECT</span></div>
         <div class="fav-grid">${unfav.length?unfav.map(unfavRow).join(''):'<div class="fav-empty">every installed script is a favorite</div>'}</div></div>
+      ${hidden.length?`<div class="fav-sec"><div class="fav-sec-h">hidden from SELECT <span class="ct">${hidden.length}</span><span class="hint">click the eye to restore</span></div>
+        <div class="fav-grid">${hidden.map(hiddenRow).join('')}</div></div>`:''}
     </div>`;
   wireFav(v);
 }
 function wireFav(v){
   v.querySelectorAll('[data-unfav]').forEach(b=>b.onclick=()=>{ const f=b.closest('.fav-row').dataset.file; _favOrder=_favOrder.filter(x=>x!==f); saveFav(); });
   v.querySelectorAll('[data-fav]').forEach(b=>b.onclick=()=>{ const f=b.closest('.fav-row').dataset.file; if(!_favOrder.includes(f)) _favOrder.push(f); saveFav(); });
+  v.querySelectorAll('[data-hide]').forEach(b=>b.onclick=()=>{ const f=b.closest('.fav-row').dataset.file, nm=b.closest('.fav-row').querySelector('.fav-name').textContent;
+    confirmDialog('Hide from SELECT — experimental',
+      `Move <b>${esc(nm)}</b>'s <code>.lua</code> out of <code>dust/code</code> so it stops showing in the norns SELECT menu. `+
+      `It's stashed in <code>~/.ingenue-hidden</code> with a manifest and listed here under <b>hidden</b> so you can restore it anytime. `+
+      `Only the <code>.lua</code> moves (engine/assets stay put). Reversible.`,
+      ()=>favAction('api/hide',{file:f},'hiding'), false, 'Hide'); });
+  v.querySelectorAll('[data-unhide]').forEach(b=>b.onclick=()=>{ const f=b.closest('.fav-row').dataset.file; favAction('api/unhide',{file:f},'restoring'); });
   // HTML5 drag-and-drop reorder within the favorites grid. Dropping ON a row
   // inserts the dragged item BEFORE it (adjusting for the removal shift so the
   // landing spot is exactly where you dropped).
@@ -3194,6 +3214,15 @@ async function saveFav(){
     const j=await r.json().catch(()=>({}));
     if(!r.ok||!j.ok) throw new Error(j.error||('http '+r.status));
     const x=document.getElementById('fav-saving'); if(x){ x.textContent='saved ✓'; setTimeout(()=>{ const y=document.getElementById('fav-saving'); if(y&&y.textContent==='saved ✓') y.textContent=''; },1400); }
+  }catch(e){ const x=document.getElementById('fav-saving'); if(x) x.textContent='⚠ '+e.message; }
+}
+async function favAction(url,body,verb){   // hide/unhide — POST then reload the whole view (favorites, scripts, hidden all shift)
+  const s=document.getElementById('fav-saving'); if(s) s.textContent=verb+'…';
+  try{
+    const r=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    const j=await r.json().catch(()=>({}));
+    if(!r.ok||!j.ok) throw new Error(j.error||('http '+r.status));
+    await renderFav();
   }catch(e){ const x=document.getElementById('fav-saving'); if(x) x.textContent='⚠ '+e.message; }
 }
 
@@ -3405,10 +3434,10 @@ async function gatherDrop(dt){
   return out;
 }
 let _confirmYes=null;
-function confirmDialog(title,msg,onYes,danger){
+function confirmDialog(title,msg,onYes,danger,okLabel){
   document.getElementById('confirm-title').textContent=title;
   document.getElementById('confirm-msg').innerHTML=msg;
-  const ok=document.getElementById('confirm-ok'); ok.textContent=danger?'Delete':'OK'; ok.className='btn '+(danger?'btn-danger':'btn-install');
+  const ok=document.getElementById('confirm-ok'); ok.textContent=okLabel||(danger?'Delete':'OK'); ok.className='btn '+(danger?'btn-danger':'btn-install');
   _confirmYes=onYes; document.getElementById('confirm-overlay').classList.add('on');
 }
 function openFromFiles(nm){ const known=Object.keys(FILES).find(k=>k.endsWith('/'+nm)||k===nm);
