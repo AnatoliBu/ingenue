@@ -1186,10 +1186,16 @@ def favorites_overview():
         if e:
             favorites.append(dict(e))
         else:
-            rel = (os.path.relpath(ff, CODE).replace(os.sep, "/")
-                   if ff.startswith(CODE + os.sep) else ff)
+            # Dangling favorite — norns doesn't prune favorites on uninstall (it
+            # only drops one lazily when you try to SELECT it). Distinguish a
+            # whole-script uninstall (top dir gone) from a moved/renamed .lua.
+            under = ff.startswith(CODE + os.sep)
+            rel = os.path.relpath(ff, CODE).replace(os.sep, "/") if under else ff
+            top = rel.split("/", 1)[0]
+            gone = not (under and os.path.isdir(os.path.join(CODE, top)))
             favorites.append({"name": _entry_name(rel), "file": ff,
-                              "path": os.path.dirname(ff) + "/", "missing": True})
+                              "path": os.path.dirname(ff) + "/", "missing": True,
+                              "tag": "uninstalled" if gone else "missing"})
     for s in scripts:
         s["fav"] = s["file"] in fav_set
     return {"favorites": favorites, "scripts": scripts}

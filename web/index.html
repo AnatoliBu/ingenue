@@ -3109,7 +3109,7 @@ function paintFav(){
   const favRow=(e,i)=>`<div class="fav-row favd ${e.missing?'missing':''}" draggable="true" data-file="${esc(e.file)}" data-i="${i}">
       <span class="idx">${i+1}</span>
       <span class="grip" title="drag to reorder">⠿</span>
-      <span class="fav-name" title="${esc(e.file)}">${esc(e.name)}</span>${e.missing?'<span class="miss-tag">missing</span>':''}
+      <span class="fav-name" title="${esc(e.file)}">${esc(e.name)}</span>${e.missing?`<span class="miss-tag" title="${esc(e.file)} — not on device; ★ to remove">${e.tag||'missing'}</span>`:''}
       <button class="star on" title="remove from favorites" data-unfav>★</button></div>`;
   const unfavRow=e=>`<div class="fav-row" data-file="${esc(e.file)}">
       <span class="fav-name" title="${esc(e.file)}">${esc(e.name)}</span>
