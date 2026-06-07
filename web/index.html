@@ -891,7 +891,7 @@ button{font-family:inherit}
 </div>
 
 <script>
-const BUILD='b63 · 2026-06-06 · REPL ;-shortcuts: ;install <url>, ;load <name>, ;restart, ;clear, ;help';
+const BUILD='b63 · 2026-06-06 · maiden-parity ;-shortcuts (;install/;restart/;start/;stop) + WS keepalive + quiet quick-reconnect';
 console.log('%cingenue build: '+BUILD,'color:#DEB887;font-weight:bold');
 
 /* ===== self-update: on load, ask github if main is ahead of the installed commit ===== */
@@ -1768,6 +1768,7 @@ let target='matron';
 
 /* ===== live matron link (real REPL + params channel over ws://<host>:5555) ===== */
 let matronWS=null, matronReady=false, matronOnData=null, matronRetryT=null;
+let matronKeepT=null, matronLastClose=0, matronEverConnected=false;
 // matron's repl socket is nanomsg (nng) over websocket — it REQUIRES the
 // 'bus.sp.nanomsg.org' subprotocol (same as maiden). A plain WebSocket gets
 // "400 Incompatible Socket Type". It's a bus socket, so we join alongside maiden.
@@ -1776,7 +1777,20 @@ function matronConnect(){
   try{ matronWS=new WebSocket('ws://'+host+':5555',['bus.sp.nanomsg.org']); }catch(_){ matronRetry(); return; }
   matronWS.binaryType='arraybuffer';
   matronWS.onopen=()=>{ matronReady=true; if(matronRetryT){clearTimeout(matronRetryT);matronRetryT=null;}
-    replPrint('<span class="sys"># live link to matron @ '+host+':5555</span>');
+    // Quiet quick reconnects: when the WS bounces inside ~6s (idle drop +
+    // automatic retry) the user got a meaningless "live link" line twice
+    // even though nothing visibly broke. Only announce a (re)connect when
+    // it's the first ever, or after a real gap.
+    const gap = matronLastClose ? (Date.now()-matronLastClose) : Infinity;
+    if(!matronEverConnected || gap > 6000)
+      replPrint('<span class="sys"># live link to matron @ '+host+':5555</span>');
+    matronEverConnected = true;
+    // App-level keepalive: matron's nng WS has no ping frame and the browser
+    // / NAT will close an idle socket after ~30-60s of silence. Send a Lua
+    // no-op every 25s so the connection stays warm while the install UI is
+    // open (which is otherwise pure HTTP and produces no WS traffic).
+    if(matronKeepT) clearInterval(matronKeepT);
+    matronKeepT = setInterval(()=>{ matronSend('do end'); }, 25000);
     const pv=document.getElementById('paramsview'); if(pv&&pv.classList.contains('on')) refreshParams(); };
   matronWS.onmessage=ev=>{ let t=(typeof ev.data==='string')?ev.data:(ev.data?new TextDecoder().decode(ev.data):''); if(!t) return;
     if(t.indexOf('@@ING_PV@@')>=0){ t.split('\n').forEach(ln=>{ const k=ln.indexOf('@@ING_PV@@'); if(k<0) return;   // single-param formatted-value refresh
@@ -1785,7 +1799,9 @@ function matronConnect(){
       const a=ln.slice(k+10).split('\t'); if(a.length<3) return; (pLabelMap[a[0]]=pLabelMap[a[0]]||{})[a[1]]=a[2]; }); }
     if(matronOnData) matronOnData(t);                       // params/preset channel may consume markers
     if(!/@@ING_/.test(t)) replPrint('<span class="ok">'+esc(t).replace(/\n$/,'')+'</span>'); };
-  matronWS.onclose=()=>{ matronReady=false; matronRetry(); };
+  matronWS.onclose=()=>{ matronReady=false; matronLastClose=Date.now();
+    if(matronKeepT){ clearInterval(matronKeepT); matronKeepT=null; }
+    matronRetry(); };
   matronWS.onerror=()=>{ try{ matronWS.close(); }catch(_){ } };
 }
 function matronRetry(){ if(matronRetryT) return; matronRetryT=setTimeout(()=>{ matronRetryT=null; if(!matronReady) matronConnect(); }, 2500); }
@@ -1803,30 +1819,54 @@ function replSubmit(){
   replPrint('<span class="meta"># no live matron link — open ingenue on the device to run commands</span>');
 }
 
-/* ';' REPL shortcuts (maiden-style) — keep this list and ;help in sync */
-function replSlashHelp(){
-  replPrint('<span class="meta"># shortcuts:  ;install &lt;url&gt;  ·  ;load &lt;name&gt;  ·  ;restart  ·  ;clear  ·  ;help</span>');
-}
+/* ';' REPL shortcuts — maiden parity. Maiden's full set (web/src/model/repl-actions.js):
+ *   ;install <url>        → install a script from URL
+ *   ;<unit-op>            → systemd unit operation on the active REPL's unit
+ *                           (operations: restart | start | stop)
+ * Anything unrecognised falls through to maiden's server as a unit op and gets
+ * "unrecognized operation" back. We mirror that shape here so muscle memory works.
+ * Per active target: matron tab → matron unit, sc tab → supercollider unit.
+ * Note on ;restart for matron: user policy is "never systemctl restart norns-matron
+ * — wedges the host; sudo reboot or use the launcher instead". So matron-target
+ * ;restart maps to norns.script.restart() (safe Lua-level script reload, what
+ * users normally mean) rather than a unit restart. Sc-target ;restart uses the
+ * existing /api/audio/restart (which best-efforts the jack/sc stack).
+ */
 function replSlashCmd(rest){
-  if(!rest){ replSlashHelp(); return; }
+  if(!rest){ replPrint('<span class="meta"># shortcuts: ;install &lt;url&gt; · ;restart · ;start · ;stop</span>'); return; }
   const sp=rest.indexOf(' ');
   const cmd=(sp<0?rest:rest.slice(0,sp)).toLowerCase();
   // strip slack/discord-style <...> URL-wrapping and stray quotes from the arg
   const arg=(sp<0?'':rest.slice(sp+1)).trim().replace(/^[<"']+|[>"']+$/g,'');
   if(cmd==='install') return replInstallFromUrl(arg);
-  if(cmd==='restart'){
+  if(cmd==='restart'||cmd==='start'||cmd==='stop') return replUnitOp(cmd);
+  // maiden's fallback: ".. => unrecognized operation". Don't forward to matron
+  // — it would error with "attempt to call a string value".
+  replPrint(`<span class="err"># ;${esc(cmd)} =&gt; unrecognized operation</span>`);
+}
+async function replUnitOp(op){
+  const tgt = (typeof target==='string' ? target : 'matron');
+  if(tgt==='matron'){
+    if(op!=='restart'){
+      replPrint(`<span class="err"># ;${esc(op)} =&gt; matron start/stop is unsafe via ingenue — power-cycle the device or use SYSTEM &gt; SLEEP</span>`); return;
+    }
     if(!matronReady){ replPrint('<span class="meta"># no live matron link</span>'); return; }
-    matronSend('norns.script.restart()'); return;
+    matronSend('norns.script.restart()');
+    replPrint('<span class="meta"># ;restart =&gt; norns.script.restart() (safe Lua-level reload — power-cycle for a true matron restart)</span>');
+    return;
   }
-  if(cmd==='load'){
-    if(!arg){ replPrint('<span class="err"># usage: ;load &lt;name&gt;</span>'); return; }
-    if(!matronReady){ replPrint('<span class="meta"># no live matron link</span>'); return; }
-    const nm=arg.replace(/[^A-Za-z0-9_.-]/g,'');   // dust/code dir names are this strict
-    matronSend(`norns.script.load("code/${nm}/${nm}.lua")`); return;
+  // sc target
+  if(op!=='restart'){
+    replPrint(`<span class="err"># ;${esc(op)} =&gt; sc start/stop not exposed by ingenue — power-cycle or restart norns</span>`); return;
   }
-  if(cmd==='clear'){ out().innerHTML=''; return; }
-  if(cmd==='help'||cmd==='?'){ replSlashHelp(); return; }
-  replPrint(`<span class="err"># unknown shortcut: ;${esc(cmd)} — try ;help</span>`);
+  if(!HAS_BACKEND){ replPrint('<span class="meta"># no backend — open ingenue on the device</span>'); return; }
+  replPrint('<span class="meta"># ;restart (sc) =&gt; /api/audio/restart …</span>');
+  try{
+    const r = await fetch('api/audio/restart',{method:'POST'});
+    const j = await r.json().catch(()=>({}));
+    if(j.ok)  replPrint(`<span class="sys"># ;restart =&gt; ${esc(j.method||'done')}</span>`);
+    else      replPrint(`<span class="err"># ;restart =&gt; ${esc(j.error||r.statusText)}${j.hint?' — '+esc(j.hint):''}</span>`);
+  }catch(e){ replPrint(`<span class="err"># ;restart =&gt; ${esc(e.message)}</span>`); }
 }
 async function replInstallFromUrl(url){
   if(!/^https?:\/\//.test(url)){
