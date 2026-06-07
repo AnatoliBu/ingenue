@@ -1040,6 +1040,183 @@ def safe_script_dir(name):
     return full, name
 
 
+# ---------------------------------------------------------------------------
+# Favorites — dust/data/system.favorites (the norns SELECT-menu favorites)
+# ---------------------------------------------------------------------------
+# norns stores favorites in a Lua table serialized by tabutil.save:
+#   return { -- Table:{1} {2},{3},... }  with Table:{k} = {file=,path=,name=}
+# The ARRAY ORDER is the on-device order (top of the SELECT menu + the order
+# the KEY_NEXT_FAVORITE hardware button cycles through). Identity is keyed on
+# the absolute `file` path; favorites are per .lua ENTRYPOINT, not per script
+# dir (timber/keys and timber/player are independent favorites). We replicate
+# select.lua's scan (find -mindepth 2 … | grep -Ev "/(lib|data|crow|test|docs)/")
+# and menu_table_entry()'s name derivation so the entries we write are
+# byte-identical to what norns itself writes — they round-trip cleanly and
+# contains() in select.lua matches them. The file is re-read by select.lua
+# every time the SELECT menu opens, so a write takes effect on next open;
+# no daemon reload is needed.
+FAVORITES = os.path.join(DUST, "data", "system.favorites")
+_FAVORITE_SKIP_DIRS = ("lib", "data", "crow", "test", "docs")
+
+
+def _entry_name(rel):
+    """Replicate select.lua's menu_table_entry name derivation for a code-
+    relative path: 'p8/gravity.lua' -> 'p8/gravity', 'awake/awake.lua' ->
+    'awake' (dir/script collapses when the last two components are equal)."""
+    rel = rel.replace(os.sep, "/")
+    n = rel[:-4] if rel.endswith(".lua") else rel
+    if "/" in n:
+        head, tail = n.rsplit("/", 1)
+        if head == tail:
+            n = head
+    return n
+
+
+def scan_entrypoints():
+    """All favoritable .lua entrypoints under dust/code, matching norns' SELECT
+    scan exactly: every *.lua at depth >= 2, skipping .git dirs and any path
+    containing a /lib|data|crow|test|docs/ segment. Returns [{name,file,path}]
+    sorted alphabetically by name — the same order SELECT lists them."""
+    out = []
+    for script in sorted(os.listdir(CODE)):
+        sd = os.path.join(CODE, script)
+        if not os.path.isdir(sd) or script.startswith("."):
+            continue
+        for root, dirs, files in os.walk(sd):
+            dirs[:] = [d for d in dirs if d != ".git"]
+            for f in files:
+                if not f.endswith(".lua"):
+                    continue
+                rel = os.path.relpath(os.path.join(root, f), CODE).replace(os.sep, "/")
+                if "/" not in rel:                                   # mindepth 2
+                    continue
+                if any(("/" + seg + "/") in rel for seg in _FAVORITE_SKIP_DIRS):
+                    continue
+                full = CODE + "/" + rel
+                out.append({"name": _entry_name(rel),
+                            "file": full,
+                            "path": os.path.dirname(full) + "/"})
+    out.sort(key=lambda e: e["name"].lower())
+    return out
+
+
+def _lua_q(s):
+    """Equivalent of Lua string.format('%q', s) for the values we write."""
+    out = ['"']
+    for ch in s:
+        if ch == '"':    out.append('\\"')
+        elif ch == "\\": out.append("\\\\")
+        elif ch == "\n": out.append("\\\n")   # %q emits backslash + real newline
+        elif ch == "\r": out.append("\\r")
+        elif ch == "\0": out.append("\\0")
+        else:            out.append(ch)
+    out.append('"')
+    return "".join(out)
+
+
+def _lua_unq(s):
+    """Inverse of _lua_q for the inner content of a quoted Lua string."""
+    return (s.replace("\\\n", "\n").replace("\\r", "\r").replace("\\0", "\0")
+             .replace('\\"', '"').replace("\\\\", "\\"))
+
+
+def serialize_favorites(entries):
+    """Serialize [{name,file,path}] into tabutil.save's reference format,
+    byte-identical to norns' own writes (3-space indent, no trailing newline)."""
+    cs = "   "
+    lines = ["return {", "-- Table: {1}", "{"]
+    for i in range(len(entries)):
+        lines.append(cs + "{" + str(i + 2) + "},")
+    lines.append("},")
+    for idx, e in enumerate(entries):
+        lines.append("-- Table: {" + str(idx + 2) + "}")
+        lines.append("{")
+        lines.append(cs + '["file"]=' + _lua_q(e["file"]) + ",")
+        lines.append(cs + '["path"]=' + _lua_q(e["path"]) + ",")
+        lines.append(cs + '["name"]=' + _lua_q(e["name"]) + ",")
+        lines.append("},")
+    lines.append("}")
+    return "\n".join(lines)
+
+
+def read_favorites():
+    """Ordered list of favorite `file` paths from system.favorites. Document
+    order == array order == on-device SELECT order (entry tables are emitted in
+    array order, so a left-to-right scan of ["file"]= yields the order)."""
+    try:
+        with open(FAVORITES, "r", encoding="utf-8", errors="replace") as f:
+            text = f.read()
+    except OSError:
+        return []
+    return [_lua_unq(m) for m in
+            re.findall(r'\["file"\]="((?:[^"\\]|\\.)*)"', text)]
+
+
+def write_favorites(entries):
+    """Atomically write system.favorites and hand it (and its data/ dir) to the
+    dust owner — never assume `we`; target_owner() reads dust/code's ownership."""
+    data = serialize_favorites(entries).encode("utf-8")
+    os.makedirs(os.path.dirname(FAVORITES), exist_ok=True)
+    tmp = FAVORITES + ".tmp"
+    with open(tmp, "wb") as f:
+        f.write(data)
+    os.replace(tmp, FAVORITES)
+    uid, gid, _, _ = target_owner()
+    if os.getuid() == 0 and uid != 0:
+        for p in (FAVORITES, os.path.dirname(FAVORITES)):
+            try:
+                st = os.lstat(p)
+                if st.st_uid != uid or st.st_gid != gid:
+                    os.lchown(p, uid, gid)
+            except OSError:
+                pass
+
+
+def favorites_overview():
+    """GET payload: ordered current favorites + every entrypoint with a fav
+    flag. Stale favorites (file no longer present) are still listed, flagged
+    missing, so the UI can show and prune them."""
+    fav_files = read_favorites()
+    scripts = scan_entrypoints()
+    by_file = {s["file"]: s for s in scripts}
+    fav_set = set(fav_files)
+    favorites = []
+    for ff in fav_files:
+        e = by_file.get(ff)
+        if e:
+            favorites.append(dict(e))
+        else:
+            rel = (os.path.relpath(ff, CODE).replace(os.sep, "/")
+                   if ff.startswith(CODE + os.sep) else ff)
+            favorites.append({"name": _entry_name(rel), "file": ff,
+                              "path": os.path.dirname(ff) + "/", "missing": True})
+    for s in scripts:
+        s["fav"] = s["file"] in fav_set
+    return {"favorites": favorites, "scripts": scripts}
+
+
+def set_favorites(order):
+    """Write favorites in the given order (a list of `file` paths). Entries are
+    rebuilt from the canonical scan so the bytes stay norns-identical; unknown
+    or dust-escaping paths are dropped, duplicates collapsed (first wins)."""
+    by_file = {s["file"]: s for s in scan_entrypoints()}
+    seen, entries = set(), []
+    for ff in (order or []):
+        if not isinstance(ff, str) or ff in seen:
+            continue
+        seen.add(ff)
+        e = by_file.get(ff)
+        if e:
+            entries.append({"name": e["name"], "file": e["file"], "path": e["path"]})
+        elif ff.startswith(CODE + os.sep) and ff.endswith(".lua"):
+            # tolerate a real entrypoint our scan excluded — don't lose a favorite
+            rel = os.path.relpath(ff, CODE).replace(os.sep, "/")
+            entries.append({"name": _entry_name(rel), "file": ff,
+                            "path": os.path.dirname(ff) + "/"})
+    write_favorites(entries)
+    return len(entries)
+
+
 def git_remote(full):
     """The origin URL a script was cloned from, read from its own .git. Lets us
     reinstall/update scripts that came from GitHub (or anywhere) without the
@@ -2279,6 +2456,8 @@ class H(http.server.SimpleHTTPRequestHandler):
                 return self._json(sorted(d for d in os.listdir(CODE)
                                          if os.path.isdir(os.path.join(CODE, d))
                                          and not d.startswith(".") and d != "ingenue"))
+            if path == "/api/favorites":
+                return self._json(favorites_overview())
             if path == "/api/deps":
                 q = self._q(); url = q.get("url", [""])[0]
                 return self._json(analyze_remote(url) if url else analyze_script(q.get("name", [""])[0]))
@@ -2347,6 +2526,10 @@ class H(http.server.SimpleHTTPRequestHandler):
         path = urllib.parse.urlparse(self.path).path
         b = self._body()
         try:
+            if path == "/api/favorites":
+                if not isinstance(b.get("order"), list):
+                    return self._json({"error": "order must be a list of file paths"}, 400)
+                return self._json({"ok": True, "count": set_favorites(b["order"])})
             if path == "/api/remove":
                 full, name = safe_script_dir(b.get("name"))
                 if not os.path.isdir(full):

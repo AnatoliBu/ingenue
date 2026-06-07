@@ -433,8 +433,35 @@ button{font-family:inherit}
 /* ============ first-class file manager ============ */
 .filesview{flex:1;min-width:0;min-height:0;display:none;flex-direction:column;background:var(--bg);position:relative;container-type:inline-size}
 .filesview.on{display:flex}
-.paramsview,.modsview{flex:1;min-width:0;min-height:0;display:none;flex-direction:column;background:var(--bg);container-type:inline-size}
-.paramsview.on,.modsview.on{display:flex}
+.paramsview,.modsview,.favview{flex:1;min-width:0;min-height:0;display:none;flex-direction:column;background:var(--bg);container-type:inline-size}
+.paramsview.on,.modsview.on,.favview.on{display:flex}
+/* ===== favorites manager ===== */
+.favview .fv-top{display:flex;align-items:center;gap:10px;padding:10px 14px;border-bottom:1px solid var(--trim);flex:0 0 auto}
+.favview .fv-top .pv-title{font-weight:600;letter-spacing:.04em}
+.favview .fav-scroll{flex:1;min-height:0;overflow:auto;padding:8px 12px 28px}
+.favview .fav-sec{margin:6px 0 18px}
+.favview .fav-sec-h{display:flex;align-items:baseline;gap:8px;padding:6px 4px;color:var(--muted);font-size:12px;text-transform:uppercase;letter-spacing:.08em;position:sticky;top:-8px;background:var(--bg);z-index:1}
+.favview .fav-sec-h .ct{color:var(--faint)}
+.favview .fav-sec-h .hint{margin-left:auto;text-transform:none;letter-spacing:0;color:var(--faint);font-size:11px}
+.fav-row{display:flex;align-items:center;gap:10px;padding:8px 10px;border:1px solid var(--trim);border-radius:10px;margin:6px 0;background:color-mix(in srgb,var(--fg) 3%,transparent)}
+.fav-row.favd{cursor:grab}
+.fav-row.favd:active{cursor:grabbing}
+.fav-row.drag{opacity:.4}
+.fav-row.over{border-color:var(--accent2);box-shadow:0 0 0 1px var(--accent2) inset}
+.fav-row.missing{opacity:.6}
+.fav-row .grip{color:var(--faint);font-size:15px;line-height:1;cursor:grab;user-select:none;touch-action:none}
+.fav-row .fav-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:ui-monospace,monospace;font-size:13px}
+.fav-row .fav-sub{color:var(--faint);font-size:11px;font-family:ui-monospace,monospace}
+.fav-row .miss-tag{color:var(--warn,#c80);font-size:10px;border:1px solid color-mix(in srgb,var(--warn,#c80) 50%,transparent);border-radius:5px;padding:1px 5px;text-transform:uppercase;letter-spacing:.05em}
+.fav-row .ord{display:flex;flex-direction:column;gap:2px}
+.fav-row .ord button,.fav-row .star{background:none;border:1px solid var(--trim);border-radius:7px;color:var(--muted);cursor:pointer;font:inherit;line-height:1;padding:4px 7px}
+.fav-row .ord button{padding:2px 6px;font-size:10px}
+.fav-row .ord button:disabled{opacity:.3;cursor:default}
+.fav-row .ord button:hover:not(:disabled),.fav-row .star:hover{color:var(--fg);border-color:var(--accent2)}
+.fav-row .star{font-size:15px;width:34px}
+.fav-row .star.on{color:var(--accent2,#fc6);border-color:color-mix(in srgb,var(--accent2) 55%,transparent)}
+.favview .fav-empty{color:var(--faint);padding:10px 6px;font-size:13px}
+.favview .fav-saving{margin-left:auto;color:var(--faint);font-size:11px;font-family:ui-monospace,monospace}
 .modsview .rd-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(360px,1fr));gap:12px;padding:10px 12px}
 .modsview .mods-toggle{border:1px solid var(--accent);background:color-mix(in srgb,var(--accent) 12%,transparent);color:var(--accent);border-radius:8px;padding:6px 12px;font:inherit;font-size:12px;cursor:pointer;white-space:nowrap}
 .modsview .mods-toggle.on{border-color:var(--ok,#5c5);color:var(--ok,#5c5);background:color-mix(in srgb,var(--ok,#5c5) 12%,transparent)}
@@ -640,6 +667,7 @@ button{font-family:inherit}
        <button class="act" id="a-proj" title="project / repository manager"><svg viewBox="0 0 32 32"><path d="M7 4h-6c-.55 0-1 .45-1 1v22c0 .55.45 1 1 1h6c.55 0 1-.45 1-1v-22c0-.55-.45-1-1-1zM6 10h-4v-2h4v2zM17 4h-6c-.55 0-1 .45-1 1v22c0 .55.45 1 1 1h6c.55 0 1-.45 1-1v-22c0-.55-.45-1-1-1zM16 10h-4v-2h4v2zM23.909 5.546l-5.358 2.7c-.491.247-.691.852-.443 1.343l8.999 17.861c.247.491.852.691 1.343.443l5.358-2.7c.491-.247.691-.852.443-1.343l-8.999-17.861c-.247-.491-.852-.691-1.343-.443z"/></svg></button>
        <button class="act" id="a-params" title="live params editor"><svg viewBox="0 0 32 32"><path d="M0 6h18v2h-18zM26 4h2v6h-2zM22 6h10v2h-10zM0 14h8v2h-8zM12 12h2v6h-2zM12 14h20v2h-20zM0 22h22v2h-22zM30 20h2v6h-2zM26 22h6v2h-6z"/></svg></button>
        <button class="act" id="a-mods" title="mods — enable / disable"><svg viewBox="0 0 32 32"><path d="M16 1l15 8.5v13L16 31 1 22.5v-13zM16 4.3L5 10.5 16 16.7l11-6.2zM4 13v8l11 6.2v-8zM28 13l-11 6.2v8L28 21z"/></svg></button>
+       <button class="act" id="a-fav" title="favorites — manage SELECT-menu favorites &amp; order"><svg viewBox="0 0 32 32"><path d="M16 2l4.12 8.36 9.23 1.34-6.68 6.51 1.58 9.19L16 23.13 7.43 27.4l1.58-9.19-6.68-6.51 9.23-1.34z"/></svg></button>
        <button class="act grow" id="a-help" title="help"><svg viewBox="0 0 32 32"><path d="M14 24h4v4h-4zM22.667 11.333c0-3.682-2.985-6.667-6.667-6.667s-6.667 2.985-6.667 6.667h4c0-1.473 1.194-2.667 2.667-2.667s2.667 1.194 2.667 2.667c0 1.473-1.146 1.871-2.319 3.044-1.115 1.115-1.681 2.292-1.681 4.623v.667h4c0-2.667.099-2.948 1.681-4.623 1.262-1.34 2.319-2.477 2.319-4.041z"/></svg></button>
        <button class="act" id="a-cfg" title="configuration"><svg viewBox="0 0 32 32"><path d="M29.181 19.070c-1.679-2.908-.669-6.634 2.255-8.328l-3.145-5.447c-.898.527-1.943.829-3.058.829-3.361 0-6.085-2.742-6.085-6.125h-6.289c.008 1.044-.252 2.103-.811 3.070-1.679 2.908-5.411 3.897-8.339 2.211l-3.144 5.447c.905.515 1.689 1.268 2.246 2.234 1.676 2.903.672 6.623-2.241 8.319l3.145 5.447c.895-.522 1.935-.82 3.044-.82 3.35 0 6.067 2.725 6.084 6.092h6.289c-.003-1.034.259-2.080.811-3.038 1.676-2.903 5.399-3.894 8.325-2.219l3.145-5.447c-.899-.515-1.678-1.266-2.232-2.226zM16 22.479c-3.578 0-6.479-2.901-6.479-6.479s2.901-6.479 6.479-6.479c3.578 0 6.479 2.901 6.479 6.479s-2.901 6.479-6.479 6.479z"/></svg></button>
      </div>
@@ -680,6 +708,9 @@ button{font-family:inherit}
      <!-- mods manager (its own sheet — installed + installable community mods) -->
      <div class="modsview" id="modsview"></div>
 
+     <!-- favorites manager (its own sheet — reorder/toggle norns SELECT favorites) -->
+     <div class="favview" id="favview"></div>
+
      <!-- live PARAMS editor (its own sheet — lists can be huge) -->
      <div class="paramsview" id="paramsview">
        <div class="pv-top">
@@ -712,6 +743,7 @@ button{font-family:inherit}
      <button class="mtab" data-mv="repo"><svg viewBox="0 0 32 32"><path d="M7 4h-6c-.55 0-1 .45-1 1v22c0 .55.45 1 1 1h6c.55 0 1-.45 1-1v-22c0-.55-.45-1-1-1zM23.909 5.546l-5.358 2.7c-.491.247-.691.852-.443 1.343l8.999 17.861c.247.491.852.691 1.343.443l5.358-2.7c.491-.247.691-.852.443-1.343l-8.999-17.861c-.247-.491-.852-.691-1.343-.443z"/></svg>scripts</button>
      <button class="mtab" data-mv="params"><svg viewBox="0 0 32 32"><path d="M0 6h18v2h-18zM26 4h2v6h-2zM22 6h10v2h-10zM0 14h8v2h-8zM12 12h2v6h-2zM12 14h20v2h-20zM0 22h22v2h-22zM30 20h2v6h-2zM26 22h6v2h-6z"/></svg>params</button>
      <button class="mtab" data-mv="mods"><svg viewBox="0 0 32 32"><path d="M16 1l15 8.5v13L16 31 1 22.5v-13zM16 4.3L5 10.5 16 16.7l11-6.2zM4 13v8l11 6.2v-8zM28 13l-11 6.2v8L28 21z"/></svg>mods</button>
+     <button class="mtab" data-mv="fav"><svg viewBox="0 0 32 32"><path d="M16 2l4.12 8.36 9.23 1.34-6.68 6.51 1.58 9.19L16 23.13 7.43 27.4l1.58-9.19-6.68-6.51 9.23-1.34z"/></svg>faves</button>
    </div>
 
    <!-- config modal -->
@@ -891,7 +923,7 @@ button{font-family:inherit}
 </div>
 
 <script>
-const BUILD='b64 · 2026-06-06 · ;-cmd autocomplete (matches existing Lua AC), maiden-parity dispatch, WS keepalive';
+const BUILD='b65 · 2026-06-06 · favorites manager (★ sidebar) — toggle + drag-reorder norns SELECT favorites';
 console.log('%cingenue build: '+BUILD,'color:#DEB887;font-weight:bold');
 
 /* ===== self-update: on load, ask github if main is ahead of the installed commit ===== */
@@ -3047,16 +3079,91 @@ function renderRepo(){
     if(t>lst+6 && t>60) v.classList.add('collapsed'); else if(t<lst-6) v.classList.remove('collapsed'); lst=t; });
 }
 
+/* ============ favorites manager ============ */
+/* norns SELECT favorites live in dust/data/system.favorites (per .lua entrypoint,
+   keyed on absolute file path). Array order == on-device order (top of SELECT +
+   KEY_NEXT_FAVORITE cycle). We read /api/favorites, let the user toggle + reorder,
+   and POST the full ordered file list back; the backend rewrites the Lua table. */
+let _favData={favorites:[],scripts:[]};
+let _favOrder=[];                 // ordered favorite file paths — source of truth for edits
+async function renderFav(){
+  const v=document.getElementById('favview');
+  if(!HAS_BACKEND){ v.innerHTML='<div class="fv-top"><span class="pv-title">FAVORITES</span></div><div class="fav-scroll"><div class="fav-empty">favorites need the on-device backend.</div></div>'; return; }
+  v.innerHTML='<div class="fv-top"><span class="pv-title">FAVORITES</span></div><div class="fav-scroll"><div class="fav-empty">loading…</div></div>';
+  try{
+    const r=await fetch('api/favorites',{cache:'no-store'});
+    if(!r.ok) throw new Error('http '+r.status);
+    _favData=await r.json();
+  }catch(e){ v.innerHTML='<div class="fv-top"><span class="pv-title">FAVORITES</span></div><div class="fav-scroll"><div class="fav-empty">couldn’t load favorites — '+esc(e.message)+'</div></div>'; return; }
+  _favOrder=(_favData.favorites||[]).map(f=>f.file);
+  paintFav();
+}
+function _favEntry(file){ return (_favData.favorites||[]).find(f=>f.file===file) || (_favData.scripts||[]).find(s=>s.file===file); }
+function paintFav(){
+  const v=document.getElementById('favview');
+  const favs=_favOrder.map(_favEntry).filter(Boolean);
+  const favSet=new Set(_favOrder);
+  const unfav=(_favData.scripts||[]).filter(s=>!favSet.has(s.file))
+              .sort((a,b)=>a.name.toLowerCase().localeCompare(b.name.toLowerCase()));
+  const favRow=(e,i)=>`<div class="fav-row favd ${e.missing?'missing':''}" draggable="true" data-file="${esc(e.file)}" data-i="${i}">
+      <span class="grip" title="drag to reorder">⠿</span>
+      <span class="fav-name" title="${esc(e.file)}">${esc(e.name)}${e.missing?' <span class="miss-tag">missing</span>':''}</span>
+      <span class="ord"><button data-mv="up" ${i===0?'disabled':''} title="move up">▲</button><button data-mv="dn" ${i===favs.length-1?'disabled':''} title="move down">▼</button></span>
+      <button class="star on" title="remove from favorites" data-unfav>★</button></div>`;
+  const unfavRow=e=>`<div class="fav-row" data-file="${esc(e.file)}">
+      <span class="fav-name" title="${esc(e.file)}">${esc(e.name)}</span>
+      <button class="star" title="add to favorites" data-fav>☆</button></div>`;
+  v.innerHTML=`<div class="fv-top"><span class="pv-title">FAVORITES</span><span class="fav-saving" id="fav-saving"></span></div>
+    <div class="fav-scroll">
+      <div class="fav-sec"><div class="fav-sec-h">on device <span class="ct">${favs.length}</span><span class="hint">drag or ▲▼ — top is first in the SELECT menu</span></div>
+        ${favs.length?favs.map(favRow).join(''):'<div class="fav-empty">no favorites yet — add some from below ↓</div>'}</div>
+      <div class="fav-sec"><div class="fav-sec-h">all scripts <span class="ct">${unfav.length}</span><span class="hint">alphabetical</span></div>
+        ${unfav.length?unfav.map(unfavRow).join(''):'<div class="fav-empty">every installed script is a favorite</div>'}</div>
+    </div>`;
+  wireFav(v);
+}
+function wireFav(v){
+  v.querySelectorAll('[data-unfav]').forEach(b=>b.onclick=()=>{ const f=b.closest('.fav-row').dataset.file; _favOrder=_favOrder.filter(x=>x!==f); saveFav(); });
+  v.querySelectorAll('[data-fav]').forEach(b=>b.onclick=()=>{ const f=b.closest('.fav-row').dataset.file; if(!_favOrder.includes(f)) _favOrder.push(f); saveFav(); });
+  v.querySelectorAll('.ord button').forEach(b=>b.onclick=()=>{ const i=+b.closest('.fav-row').dataset.i, j=b.dataset.mv==='up'?i-1:i+1;
+    if(j<0||j>=_favOrder.length) return; const a=_favOrder.slice(); [a[i],a[j]]=[a[j],a[i]]; _favOrder=a; saveFav(); });
+  // HTML5 drag-and-drop reorder within the favorites section
+  let dragI=null;
+  v.querySelectorAll('.fav-row.favd').forEach(row=>{
+    row.addEventListener('dragstart',e=>{ dragI=+row.dataset.i; row.classList.add('drag'); e.dataTransfer.effectAllowed='move'; try{e.dataTransfer.setData('text/plain',row.dataset.file);}catch(_){} });
+    row.addEventListener('dragend',()=>{ row.classList.remove('drag'); v.querySelectorAll('.fav-row.over').forEach(x=>x.classList.remove('over')); });
+    row.addEventListener('dragover',e=>{ e.preventDefault(); e.dataTransfer.dropEffect='move'; row.classList.add('over'); });
+    row.addEventListener('dragleave',()=>row.classList.remove('over'));
+    row.addEventListener('drop',e=>{ e.preventDefault(); row.classList.remove('over'); const to=+row.dataset.i;
+      if(dragI==null||dragI===to) return; const a=_favOrder.slice(), m=a.splice(dragI,1)[0]; a.splice(to,0,m); _favOrder=a; saveFav(); });
+  });
+}
+async function saveFav(){
+  paintFav();                                   // optimistic repaint
+  const s=document.getElementById('fav-saving'); if(s) s.textContent='saving…';
+  try{
+    const r=await fetch('api/favorites',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({order:_favOrder})});
+    const j=await r.json().catch(()=>({}));
+    if(!r.ok||!j.ok) throw new Error(j.error||('http '+r.status));
+    const x=document.getElementById('fav-saving'); if(x){ x.textContent='saved ✓'; setTimeout(()=>{ const y=document.getElementById('fav-saving'); if(y&&y.textContent==='saved ✓') y.textContent=''; },1400); }
+  }catch(e){ const x=document.getElementById('fav-saving'); if(x) x.textContent='⚠ '+e.message; }
+}
+
 /* ============ navigation ============ */
 function setAct(which){ document.getElementById('a-files').classList.toggle('on',which==='files');
   document.getElementById('a-proj').classList.toggle('on',which==='proj');
   const ap=document.getElementById('a-params'); if(ap) ap.classList.toggle('on',which==='params');
-  const am=document.getElementById('a-mods'); if(am) am.classList.toggle('on',which==='mods'); }
+  const am=document.getElementById('a-mods'); if(am) am.classList.toggle('on',which==='mods');
+  const af=document.getElementById('a-fav'); if(af) af.classList.toggle('on',which==='fav'); }
 function showMods(){document.getElementById('main').style.display='none'; hideViews();
   document.getElementById('modsview').classList.add('on');
   document.getElementById('maiden').classList.remove('drawer-open');
   setAct('mods');setMtop('mods',false); renderModsView();}
-function hideViews(){ ['repoview','filesview','paramsview','modsview'].forEach(id=>{ const e=document.getElementById(id); if(e) e.classList.remove('on'); }); }
+function showFav(){document.getElementById('main').style.display='none'; hideViews();
+  document.getElementById('favview').classList.add('on');
+  document.getElementById('maiden').classList.remove('drawer-open');
+  setAct('fav');setMtop('favorites',false); renderFav();}
+function hideViews(){ ['repoview','filesview','paramsview','modsview','favview'].forEach(id=>{ const e=document.getElementById(id); if(e) e.classList.remove('on'); }); }
 // the mobile top bar (script name + folder icon) is editor-local — it must not bleed into other views
 function setMtop(label, showFileIcon){ const t=document.getElementById('m-title'); if(t&&label!=null) t.textContent=label;
   const m=document.getElementById('m-menu'); if(m) m.style.display=showFileIcon?'':'none'; }
@@ -3078,6 +3185,7 @@ const maiden=document.getElementById('maiden');
 function setMobileView(v){
   maiden.classList.remove('drawer-open');
   if(v==='mods'){ showMods(); }
+  else if(v==='fav'){ showFav(); }
   else if(v==='params'){ showParams(); }
   else if(v==='repo'){ showRepo(); }
   else if(v==='files'){ showFiles(); }
@@ -3455,6 +3563,7 @@ function boot(){
   // mods + params now have their own nav icons (out of config)
   document.getElementById('a-params').onclick=showParams;
   document.getElementById('a-mods').onclick=showMods;
+  document.getElementById('a-fav').onclick=()=>{ document.getElementById('favview').classList.contains('on')?showMain():showFav(); };
   // B9 params editor wiring (its own view)
   document.getElementById('params-refresh').onclick=refreshParams;
   document.getElementById('params-presets').onclick=togglePresets;
