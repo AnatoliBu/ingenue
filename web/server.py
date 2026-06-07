@@ -16,7 +16,7 @@ API (confined to the dust tree):
   POST /api/install  {name,url,force} -> git clone url into dust/code/name
   POST /api/remove   {name}           -> delete dust/code/name
 """
-import http.server, socketserver, os, sys, json, re, shutil, subprocess, threading, urllib.parse, urllib.request, datetime, pwd, time
+import http.server, socketserver, os, sys, json, re, shutil, subprocess, threading, urllib.parse, urllib.request, datetime, pwd, time, io, zipfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 
@@ -2682,11 +2682,73 @@ class H(http.server.SimpleHTTPRequestHandler):
                 self.end_headers()
                 self.wfile.write(body)
                 return
+            if path == "/api/download":
+                q = self._q()
+                return self._download(q.get("path", [""])[0], q.get("name", []))
         except (ValueError, FileNotFoundError, NotADirectoryError) as e:
             return self._json({"error": str(e)}, 400)
         except Exception as e:  # noqa: BLE001
             return self._json({"error": str(e)}, 500)
         return super().do_GET()
+
+    @staticmethod
+    def _content_disposition(fn):
+        # ASCII fallback (quotes/control stripped) + RFC 5987 UTF-8 form for unicode names.
+        ascii_fn = (fn.encode("ascii", "replace").decode("ascii")
+                    .replace('"', "").replace("\\", "").replace("\r", "").replace("\n", "")) or "download"
+        return "attachment; filename=\"%s\"; filename*=UTF-8''%s" % (ascii_fn, urllib.parse.quote(fn))
+
+    def _download(self, base_rel, names):
+        """Stream a single selected file as an attachment, or a zip of multiple
+        selections / folders. base_rel is the dust-relative directory; names are
+        child entries within it. Everything is validated through safe()."""
+        names = [n for n in (names or []) if n and "/" not in n and n not in (".", "..")]
+        if not names:
+            return self._json({"error": "no files selected"}, 400)
+        base_full = safe(base_rel)
+        paths = []
+        for n in names:
+            full = safe(os.path.join(base_rel, n))           # re-validates against dust root
+            if os.path.exists(full):
+                paths.append((n, full))
+        if not paths:
+            return self._json({"error": "selection not found"}, 404)
+
+        # Single regular file -> stream it directly (chunked, no full read into RAM).
+        if len(paths) == 1 and os.path.isfile(paths[0][1]):
+            name, full = paths[0]
+            self.send_response(200)
+            self.send_header("Content-Type", "application/octet-stream")
+            self.send_header("Content-Disposition", self._content_disposition(name))
+            self.send_header("Content-Length", str(os.path.getsize(full)))
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.end_headers()
+            with open(full, "rb") as f:
+                shutil.copyfileobj(f, self.wfile)
+            return
+
+        # Otherwise build a zip (multiple selections, or a folder). Built in memory:
+        # fine for typical script/pset selections; a multi-GB sample tree would spike RAM.
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+            for name, full in paths:
+                if os.path.isdir(full):
+                    for root, _dirs, files in os.walk(full):
+                        for fn in files:
+                            fp = os.path.join(root, fn)
+                            z.write(fp, os.path.relpath(fp, base_full))
+                elif os.path.isfile(full):
+                    z.write(full, os.path.relpath(full, base_full))
+        data = buf.getvalue()
+        zip_name = (paths[0][0] + ".zip") if (len(paths) == 1 and os.path.isdir(paths[0][1])) else "norns-files.zip"
+        self.send_response(200)
+        self.send_header("Content-Type", "application/zip")
+        self.send_header("Content-Disposition", self._content_disposition(zip_name))
+        self.send_header("Content-Length", str(len(data)))
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.end_headers()
+        self.wfile.write(data)
+        return
 
     def do_PUT(self):
         if urllib.parse.urlparse(self.path).path != "/api/write":

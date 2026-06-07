@@ -3459,10 +3459,19 @@ function openFromFiles(nm){ const known=Object.keys(FILES).find(k=>k.endsWith('/
   else { if(!openTabs.includes(nm)) openTabs.push(nm); activeFile=nm; if(editor) editor.setValue('-- '+nm+'\n-- opened from /'+fvPath.join('/')+'\n',-1); document.getElementById('m-title').textContent=nm; renderTabs(); } }
 /* smart batched upload (mock) */
 function fvDownload(){ const names=[...fvSel]; if(!names.length) return; const prog=document.getElementById('fv-prog'); if(!prog) return;
-  prog.classList.add('show'); const multi=names.length>1;
+  const multi=names.length>1; prog.classList.add('show');
+  if(!HAS_BACKEND){   // viewing the static demo off-device — no real files to serve
+    prog.innerHTML=`<div class="pt">connect to your norns to download</div><div class="psub">files live on the device</div><div class="pbar"><div class="pfill" style="width:100%"></div></div>`;
+    setTimeout(()=>prog.classList.remove('show'),1900); return; }
+  // Real native browser download: build the endpoint URL and let the browser fetch it.
+  // The server replies with Content-Disposition: attachment (single file) or a zip,
+  // so this hands off to the browser's own download tray — no JS progress to track.
+  const base=fvPath.slice(1).join('/');
+  const url='api/download?path='+encodeURIComponent(base)+names.map(n=>'&name='+encodeURIComponent(n)).join('');
   prog.innerHTML=`<div class="pt"><span class="ispin"></span> ${multi?`zipping ${names.length} files…`:`downloading ${names[0]}…`}</div><div class="psub">from /${fvPath.join('/')}</div><div class="pbar"><div class="pfill" style="width:35%"></div></div>`;
-  setTimeout(()=>{ prog.innerHTML=`<div class="pt">✓ ${multi?`ready — ${names.length} files (norns-files.zip)`:names[0]}</div><div class="psub">saved to your device</div><div class="pbar"><div class="pfill" style="width:100%"></div></div>`;
-    setTimeout(()=>prog.classList.remove('show'),1700); },950); }
+  const a=document.createElement('a'); a.href=url; a.download=''; document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(()=>{ prog.innerHTML=`<div class="pt">↓ download started</div><div class="psub">${multi?`${names.length} files — norns-files.zip`:names[0]} · check your browser's downloads</div><div class="pbar"><div class="pfill" style="width:100%"></div></div>`;
+    setTimeout(()=>prog.classList.remove('show'),2200); },650); }
 /* combo-view resizable console (desktop / iPad) with sensible min sizes */
 function initSplit(){
   const vs=document.querySelector('.vsplit'), main=document.getElementById('main');
