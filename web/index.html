@@ -3091,12 +3091,13 @@ function renderRepo(){
    and POST the full ordered file list back; the backend rewrites the Lua table. */
 let _favData={favorites:[],scripts:[],hidden:[]};
 let _favOrder=[];                 // ordered favorite file paths — source of truth for edits
+let _favScroll=0;                 // remembered scroll pos — a re-render rebuilds the list, so restore it (don't jump to top on every ★/👁 click)
 const EYE_OPEN='<svg viewBox="0 0 32 32"><path d="M16 6C8.5 6 2.5 12.6 1 16c1.5 3.4 7.5 10 15 10s13.5-6.6 15-10c-1.5-3.4-7.5-10-15-10zm0 16a6 6 0 110-12 6 6 0 010 12zm0-3.2a2.8 2.8 0 100-5.6 2.8 2.8 0 000 5.6z"/></svg>';
 const EYE_SHUT='<svg viewBox="0 0 32 32"><path d="M16 6C8.5 6 2.5 12.6 1 16c1.5 3.4 7.5 10 15 10s13.5-6.6 15-10c-1.5-3.4-7.5-10-15-10zm0 16a6 6 0 110-12 6 6 0 010 12zm0-3.2a2.8 2.8 0 100-5.6 2.8 2.8 0 000 5.6z"/><line x1="5" y1="4" x2="27" y2="28" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"/></svg>';
 async function renderFav(){
   const v=document.getElementById('favview');
   if(!HAS_BACKEND){ v.innerHTML='<div class="fv-top"><span class="pv-title">FAVORITES</span></div><div class="fav-scroll"><div class="fav-empty">favorites need the on-device backend.</div></div>'; return; }
-  v.innerHTML='<div class="fv-top"><span class="pv-title">FAVORITES</span></div><div class="fav-scroll"><div class="fav-empty">loading…</div></div>';
+  if(!v.querySelector('.fav-scroll')) v.innerHTML='<div class="fv-top"><span class="pv-title">FAVORITES</span></div><div class="fav-scroll"><div class="fav-empty">loading…</div></div>';   // first open only — a refresh keeps the list up so scroll/position don't flash
   try{
     const r=await fetch('api/favorites',{cache:'no-store'});
     if(!r.ok) throw new Error('http '+r.status);
@@ -3134,6 +3135,8 @@ function paintFav(){
       ${hidden.length?`<div class="fav-sec"><div class="fav-sec-h">hidden from SELECT <span class="ct">${hidden.length}</span><span class="hint">click the eye to restore</span></div>
         <div class="fav-grid">${hidden.map(hiddenRow).join('')}</div></div>`:''}
     </div>`;
+  const sc=v.querySelector('.fav-scroll');
+  if(sc){ sc.scrollTop=_favScroll; sc.addEventListener('scroll',()=>{ _favScroll=sc.scrollTop; },{passive:true}); }
   wireFav(v);
 }
 function wireFav(v){
