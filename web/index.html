@@ -3142,13 +3142,29 @@ function wireFav(v){
   // touch reorder (mobile): native HTML5 DnD doesn't fire from touch, so the
   // whole row is a long-press handle — hold ~200ms to pick up, then drag. A
   // quick move before pickup is left to scroll the list; a tap on ★ still toggles.
-  let td=null;   // {from,to,el,picked,x,y,timer}
+  // While lifted, holding the finger near the top/bottom edge auto-scrolls the
+  // list so you can reorder beyond what's currently on screen.
+  let td=null;   // {from,to,el,picked,x,y,lastX,lastY,timer,raf}
+  const scroller=v.querySelector('.fav-scroll');
+  const EDGE=64;                       // px from each end of the scroller that triggers autoscroll
   const clearOver=()=>v.querySelectorAll('.fav-row.over').forEach(x=>x.classList.remove('over'));
+  const updateOver=(x,y)=>{ const el=document.elementFromPoint(x,y), tgt=el&&el.closest('.fav-row.favd');
+    clearOver(); if(tgt&&tgt!==td.el){ tgt.classList.add('over'); td.to=+tgt.dataset.i; } else td.to=null; };
+  const tick=()=>{ if(!td||!td.picked){ if(td) td.raf=0; return; }
+    const r=scroller.getBoundingClientRect(); let dy=0;
+    if(td.lastY<r.top+EDGE)          dy=-Math.ceil((r.top+EDGE-td.lastY)/EDGE*12);   // up, faster nearer the edge
+    else if(td.lastY>r.bottom-EDGE)  dy= Math.ceil((td.lastY-(r.bottom-EDGE))/EDGE*12);   // down
+    if(dy){ const before=scroller.scrollTop; scroller.scrollTop+=dy;
+      if(scroller.scrollTop!==before) updateOver(td.lastX,td.lastY);   // content moved under a held finger — re-aim
+      td.raf=requestAnimationFrame(tick); }
+    else td.raf=0; };
+  const maybeAutoScroll=()=>{ if(td&&td.picked&&!td.raf){ const r=scroller.getBoundingClientRect();
+    if(td.lastY<r.top+EDGE||td.lastY>r.bottom-EDGE) td.raf=requestAnimationFrame(tick); } };
   v.querySelectorAll('.fav-row.favd').forEach(row=>{
     row.addEventListener('touchstart',e=>{
       if(e.target.closest('.star')) return;                         // let ★ taps through
       const t=e.touches[0];
-      td={from:+row.dataset.i,to:null,el:row,picked:false,x:t.clientX,y:t.clientY,
+      td={from:+row.dataset.i,to:null,el:row,picked:false,x:t.clientX,y:t.clientY,lastX:t.clientX,lastY:t.clientY,raf:0,
           timer:setTimeout(()=>{ if(td){ td.picked=true; row.classList.add('lifted'); try{navigator.vibrate&&navigator.vibrate(12);}catch(_){} } },200)};
     },{passive:true});
     row.addEventListener('touchmove',e=>{
@@ -3159,12 +3175,12 @@ function wireFav(v){
         return;
       }
       e.preventDefault();                                           // block scroll/selection while lifted
-      const el=document.elementFromPoint(t.clientX,t.clientY);
-      const tgt=el&&el.closest('.fav-row.favd');
-      clearOver();
-      if(tgt&&tgt!==td.el){ tgt.classList.add('over'); td.to=+tgt.dataset.i; } else td.to=null;
+      td.lastX=t.clientX; td.lastY=t.clientY;
+      updateOver(t.clientX,t.clientY);
+      maybeAutoScroll();
     },{passive:false});
-    const end=()=>{ if(!td) return; clearTimeout(td.timer); const d=td; td=null; clearOver(); d.el.classList.remove('lifted');
+    const end=()=>{ if(!td) return; clearTimeout(td.timer); if(td.raf) cancelAnimationFrame(td.raf);
+      const d=td; td=null; clearOver(); d.el.classList.remove('lifted');
       if(d.picked&&d.to!=null&&d.to!==d.from){ const a=_favOrder.slice(), m=a.splice(d.from,1)[0]; a.splice(d.from<d.to?d.to-1:d.to,0,m); _favOrder=a; saveFav(); } };
     row.addEventListener('touchend',end);
     row.addEventListener('touchcancel',end);
