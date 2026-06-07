@@ -31,6 +31,26 @@ refresh_self(){
   done
 }
 
+# Install copies the new web/ OVER $DEST (cp -r is additive) — it never removes files the
+# release dropped or relocated. So older layouts leave dangling files behind; the worst kind
+# are stale *.lua (e.g. demo/fixtures/*.lua after they moved to demo/data/), which keep
+# showing up in norns' SELECT menu forever. This mirrors the freshly-fetched web/ into $DEST:
+# any file $DEST has that the current release no longer ships is removed — EXCEPT the install/
+# launch and runtime artifacts that legitimately live there (install.sh, ingenue.lua, .version,
+# logs, __pycache__, and a maiden git checkout's .git). Runs on every fetch (so every
+# self-update is self-cleaning). Guarded against a botched/empty fetch.
+prune_stale(){
+  local src="$1" rel
+  [ -d "$src" ] && [ -f "$src/index.html" ] || { say "skip prune — fetched source looks incomplete"; return 0; }
+  ( cd "$DEST" 2>/dev/null && find . -type f 2>/dev/null ) | while IFS= read -r rel; do
+    case "$rel" in
+      ./.git/*|./.version|./install.sh|./ingenue.lua|*.log|./__pycache__/*|*.pyc|./.DS_Store) continue ;;
+    esac
+    [ -e "$src/$rel" ] || { rm -f "$DEST/$rel" 2>/dev/null && say "pruned stale ${rel#./}"; }
+  done
+  ( cd "$DEST" 2>/dev/null && find . -mindepth 1 -type d -empty -delete 2>/dev/null ) || true
+}
+
 # --- 1. make sure python3 is available (any target has internet per the install flow) ---
 ensure_python(){
   if command -v python3 >/dev/null 2>&1; then return 0; fi
@@ -71,12 +91,14 @@ if [ "${INGENUE_NO_FETCH:-0}" != "1" ]; then
     SRC_SHA="$(git -C /tmp/ingenue-src rev-parse HEAD 2>/dev/null)" || SRC_SHA=""
     cp -r /tmp/ingenue-src/web/. "$DEST/"
     refresh_self /tmp/ingenue-src
+    prune_stale /tmp/ingenue-src/web
     rm -rf /tmp/ingenue-src
   else
     curl -fsSL "$REPO/archive/refs/heads/$BRANCH.tar.gz" -o /tmp/ingenue.tgz
     rm -rf /tmp/ingenue-x && mkdir -p /tmp/ingenue-x && tar xzf /tmp/ingenue.tgz -C /tmp/ingenue-x --strip-components=1
     cp -r /tmp/ingenue-x/web/. "$DEST/"
     refresh_self /tmp/ingenue-x
+    prune_stale /tmp/ingenue-x/web
     rm -rf /tmp/ingenue.tgz /tmp/ingenue-x
   fi
 fi
