@@ -1521,16 +1521,26 @@ def _norns_tag(update):
 
 
 def norns_device_version():
-    """The device's norns version as norns itself sees it — $HOME/version.txt of
-    the dust owner (who runs matron). Returns {update:int, tag:str|None}."""
-    _, _, _, home = target_owner()
-    update = 0
-    try:
-        with open(os.path.join(home or "", "version.txt"), encoding="utf-8") as f:
-            update = int((f.read() or "0").strip() or "0")
-    except (OSError, ValueError):
-        update = 0
-    return {"update": update, "tag": _norns_tag(update)}
+    """The device's norns version as norns itself sees it. norns reads
+    $HOME/version.txt at runtime (norns.lua) — and ingenue is launched by the same
+    environment as matron (systemd User= on real norns; Norns.sh `export HOME=` on
+    PanicOS ports), so os.environ['HOME'] is the file norns actually reads. Fall
+    back to the dust owner's home (pw_dir). update==0 means unknown (e.g. PanicOS
+    ships no version.txt) — callers degrade gracefully. Returns {update,tag}."""
+    _, _, _, owner_home = target_owner()
+    seen = set()
+    for base in (os.environ.get("HOME"), owner_home):
+        if not base or base in seen:
+            continue
+        seen.add(base)
+        try:
+            with open(os.path.join(base, "version.txt"), encoding="utf-8") as f:
+                update = int((f.read() or "0").strip() or "0")
+            if update > 0:
+                return {"update": update, "tag": _norns_tag(update)}
+        except (OSError, ValueError):
+            continue
+    return {"update": 0, "tag": None}
 
 
 def analyze_script(name):
