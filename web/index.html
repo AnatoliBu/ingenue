@@ -1875,7 +1875,9 @@ async function replInstallFromUrl(url){
   if(!HAS_BACKEND){
     replPrint('<span class="meta"># no backend — open ingenue on the device to install</span>'); return;
   }
-  const name=url.replace(/\.git$/,'').split('/').filter(Boolean).pop();
+  // split first, THEN strip .git — otherwise a trailing slash after .git
+  // (e.g. "…/bar.git/") leaves the .git suffix on the derived name.
+  const name=(url.split('/').filter(Boolean).pop()||'').replace(/\.git$/,'');
   if(!name){ replPrint('<span class="err"># couldn’t derive script name from URL</span>'); return; }
   replPrint(`<span class="meta"># installing ${esc(name)} from ${esc(url)}…</span>`);
   let started;
