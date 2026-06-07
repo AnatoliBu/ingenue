@@ -1374,8 +1374,11 @@ async function runScpHeal(){
 /* ===== device info (hostname · ip · arch · system) ===== */
 async function initSysInfo(){ try{ const r=await fetch('api/sysinfo',{cache:'no-store'}); if(!r.ok) return; const s=await r.json();
   document.getElementById('dev-sec').style.display=''; document.getElementById('sysinfo-row').style.display='';
-  document.getElementById('sysinfo').textContent=`${s.hostname||'?'} · ${s.ip||'no ip'} · ${s.arch} · ${s.system}`;
+  DEVICE_NORNS = (s.norns && s.norns.update) ? s.norns : null;   // {update:int,tag} — used to warn on version-pinned scripts
+  const nv = DEVICE_NORNS ? ` · norns ${DEVICE_NORNS.tag||DEVICE_NORNS.update}` : '';
+  document.getElementById('sysinfo').textContent=`${s.hostname||'?'} · ${s.ip||'no ip'} · ${s.arch} · ${s.system}${nv}`;
   }catch(_){ } }
+let DEVICE_NORNS=null;   // device norns version from /api/sysinfo (null off-device/unknown)
 
 /* ===== B10 audio-server health (config line + best-effort restart) ===== */
 async function initAudioHealth(){ try{ const r=await fetch('api/audio',{cache:'no-store'}); if(!r.ok) return; renderAudio(await r.json()); }catch(_){ } }
@@ -2260,6 +2263,13 @@ let depPending=null;
 function depNodeRows(rep){
   const R=(ic,k,d)=>`<div class="dep-row"><span class="dep-ic">${ic}</span><div style="flex:1;min-width:0"><div class="k">${k}</div>${d?`<div class="d">${d}</div>`:''}</div></div>`;
   const rows=[];
+  if(rep.version_required){
+    const reqLbl=rep.version_required_tag||rep.version_required, dev=DEVICE_NORNS?DEVICE_NORNS.update:0;
+    if(dev && rep.version_required>dev)
+      rows.push(R('⚠️','needs a newer norns',`requires norns <b>${reqLbl}</b> — this device runs <b>${DEVICE_NORNS.tag||dev}</b>, so it will refuse to load until you update norns`));
+    else
+      rows.push(R('🆗','norns version',`pins norns ≥ <b>${reqLbl}</b>${dev?' — your device meets it':''}`));
+  }
   if(rep.nb) rows.push(R('🎹','nb voices','plays through nb — install an nb voice (the nb_* player mods) to make sound'));
   if(rep.needs_sc_ext) rows.push(R('🔌','SuperCollider engine extension',((rep.sc_extensions||[]).join(', ')||'extension')+' — installed if missing'));
   if((rep.downloads||[]).length) rows.push(R('⬇','downloads ('+rep.downloads.length+')',
@@ -3628,6 +3638,7 @@ function boot(){
   initSplit();
   loadCatalog().then(checkScPlugins);   // pull the real catalog, then silently check SC-plugin health
   matronConnect();                      // live REPL + params link to matron (no-op off-device)
+  initSysInfo();                        // populate DEVICE_NORNS early so version-pin warnings work before config is opened
   initAudioHealth();                    // B10 audio-server health line in config
   initHealth();                         // unified multi-check health panel (ownership + mod compatibility + …)
   setTimeout(()=>{ if(!_updChecked){ _updChecked=true; checkForUpdate(false); } }, 1800);  // quiet on-load update check

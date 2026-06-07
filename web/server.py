@@ -1492,6 +1492,47 @@ def run_install(full, emit=None):
     return ok, "\n".join(log)
 
 
+# --- norns OS version awareness (read-only; lifted from the version-bridge work) ---
+# norns errors a script at load when `norns.version.required` (a YYMMDD int the
+# script declares) > `norns.version.update` (the device's version, which norns
+# reads from $HOME/version.txt — see norns.lua / script.lua). We surface both so
+# the UI can warn BEFORE install, instead of letting the script fail on-device.
+_NORNS_REQUIRED_RE = re.compile(r"norns\.version\.required\s*=\s*(\d+)")
+_NORNS_REF_MAP = {
+    "210706": "v2.5.4", "210927": "v2.6.0", "220129": "v2.6.1", "220306": "v2.7.0",
+    "220321": "v2.7.1", "220802": "v2.7.2", "221214": "v2.7.3", "230405": "v2.7.4",
+    "230509": "v2.7.5", "230526": "v2.7.6", "230614": "v2.7.7", "231011": "v2.7.8",
+    "231023": "v2.7.9", "231114": "v2.8.1", "240221": "v2.8.2", "240424": "v2.8.3",
+    "240911": "v2.8.4", "250406": "v2.9.0", "250414": "v2.9.1", "250530": "v2.9.2",
+    "250926": "v2.9.3", "260102": "v2.9.4", "260526": "v3.0.0",
+}
+
+
+def _norns_tag(update):
+    """Map a YYMMDD version int to a release tag: exact match, else the highest
+    known release at or below it with a '+' (covers in-between daily builds)."""
+    if not update:
+        return None
+    k = str(update)
+    if k in _NORNS_REF_MAP:
+        return _NORNS_REF_MAP[k]
+    older = [int(x) for x in _NORNS_REF_MAP if int(x) <= int(update)]
+    return (_NORNS_REF_MAP[str(max(older))] + "+") if older else None
+
+
+def norns_device_version():
+    """The device's norns version as norns itself sees it — $HOME/version.txt of
+    the dust owner (who runs matron). Returns {update:int, tag:str|None}."""
+    _, _, _, home = target_owner()
+    update = 0
+    try:
+        with open(os.path.join(home or "", "version.txt"), encoding="utf-8") as f:
+            update = int((f.read() or "0").strip() or "0")
+    except (OSError, ValueError):
+        update = 0
+    return {"update": update, "tag": _norns_tag(update)}
+
+
 def analyze_script(name):
     """Scan an INSTALLED script for its dependency surface."""
     full, name = safe_script_dir(name)
@@ -1622,8 +1663,12 @@ def analyze_dir(full, name):
     # nb script installed — flagging them as needing nb was a recurring false
     # positive that drove agents to re-install nb-voice onto already-working setups.
     nb_referenced = bool(re.search(r"require[\s(]+['\"]nb/|/nb/lib|nb_voice|nb:add", blob))
+    vreq_m = _NORNS_REQUIRED_RE.search(blob)
+    vreq = int(vreq_m.group(1)) if vreq_m else None
     rep = {
         "name": name,
+        "version_required": vreq,                          # norns.version.required pin (YYMMDD int) or None
+        "version_required_tag": _norns_tag(vreq),          # mapped release tag for display
         "git_url": git_remote(full),                     # inferred clone url — enables reinstall/update off-catalog
         "install_script": bool(find_installer(full)),
         "downloads": downloads[:12],
@@ -2316,7 +2361,8 @@ def sysinfo():
         pass
     return {"hostname": u.nodename, "ip": ip, "arch": u.machine,
             "system": f"{u.sysname} {u.release}", "port": PORT,
-            "dust": DUST, "python": sys.version.split()[0]}
+            "dust": DUST, "python": sys.version.split()[0],
+            "norns": norns_device_version()}
 
 
 def audio_status():
