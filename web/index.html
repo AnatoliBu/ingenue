@@ -269,6 +269,7 @@ button{font-family:inherit}
 .modsview .mods-toggle{padding:5px 10px}   /* keep it compact next to Reinstall/Remove */
 .btn-install{background:var(--accent);color:#241a0d}
 .btn-update{background:transparent;border:1px solid var(--accent2);color:var(--accent2)}
+.btn-reinstall{background:transparent;border:1px solid var(--trim);color:var(--muted)}
 .btn-remove{background:transparent;border:1px solid var(--trim);color:var(--muted)}
 .btn-remove:hover{border-color:var(--err);color:var(--err)}
 .btn-danger{background:var(--err);color:#fff;border:0}
@@ -2756,7 +2757,8 @@ function wireCards(v,list,tab){
   cards.forEach((card,i)=>{
     const p=list[i]; if(!p) return;
     const ins=card.querySelector('.btn-install'); if(ins) ins.onclick=e=>{e.stopPropagation();requestInstall(p,ins,tab);};
-    const up=card.querySelector('.btn-update'); if(up) up.onclick=e=>{e.stopPropagation();doInstall(p,up,'',{force:1});};   // Reinstall = force re-clone
+    const up=card.querySelector('.btn-update'); if(up) up.onclick=e=>{e.stopPropagation(); doScriptUpdate(p.dir||p.n);};   // flagged behind → git fetch+reset
+    const ri=card.querySelector('.btn-reinstall'); if(ri) ri.onclick=e=>{e.stopPropagation(); reinstallFlow(p,ri);};        // not flagged → check one, inform, re-clone
     const rm=card.querySelector('.btn-remove'); if(rm) rm.onclick=e=>{e.stopPropagation();removeScript(p,rm);};
     const rq=card.querySelector('[data-reqs]'); if(rq) rq.onclick=e=>{e.stopPropagation();showRequirements(p);};
     card.querySelectorAll('.pill[data-tag]').forEach(tg=>tg.onclick=e=>{e.stopPropagation();
@@ -2768,82 +2770,11 @@ function wireCards(v,list,tab){
       if(cb.checked) selection.add(p.n); else selection.delete(p.n); updateBulkBar(); };
     const db=card.querySelector('.demo-btn'); if(db) db.onclick=e=>{e.stopPropagation();loadDemo(card,p);};
     const rb=card.querySelector('.readme-btn'); if(rb) rb.onclick=e=>{e.stopPropagation();loadReadme(card,p);};
-    // Lazy-fetch and render the version row for installed scripts. Done here
-    // (not at HTML build time) so renderRepo stays a pure string operation.
-    const verRow=card.querySelector('.more-version[data-version-for]');
-    if(verRow && HAS_BACKEND) fillVersionRow(verRow, p);
-    // cards stay expanded; demo embeds + README load on demand
+    // cards stay expanded; demo embeds + README load on demand. NOTE: no per-card
+    // version fetch — update status comes only from the manual "check for updates"
+    // scan, and a single-script check happens on Reinstall (see reinstallFlow).
   });
 }
-// /api/giturl is one git call on the device per installed card; with hundreds of
-// installed scripts, firing them all at once (esp. across repeated re-renders)
-// exhausts the browser's connection pool (ERR_INSUFFICIENT_RESOURCES) and wedges
-// the UI. Funnel them through a small concurrency-limited queue, and skip rows
-// that were detached by a re-render before their turn came up.
-const VERQ={q:[],active:0,max:4};
-function queueVersionRow(rowEl,name){ VERQ.q.push([rowEl,name]); pumpVerQ(); }
-function pumpVerQ(){
-  while(VERQ.active<VERQ.max && VERQ.q.length){
-    const [r,n]=VERQ.q.shift();
-    if(!r||!r.isConnected) continue;             // dropped by a re-render — don't fetch
-    VERQ.active++;
-    Promise.resolve(populateVersionRow(r,n)).catch(()=>{}).finally(()=>{ VERQ.active--; pumpVerQ(); });
-  }
-}
-
-/* ===== per-script version row: commit · Update · Rollback ===== */
-/* Primary data source is the batch update scan (POST /api/updates/check), which
-   returns each script's local sha + .project dates alongside behind-status — so
-   ALL version rows load under the one progress bar, no per-card fetch. The
-   /api/giturl path remains as a single-card fallback (scan failed / off the
-   installed tab). /api/update + /api/rollback drive jobs through the dock. */
-function renderVersionRow(rowEl, name, d){
-  if(!d || d.naGit || !d.sha){ rowEl.innerHTML='<span class="ver-na">no git info — pre-history install</span>'; return; }
-  const sha=(d.sha||'').slice(0,7)||'no history';
-  const installedOn = d.installed_on ? d.installed_on.slice(0,10) : '';
-  const updatedOn = (d.updated_on && d.updated_on!=='0001-01-01T00:00:00Z') ? d.updated_on.slice(0,10) : '';
-  const since = updatedOn ? `updated ${updatedOn}` : (installedOn ? `installed ${installedOn}` : '');
-  rowEl.innerHTML = `
-      <span class="ver-label">commit</span>
-      <code class="ver-sha" title="${d.sha||''}">${sha}</code>
-      ${since?`<span class="ver-when">${since}</span>`:''}
-      <span class="ver-grow"></span>
-      <button class="ver-btn ver-update" title="git fetch + reset to latest origin/HEAD">↻ update</button>
-      <button class="ver-btn ver-rollback" title="check out an earlier commit">⏪ rollback ▾</button>`;
-  rowEl.querySelector('.ver-update').onclick = e => { e.stopPropagation(); doScriptUpdate(name, rowEl); };
-  rowEl.querySelector('.ver-rollback').onclick = e => { e.stopPropagation(); openRollbackPicker(name); };
-}
-async function populateVersionRow(rowEl, name){      // single-card fallback via /api/giturl
-  try{
-    const j = await (await fetch('api/giturl?name='+encodeURIComponent(name), {cache:'no-store'})).json();
-    if(j.error){ rowEl.innerHTML='<span class="ver-na">no git info — pre-history install</span>'; return; }
-    renderVersionRow(rowEl, name, {sha:j.sha, installed_on:(j.project||{}).installed_on, updated_on:(j.project||{}).updated_on});
-  }catch(_){ rowEl.innerHTML='<span class="ver-na">version unavailable</span>'; }
-}
-// Decide how to fill an installed card's version row: from already-scanned data
-// (no fetch), leave the "loading…" placeholder while a scan is in flight, or
-// fall back to a single giturl when no scan covers this card.
-function fillVersionRow(rowEl, p){
-  const name=p.dir||p.n;
-  if(p._ver){ renderVersionRow(rowEl, name, p._ver); return; }
-  // On the Installed tab a scan is running OR will auto-run (first visit) — it
-  // fills every row. Leave the "loading…" placeholder; do NOT fetch per card.
-  if(repoTab==='installed' && HAS_BACKEND && (updChecking || !updCheckedAt)) return;
-  queueVersionRow(rowEl, name);   // fallback: available/discover cards, or a card the scan didn't cover
-}
-// As scan results stream in, fill any not-yet-filled installed version rows.
-function applyVersionRows(){
-  const v=document.getElementById('repoview'); if(!v||repoTab!=='installed') return;
-  const scanDone = updCheckedAt && !updChecking;
-  v.querySelectorAll('.rd-grid .card[data-pn]').forEach(card=>{
-    const rowEl=card.querySelector('.more-version[data-version-for]'); if(!rowEl || rowEl.dataset.filled) return;
-    const name=card.getAttribute('data-pn');
-    const p=REPO.installed.find(x=>(x.dir||x.n)===name);
-    if(p && p._ver){ renderVersionRow(rowEl, name, p._ver); rowEl.dataset.filled='1'; }
-    else if(scanDone){ rowEl.dataset.filled='1'; queueVersionRow(rowEl, name); }  // non-git / ingenue: scan didn't cover it
-  });
-}
-
 /* Drive a long backend job (install/heal/update/rollback) through the dock and
    resolve when it finishes. Keeps the existing job-card UX consistent. */
 async function followBackendJob(jid, job){
@@ -2863,7 +2794,7 @@ function appendJobLog(job, line){
   if(log) log.textContent = line;
 }
 
-async function doScriptUpdate(name, rowEl){
+async function doScriptUpdate(name){
   const job = mkJob(name, 'updating');
   appendJobLog(job, 'git fetch + reset --hard…');
   try{
@@ -2873,15 +2804,27 @@ async function doScriptUpdate(name, rowEl){
     const out = await followBackendJob(j.job, job);
     jobDone(job,null,out.ok, out.ok?`updated ${name}`:(out.error||'update failed'),'updated');
     if(out.ok) clearUpdAvail(name);          // it's now at upstream — drop the badge
-    if(rowEl) populateVersionRow(rowEl, name);
   }catch(e){ jobDone(job,null,false,e.message,''); }
+}
+/* Reinstall (force re-clone) for a card NOT flagged behind. First checks that one
+   script's version (single ls-remote) and tells the user if reinstalling will
+   also bring it up to date. The only multi-script check is the manual button. */
+async function reinstallFlow(p, btn){
+  const nm=p.dir||p.n; let behind=null;
+  try{ const j=await (await fetch('api/checkone?name='+encodeURIComponent(nm),{cache:'no-store'})).json(); if(j&&!j.error) behind=!!j.behind; }catch(_){}
+  const msg = behind===true
+    ? `<b>${esc(nm)}</b> is behind its upstream — reinstalling re-clones the latest, so it also <b>updates</b> it. Reinstall now?`
+    : behind===false
+    ? `<b>${esc(nm)}</b> is already up to date. Reinstall just re-clones a fresh copy (repair). Proceed?`
+    : `Reinstall <b>${esc(nm)}</b>? This re-clones a fresh copy from the source.`;
+  confirmDialog('reinstall '+nm+'?', msg, ()=>doInstall(p, btn, '', {force:1}), false, 'Reinstall');
 }
 /* ===== per-script update DETECTION (installed tab) ===== */
 /* Backed by POST /api/updates/check -> a read-only background job that ls-remotes
    every installed git repo in parallel and reports which are behind upstream.
    No GitHub token (kept browser-only by design); works on any git host. */
-function clearUpdAvail(name){ const p=REPO.installed.find(x=>norm(x.dir||x.n)===norm(name)); if(p){ p.upd_avail=0; delete p._ver; } // sha changed; re-fetch on next render
-  if(repoTab==='installed') refreshUpdStrip(); }
+function clearUpdAvail(name){ const p=REPO.installed.find(x=>norm(x.dir||x.n)===norm(name)); if(p) p.upd_avail=0;
+  if(repoTab==='installed'){ refreshUpdStrip(); updateGrid(); } }   // updateGrid so the card flips Update→Reinstall + drops the badge
 function updStripHTML(){
   if(!HAS_BACKEND) return '';
   const N=REPO.installed.filter(p=>p.upd_avail).length;
@@ -2896,7 +2839,8 @@ function updStripHTML(){
       : `<span class="upd-none">✓ all scripts up to date</span>`;
     return `<div class="upd-strip">${chip}<button class="upd-recheck" data-updcheck="1">↻ re-check</button></div>`;
   }
-  return '';
+  // no check run yet this session — manual trigger only (no auto-checking)
+  return `<div class="upd-strip"><button class="upd-chip" data-updcheck="1">↻ check for updates</button></div>`;
 }
 function wireUpdStrip(root){
   (root||document).querySelectorAll('[data-updfilter]').forEach(b=>b.onclick=()=>{updFilter=!updFilter;renderRepo();});
@@ -2908,7 +2852,7 @@ function refreshUpdStrip(){    // in-place refresh of strip + badges only — NO
   const tmp=document.createElement('div'); tmp.innerHTML=html; const nu=tmp.firstElementChild;
   if(cur){ if(nu) cur.replaceWith(nu); else cur.remove(); }
   else if(nu){ const head=v.querySelector('.rd-cathead'); if(head) head.after(nu); }
-  wireUpdStrip(v); applyUpdBadges(); applyVersionRows();
+  wireUpdStrip(v); applyUpdBadges();
 }
 function applyUpdBadges(){     // toggle ↻update badges on already-rendered installed cards — no re-render, no fetch
   const v=document.getElementById('repoview'); if(!v||repoTab!=='installed') return;
@@ -2929,8 +2873,6 @@ function applyUpdResults(res){
   const map={}; (res.items||[]).forEach(it=>{ map[norm(it.name)]=it; });
   REPO.installed.forEach(p=>{ const it=map[norm(p.dir||p.n)]; if(it){
     p.upd_avail=it.behind?1:0; p.upd_branch=it.branch; p.upd_err=it.error||'';
-    // version-row data straight from the scan — drives the row with no extra fetch
-    p._ver={sha:it.local||'', installed_on:it.installed_on||'', updated_on:it.updated_on||'', naGit:!it.local};
   }});
 }
 async function checkUpdates(force){
@@ -2948,10 +2890,10 @@ async function checkUpdates(force){
     try{ j=await (await fetch('api/job?id='+encodeURIComponent(jid)+'&from='+from,{cache:'no-store'})).json(); }
     catch(e){ if(++dead>8){ updChecking=false; refreshUpdStrip(); return; } return void setTimeout(tick,1000); }
     dead=0;
-    if(j.gone){ updChecking=false; updCheckedAt=Date.now(); refreshUpdStrip(); return; }
+    if(j.gone){ updChecking=false; updCheckedAt=Date.now(); refreshUpdStrip(); updateGrid(); return; }
     if(j.results) applyUpdResults(j.results);
     if(typeof j.next==='number') from=j.next;
-    if(j.done){ updChecking=false; updCheckedAt=Date.now(); refreshUpdStrip(); return; }
+    if(j.done){ updChecking=false; updCheckedAt=Date.now(); refreshUpdStrip(); updateGrid(); return; }  // re-render once so flagged cards flip Reinstall→Update
     refreshUpdStrip();
     setTimeout(tick,800);
   };
@@ -2971,51 +2913,6 @@ async function updateAllBehind(){              // "Update all" on installed = up
   });
 }
 
-async function openRollbackPicker(name){
-  const ov = document.getElementById('rb-overlay');
-  document.getElementById('rb-title').textContent = `roll back ${name}`;
-  document.getElementById('rb-list').innerHTML = '<div class="dep-row"><span class="dep-ic">⏳</span><div><div class="k">loading commit history…</div></div></div>';
-  ov.classList.add('on');
-  try{
-    const j = await (await fetch('api/history?name='+encodeURIComponent(name),{cache:'no-store'})).json();
-    if(j.error){ document.getElementById('rb-list').innerHTML = `<div class="dep-row"><span class="dep-ic">⚠️</span><div><div class="k">${j.error}</div></div></div>`; return; }
-    const cur = j.current || '';
-    const hist = j.history || [];
-    if(!hist.length){
-      document.getElementById('rb-list').innerHTML = `<div class="dep-row"><span class="dep-ic">ℹ️</span><div><div class="k">no commit history available</div><div class="d">this script was installed by an older ingenue or by a shallow clone — full history will be present on the next reinstall via ingenue</div></div></div>`;
-      return;
-    }
-    document.getElementById('rb-list').innerHTML = hist.map(c=>{
-      const isCur = c.sha === cur;
-      return `<div class="rb-item${isCur?' cur':''}">
-        <div class="rb-meta"><code class="rb-sha">${esc(c.short)}</code><span class="rb-date">${esc((c.date||'').slice(0,10))}</span></div>
-        <div class="rb-msg" title="${esc(c.msg||'')}">${esc(c.msg||'')}</div>
-        ${isCur ? '<span class="rb-cur">current</span>' : `<button class="btn btn-update rb-go" data-sha="${esc(c.sha)}">roll back</button>`}
-      </div>`;
-    }).join('');
-    document.querySelectorAll('#rb-list .rb-go').forEach(b => {
-      b.onclick = () => {
-        const sha = b.getAttribute('data-sha');
-        confirmDialog(`roll back ${name}?`,
-          `Check out <code>${esc(sha.slice(0,7))}</code> in <b>${name}</b>. Reversible — Update returns you to latest.`,
-          async () => {
-            ov.classList.remove('on');
-            const job = mkJob(name, 'rolling back');
-            appendJobLog(job, `git checkout ${sha.slice(0,7)}…`);
-            try{
-              const r = await fetch('api/rollback', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({name, target: sha})});
-              const jj = await r.json();
-              if(jj.error){ jobDone(job,null,false,jj.error,''); return; }
-              const out = await followBackendJob(jj.job, job);
-              jobDone(job,null,out.ok, out.ok?`rolled back to ${sha.slice(0,7)}`:(out.error||'rollback failed'),'rolled back');
-              const rowEl = document.querySelector('.more-version[data-version-for="'+(window.CSS&&CSS.escape?CSS.escape(name):name)+'"]');
-              if(rowEl) populateVersionRow(rowEl, name);
-            }catch(e){ jobDone(job,null,false,e.message,''); }
-          });
-      };
-    });
-  }catch(e){ document.getElementById('rb-list').innerHTML = `<div class="dep-row"><span class="dep-ic">⚠️</span><div><div class="k">${esc(e.message)}</div></div></div>`; }
-}
 /* ===== B5: README + image carousel (norns.community / GitHub), lazy ===== */
 async function loadReadme(card,p){
   const slot=card.querySelector('[data-readme]'); if(!slot) return;
@@ -3119,7 +3016,7 @@ function repoCard(p,tab){
               : st==='installed'? `<span class="okb"><svg viewBox="0 0 32 32"><path d="${I.check}"/></svg>installed</span>` : '';
   const lock=p.priv?`<span class="lock">private</span>`:'';
   const actions = (tab==='installed')
-    ? `<button class="btn btn-update">Reinstall</button><button class="btn btn-remove">Remove</button>`
+    ? `${p.upd_avail?'<button class="btn btn-update">Update</button>':'<button class="btn btn-reinstall">Reinstall</button>'}<button class="btn btn-remove">Remove</button>`
     : (p.inst?`<button class="btn btn-remove">Remove</button>`:`<button class="btn btn-install">${tab==='discover'?'Clone':'Install'}</button>`);
   const pills=(p.tags||[]).map(t=>`<span class="pill" data-tag="${t}">${t}</span>`).join('');
   const doc=(p.doc||p.docU)?`<span class="lnk" title="documentation"><svg viewBox="0 0 32 32"><path d="${I.book}"/></svg></span>`:'';
@@ -3134,8 +3031,8 @@ function repoCard(p,tab){
       ? `<a class="demo-ext" href="${p.demo.trim()}" target="_blank" rel="noopener">▶ ${dk==='instagram'?'watch on Instagram':'open demo'} ↗</a>`
       : `<button class="demo-btn">▶ load ${dk} demo</button>`;
   // Installed scripts get a version row (commit SHA + Update/Rollback) below
-  // more-meta. Populated lazily by populateVersionRow on first card paint.
-  const verRow = p.inst ? `<div class="more-version" data-version-for="${esc(p.dir||p.n)}"><span class="ver-loading">loading version…</span></div>` : '';
+  // no per-card version row anymore — update status comes from the manual scan
+  const verRow = '';
   const more=`<div class="card-more">
       <div class="more-meta">${p.upd?`updated ${p.upd}`:'last-updated unknown'} · via ${srcNames(p)}${p.inst?` · <button class="reqs-btn" data-reqs="1">⚙ requirements</button>`:''}</div>
       ${verRow}
@@ -3237,8 +3134,7 @@ function renderRepo(){
     else if(repoTab==='installed'){ updateAllBehind(); }   // "Update all" = update the scripts found behind
     else { const t=b.innerHTML; b.innerHTML='✓ done'; setTimeout(()=>{b.innerHTML=t;},900); }
   });
-  wireUpdStrip(v);
-  if(tab==='installed' && HAS_BACKEND && !updCheckedAt && !updChecking) checkUpdates(false);   // auto-scan on first visit
+  wireUpdStrip(v);   // update checking is manual only — the "check for updates" button is the sole multi-script trigger
   v.querySelectorAll('[data-hideknown]').forEach(c=>c.onclick=()=>{ discHideKnown=!discHideKnown; renderRepo(); });
   v.querySelectorAll('[data-hideinst]').forEach(c=>c.onclick=()=>{ hideInstalled=!hideInstalled; renderRepo(); });
   const dcu=document.getElementById('disc-clearuser'); if(dcu) dcu.onclick=()=>{ _discUser=null; _discLoaded=false; ghSearch('',1); };

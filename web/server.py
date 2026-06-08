@@ -2808,6 +2808,13 @@ class H(http.server.SimpleHTTPRequestHandler):
                 try: frm = int(q.get("from", ["0"])[0] or 0)
                 except ValueError: frm = 0
                 return self._json(job.snapshot(frm))
+            if path == "/api/checkone":
+                # Single-script behind-check (for the Reinstall flow). Inline, not
+                # a job — one ls-remote. The multi-script scan stays manual-only.
+                full, name = safe_script_dir(self._q().get("name", [""])[0])
+                if not os.path.isdir(full):
+                    return self._json({"error": "not installed"}, 404)
+                return self._json(_check_one_update(full, name, _run_as_target()))
             if path == "/api/giturl":
                 full, name = safe_script_dir(self._q().get("name", [""])[0])
                 if not os.path.isdir(full):
