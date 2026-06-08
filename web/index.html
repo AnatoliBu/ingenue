@@ -358,6 +358,10 @@ button{font-family:inherit}
 .upd-strip .ispin{width:13px;height:13px;border:2px solid var(--trim);border-top-color:var(--accent2);border-radius:50%;animation:isp .7s linear infinite;flex:0 0 auto}
 .upd-strip .upd-bar{flex:1;min-width:120px;height:5px;border-radius:3px;background:var(--trim);overflow:hidden}
 .upd-strip .upd-fill{display:block;height:100%;background:var(--accent2);transition:width .3s ease}
+.upd-strip .upd-fill.indet{width:40%;transition:none;animation:indet 1.15s ease-in-out infinite}   /* indeterminate: no done/total known */
+@keyframes indet{0%{margin-left:-42%}100%{margin-left:104%}}
+.upd-strip.err{color:var(--err)}
+.upd-strip.err .upd-recheck{margin-left:auto}
 .upd-chip{border:1px solid var(--accent2);background:color-mix(in srgb,var(--accent2) 14%,transparent);color:var(--accent2);
   font:inherit;font-size:12.5px;font-weight:600;padding:5px 11px;border-radius:11px;cursor:pointer}
 .upd-chip.on{background:var(--accent2);color:var(--bg)}
@@ -1216,7 +1220,18 @@ const SRC_ORDER=['community','mine','github'];
 let SRC_ON={community:1,mine:1,github:1};   // enabled in config
 let srcFilter=new Set(SRC_ORDER);                    // visible in toolbar filter
 let ghConnected=false;
-const REPO={
+// Live state — starts EMPTY. Real data arrives from the device (/api/installed)
+// and the catalog JSON (community.json), loaded independently by loadScripts().
+// The static demo content below (DEMO_SEED) is applied ONLY when there is no device
+// backend, so on-device users never see placeholder counts masquerading as real
+// scripts. Previously this object held seed data that bled into on-device first
+// paint and survived a community.json hiccup as a fake "16 available / 3 installed".
+const REPO={ installed:[], available:[], discover:[] };
+
+// Static demo content for the no-backend preview (opening index.html off a norns).
+// Never the default on-device state — applied solely by applyDemoSeed() when the
+// installed probe returns a definitive 404 (a static host with no API).
+const DEMO_SEED={
  installed:[
   {n:'awake',a:'tehn',d:'a sketch — grid sequencer with sample playback and a polyphonic synth voice.',v:'1.2.0',tags:['sequencer','grid'],doc:1,disc:1,srcs:['community']},
   {n:'cheat codes 2',a:'dan derks',d:'a tool for tactile, performative sampling. multi-page slicing and pattern recording.',v:'2.0.4',tags:['sampler','grid','arc'],doc:1,disc:1,srcs:['community']},
@@ -1252,6 +1267,12 @@ const REPO={
   {n:'nisp',a:'spd',d:'a tiny lisp on norns — livecode from the repl.',v:'',tags:['livecode'],srcs:['github','community'],stars:31,gh:1},
  ],
 };
+// Populate REPO from the demo seed — no-backend preview only (see loadScripts).
+function applyDemoSeed(){
+  REPO.installed=DEMO_SEED.installed.map(p=>({...p,inst:1}));
+  REPO.available=DEMO_SEED.available.slice();
+  REPO.discover=DEMO_SEED.discover.slice();
+}
 
 // Lib-deps that scripts pull in via `require "<name>/lib/..."` but that the
 // norns.community catalog does NOT list — so they're invisible, un-installable,
@@ -1297,20 +1318,62 @@ async function loadCatalog(){
     // merge known un-catalogued lib-deps (nb, …) so they're visible/installable
     // and resolve when a script requires them (traceDeps/runHeal look them up here)
     DEP_OVERLAY.forEach(o=>{ if(!entries.some(e=>norm(e.n)===norm(o.n))) entries.push({doc:0,disc:0,...o}); });
-    // keep the mocked non-community entries (your github repos) so the trust gate is demonstrable
-    const KEEP=REPO.available.filter(p=>p.srcs.includes('mine'));
-    REPO.available = entries.concat(KEEP);
-    const real = await fetchInstalled();   // null when running off-device (no backend)
-    if(real && real.length) applyRealInstalled(real, entries);
-    else REPO.installed = entries.slice(0,5).map((e,i)=>({...e,inst:1,upd_avail:i<2}));  // local demo fallback
-    if(document.getElementById('repoview').classList.contains('on')) renderRepo();
-  }catch(err){ console.warn('catalog load failed — using built-in fallback list', err); }
+    REPO.available = entries;
+    scriptsState.catalog='ready';
+    // The installed list loads first and INDEPENDENTLY (loadScripts → probeInstalled),
+    // so a catalog hiccup can never blank it. Re-mark it here only to enrich the
+    // on-device cards with catalog metadata now that entries are available.
+    if(INSTALLED_NAMES.length) applyRealInstalled(INSTALLED_NAMES, entries);
+    renderRepoIfOpen();
+    return true;
+  }catch(err){
+    console.warn('catalog load failed', err);
+    scriptsState.catalog='error';   // available tab shows an error+retry; installed tab is unaffected
+    renderRepoIfOpen();
+    return false;
+  }
 }
 let HAS_BACKEND=false;             // true when the device API is reachable (real install/remove)
+let scriptsState={installed:'loading',catalog:'loading'};   // per-source: 'loading'|'ready'|'error'|'demo'
+let INSTALLED_NAMES=[];            // device folder names from /api/installed, set by loadScripts/refreshInstalled
+function renderRepoIfOpen(){ if(document.getElementById('repoview').classList.contains('on')) renderRepo(); }
 async function fetchInstalled(){   // real installed scripts from the ingenue backend (dust/code)
   try{ const r=await fetch('api/installed',{cache:'no-store'}); if(!r.ok) return null;
     const j=await r.json(); HAS_BACKEND=true; return Array.isArray(j)?j:(j.scripts||null); }
   catch(_){ return null; }
+}
+// Boot probe: tell a real device (200) from a static host (404 → demo preview) from a
+// server that's still starting (connection refused / 5xx → worth retrying). This is the
+// guard against the boot race that produced the fake "16/3": we ride out a starting
+// server instead of falling back to seed data.
+async function probeInstalled(){
+  try{
+    const r=await fetch('api/installed',{cache:'no-store'});
+    if(r.ok){ const j=await r.json(); HAS_BACKEND=true; return {ok:true, names:Array.isArray(j)?j:(j.scripts||[])}; }
+    if(r.status===404) return {offline:true};   // static host, no API → demo preview is correct here
+    return {retry:true};                          // 5xx / not-ready → server coming up, retry
+  }catch(_){ return {retry:true}; }               // connection refused → server starting, retry
+}
+// Loads the Scripts view: device truth FIRST and independently, then the catalog.
+// Either source can fail without blanking the other, and seed data appears ONLY in the
+// genuine no-backend preview — never as a placeholder on a reachable device.
+async function loadScripts(){
+  scriptsState={installed:'loading',catalog:'loading'}; renderRepoIfOpen();
+  let res={retry:true};
+  for(let i=0;i<4 && res.retry;i++){ if(i) await new Promise(r=>setTimeout(r,500*i)); res=await probeInstalled(); }
+  if(res.offline){                                // genuine no-backend preview → the ONLY place seed data appears
+    applyDemoSeed(); scriptsState.installed='demo'; renderRepoIfOpen();
+    const got=await loadCatalog();                // show the real catalog if it's hosted alongside the demo…
+    if(!got){ REPO.available=DEMO_SEED.available.slice(); scriptsState.catalog='demo'; renderRepoIfOpen(); }  // …else the curated seed
+    return;
+  }
+  if(!res.ok){                                    // on-device but unreachable → honest error, NOT fake counts
+    scriptsState={installed:'error',catalog:'error'}; renderRepoIfOpen(); return;
+  }
+  INSTALLED_NAMES=res.names; scriptsState.installed='ready';
+  applyRealInstalled(res.names, REPO.available);  // catalog may still be empty → basic cards, enriched after loadCatalog
+  renderRepoIfOpen();
+  await loadCatalog();                            // independent; sets catalog ready/error and re-marks installed
 }
 function norm(s){ return (s||'').toLowerCase().replace(/[\s.-]+/g,'_'); }
 function applyRealInstalled(names, entries){
@@ -1326,6 +1389,7 @@ function applyRealInstalled(names, entries){
 }
 async function refreshInstalled(){
   const real=await fetchInstalled(); if(!real) return;
+  INSTALLED_NAMES=real; scriptsState.installed='ready';
   applyRealInstalled(real, REPO.available.filter(p=>p.srcs.includes('community')));
   if(document.getElementById('repoview').classList.contains('on')) renderRepo();
 }
@@ -3066,9 +3130,10 @@ function srcBar(tab){
 function renderRepo(){
   const v=document.getElementById('repoview'); const tab=repoTab;
   v.classList.remove('collapsed');
+  const _cnt=(st,n)=>(st==='ready'||st==='demo')?n:'…';   // show '…' while a source is still loading/errored, not a misleading 0
   const tabs=`<div class="rd-tabs">
-        <button class="rd-tab ${tab==='installed'?'on':''}" data-rt="installed">installed <span class="ct">${REPO.installed.length}</span></button>
-        <button class="rd-tab ${tab==='available'?'on':''}" data-rt="available">available <span class="ct">${REPO.available.filter(p=>p.srcs.some(s=>availSources().includes(s))).length}</span></button>
+        <button class="rd-tab ${tab==='installed'?'on':''}" data-rt="installed">installed <span class="ct">${_cnt(scriptsState.installed,REPO.installed.length)}</span></button>
+        <button class="rd-tab ${tab==='available'?'on':''}" data-rt="available">available <span class="ct">${_cnt(scriptsState.catalog,REPO.available.filter(p=>p.srcs.some(s=>availSources().includes(s))).length)}</span></button>
         <button class="rd-tab ${tab==='discover'?'on':''}" data-rt="discover">discover <span class="ct">${ghConnected?REPO.discover.length:'⌗'}</span></button>
         <button class="rd-toggle" id="rd-toggle" title="hide / show search"><svg viewBox="0 0 32 32"><path d="M16 21L6 11l2.1-2.1L16 16.8 23.9 8.9 26 11z"/></svg></button>
       </div>`;
@@ -3084,6 +3149,21 @@ function renderRepo(){
       </div></div>`;
     v.querySelectorAll('[data-rt]').forEach(b=>b.onclick=()=>{repoTab=b.dataset.rt;renderRepo();});
     document.getElementById('gh-empty-connect').onclick=openCfg;
+    return;
+  }
+
+  // Loading / error state for the current source — never render an empty grid or a
+  // "0 scripts" count as if it were real (installed=device, available=catalog).
+  const tabState = tab==='installed' ? scriptsState.installed
+                 : tab==='available' ? scriptsState.catalog : 'ready';
+  if(tabState==='loading' || tabState==='error'){
+    const what = tab==='installed' ? 'installed scripts' : 'catalog';
+    const strip = tabState==='loading'
+      ? `<div class="upd-strip"><span class="ispin"></span><span>loading ${what}…</span><span class="upd-bar"><span class="upd-fill indet"></span></span></div>`
+      : `<div class="upd-strip err"><span>⚠ ${tab==='installed'?'couldn’t reach ingenue on the device':'catalog failed to load'}</span><button class="upd-recheck" data-reload="1">↻ retry</button></div>`;
+    v.innerHTML=`<div class="rd-top">${tabs}</div><div class="rd-scroll"><div>${strip}</div></div>`;
+    v.querySelectorAll('[data-rt]').forEach(b=>b.onclick=()=>{repoTab=b.dataset.rt;repoQuery='';_discUser=null;selection.clear();renderRepo();});
+    v.querySelectorAll('[data-reload]').forEach(b=>b.onclick=()=>loadScripts());
     return;
   }
 
@@ -3700,7 +3780,7 @@ function boot(){
   maiden.dataset.edit = LS.get('editview','combo');
   const rh=LS.get('replh',null); if(rh) document.documentElement.style.setProperty('--repl-h',rh);
   initSplit();
-  loadCatalog().then(checkScPlugins);   // pull the real catalog, then silently check SC-plugin health
+  loadScripts().then(checkScPlugins);   // device truth + catalog (decoupled), then silently check SC-plugin health
   matronConnect();                      // live REPL + params link to matron (no-op off-device)
   initSysInfo();                        // populate DEVICE_NORNS early so version-pin warnings work before config is opened
   initAudioHealth();                    // B10 audio-server health line in config
