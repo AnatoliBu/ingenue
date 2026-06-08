@@ -401,7 +401,8 @@ def _check_one_update(full, name, run_as):
     60-req/hr REST limit) to read the remote tip of the branch `do_update` would
     reset to, and compares it to local HEAD. Returns a result dict."""
     res = {"name": name, "behind": False, "branch": None,
-           "local": None, "remote": None, "error": None}
+           "local": None, "remote": None, "error": None,
+           "installed_on": "", "updated_on": ""}
     if not os.path.isdir(os.path.join(full, ".git")):
         res["error"] = "not a git repo"
         return res
@@ -410,6 +411,11 @@ def _check_one_update(full, name, run_as):
         res["error"] = "no local HEAD"
         return res
     res["local"] = local
+    # .project provenance (so the UI's version row populates from this one batch
+    # scan instead of a separate /api/giturl fetch per card).
+    md = read_project_metadata(full) or {}
+    res["installed_on"] = md.get("installed_on", "") or ""
+    res["updated_on"] = md.get("updated_on", "") or ""
     # Mirror do_update's target: prefer the current branch's upstream, else
     # origin/HEAD's branch, else the remote's default (HEAD via ls-remote).
     remote, branch = "origin", ""

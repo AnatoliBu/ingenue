@@ -222,7 +222,10 @@ button{font-family:inherit}
 #update-toast .ut-go[disabled]{opacity:.6;cursor:default}
 #update-toast .ut-link{color:var(--muted);font-size:12px;text-decoration:none}
 #update-toast .ut-link:hover{color:var(--fg)}
-@container (max-width:640px){ #update-toast{left:8px;right:8px;bottom:70px;width:auto} }
+/* #update-toast is position:fixed and appended to <body>, OUTSIDE the @container
+   context — so a @container rule never reaches it and it kept its desktop
+   position, overlapping the mobile bottom nav and eating taps. Use @media. */
+@media (max-width:640px){ #update-toast{left:8px;right:8px;bottom:76px;width:auto} }
 .rd-sort{appearance:none;-webkit-appearance:none;border:1px solid var(--trim);background:var(--panel);color:var(--fg);
   font:inherit;font-size:13px;padding:7px 26px 7px 12px;border-radius:9px;cursor:pointer;white-space:nowrap;
   background-image:linear-gradient(45deg,transparent 50%,var(--muted) 50%),linear-gradient(135deg,var(--muted) 50%,transparent 50%);
@@ -2767,7 +2770,7 @@ function wireCards(v,list,tab){
     // Lazy-fetch and render the version row for installed scripts. Done here
     // (not at HTML build time) so renderRepo stays a pure string operation.
     const verRow=card.querySelector('.more-version[data-version-for]');
-    if(verRow && HAS_BACKEND) queueVersionRow(verRow, verRow.getAttribute('data-version-for'));
+    if(verRow && HAS_BACKEND) fillVersionRow(verRow, p);
     // cards stay expanded; demo embeds + README load on demand
   });
 }
@@ -2788,29 +2791,56 @@ function pumpVerQ(){
 }
 
 /* ===== per-script version row: commit · Update · Rollback ===== */
-/* Backed by /api/giturl (sha + .project metadata), /api/update (git fetch+reset),
-   /api/rollback (git checkout). Only renders on installed cards. Update +
-   Rollback drive jobs through the existing install-dock so progress is visible. */
-async function populateVersionRow(rowEl, name){
-  try{
-    const r = await fetch('api/giturl?name='+encodeURIComponent(name), {cache:'no-store'});
-    const j = await r.json();
-    if(j.error){ rowEl.innerHTML='<span class="ver-na">no git info — pre-history install</span>'; return; }
-    const sha = (j.sha||'').slice(0,7) || 'no history';
-    const md = j.project || {};
-    const installedOn = md.installed_on ? md.installed_on.slice(0,10) : '';
-    const updatedOn = md.updated_on && md.updated_on!=='0001-01-01T00:00:00Z' ? md.updated_on.slice(0,10) : '';
-    const since = updatedOn ? `updated ${updatedOn}` : (installedOn ? `installed ${installedOn}` : '');
-    rowEl.innerHTML = `
+/* Primary data source is the batch update scan (POST /api/updates/check), which
+   returns each script's local sha + .project dates alongside behind-status — so
+   ALL version rows load under the one progress bar, no per-card fetch. The
+   /api/giturl path remains as a single-card fallback (scan failed / off the
+   installed tab). /api/update + /api/rollback drive jobs through the dock. */
+function renderVersionRow(rowEl, name, d){
+  if(!d || d.naGit || !d.sha){ rowEl.innerHTML='<span class="ver-na">no git info — pre-history install</span>'; return; }
+  const sha=(d.sha||'').slice(0,7)||'no history';
+  const installedOn = d.installed_on ? d.installed_on.slice(0,10) : '';
+  const updatedOn = (d.updated_on && d.updated_on!=='0001-01-01T00:00:00Z') ? d.updated_on.slice(0,10) : '';
+  const since = updatedOn ? `updated ${updatedOn}` : (installedOn ? `installed ${installedOn}` : '');
+  rowEl.innerHTML = `
       <span class="ver-label">commit</span>
-      <code class="ver-sha" title="${j.sha||''}">${sha}</code>
+      <code class="ver-sha" title="${d.sha||''}">${sha}</code>
       ${since?`<span class="ver-when">${since}</span>`:''}
       <span class="ver-grow"></span>
       <button class="ver-btn ver-update" title="git fetch + reset to latest origin/HEAD">↻ update</button>
       <button class="ver-btn ver-rollback" title="check out an earlier commit">⏪ rollback ▾</button>`;
-    rowEl.querySelector('.ver-update').onclick = e => { e.stopPropagation(); doScriptUpdate(name, rowEl); };
-    rowEl.querySelector('.ver-rollback').onclick = e => { e.stopPropagation(); openRollbackPicker(name); };
+  rowEl.querySelector('.ver-update').onclick = e => { e.stopPropagation(); doScriptUpdate(name, rowEl); };
+  rowEl.querySelector('.ver-rollback').onclick = e => { e.stopPropagation(); openRollbackPicker(name); };
+}
+async function populateVersionRow(rowEl, name){      // single-card fallback via /api/giturl
+  try{
+    const j = await (await fetch('api/giturl?name='+encodeURIComponent(name), {cache:'no-store'})).json();
+    if(j.error){ rowEl.innerHTML='<span class="ver-na">no git info — pre-history install</span>'; return; }
+    renderVersionRow(rowEl, name, {sha:j.sha, installed_on:(j.project||{}).installed_on, updated_on:(j.project||{}).updated_on});
   }catch(_){ rowEl.innerHTML='<span class="ver-na">version unavailable</span>'; }
+}
+// Decide how to fill an installed card's version row: from already-scanned data
+// (no fetch), leave the "loading…" placeholder while a scan is in flight, or
+// fall back to a single giturl when no scan covers this card.
+function fillVersionRow(rowEl, p){
+  const name=p.dir||p.n;
+  if(p._ver){ renderVersionRow(rowEl, name, p._ver); return; }
+  // On the Installed tab a scan is running OR will auto-run (first visit) — it
+  // fills every row. Leave the "loading…" placeholder; do NOT fetch per card.
+  if(repoTab==='installed' && HAS_BACKEND && (updChecking || !updCheckedAt)) return;
+  queueVersionRow(rowEl, name);   // fallback: available/discover cards, or a card the scan didn't cover
+}
+// As scan results stream in, fill any not-yet-filled installed version rows.
+function applyVersionRows(){
+  const v=document.getElementById('repoview'); if(!v||repoTab!=='installed') return;
+  const scanDone = updCheckedAt && !updChecking;
+  v.querySelectorAll('.rd-grid .card[data-pn]').forEach(card=>{
+    const rowEl=card.querySelector('.more-version[data-version-for]'); if(!rowEl || rowEl.dataset.filled) return;
+    const name=card.getAttribute('data-pn');
+    const p=REPO.installed.find(x=>(x.dir||x.n)===name);
+    if(p && p._ver){ renderVersionRow(rowEl, name, p._ver); rowEl.dataset.filled='1'; }
+    else if(scanDone){ rowEl.dataset.filled='1'; queueVersionRow(rowEl, name); }  // non-git / ingenue: scan didn't cover it
+  });
 }
 
 /* Drive a long backend job (install/heal/update/rollback) through the dock and
@@ -2849,7 +2879,7 @@ async function doScriptUpdate(name, rowEl){
 /* Backed by POST /api/updates/check -> a read-only background job that ls-remotes
    every installed git repo in parallel and reports which are behind upstream.
    No GitHub token (kept browser-only by design); works on any git host. */
-function clearUpdAvail(name){ const p=REPO.installed.find(x=>norm(x.dir||x.n)===norm(name)); if(p) p.upd_avail=0;
+function clearUpdAvail(name){ const p=REPO.installed.find(x=>norm(x.dir||x.n)===norm(name)); if(p){ p.upd_avail=0; delete p._ver; } // sha changed; re-fetch on next render
   if(repoTab==='installed') refreshUpdStrip(); }
 function updStripHTML(){
   if(!HAS_BACKEND) return '';
@@ -2877,7 +2907,7 @@ function refreshUpdStrip(){    // in-place refresh of strip + badges only — NO
   const tmp=document.createElement('div'); tmp.innerHTML=html; const nu=tmp.firstElementChild;
   if(cur){ if(nu) cur.replaceWith(nu); else cur.remove(); }
   else if(nu){ const head=v.querySelector('.rd-cathead'); if(head) head.after(nu); }
-  wireUpdStrip(v); applyUpdBadges();
+  wireUpdStrip(v); applyUpdBadges(); applyVersionRows();
 }
 function applyUpdBadges(){     // toggle ↻update badges on already-rendered installed cards — no re-render, no fetch
   const v=document.getElementById('repoview'); if(!v||repoTab!=='installed') return;
@@ -2896,7 +2926,11 @@ function applyUpdBadges(){     // toggle ↻update badges on already-rendered in
 function applyUpdResults(res){
   updProgress={done:res.done||0,total:res.total||0};
   const map={}; (res.items||[]).forEach(it=>{ map[norm(it.name)]=it; });
-  REPO.installed.forEach(p=>{ const it=map[norm(p.dir||p.n)]; if(it){ p.upd_avail=it.behind?1:0; p.upd_branch=it.branch; p.upd_err=it.error||''; } });
+  REPO.installed.forEach(p=>{ const it=map[norm(p.dir||p.n)]; if(it){
+    p.upd_avail=it.behind?1:0; p.upd_branch=it.branch; p.upd_err=it.error||'';
+    // version-row data straight from the scan — drives the row with no extra fetch
+    p._ver={sha:it.local||'', installed_on:it.installed_on||'', updated_on:it.updated_on||'', naGit:!it.local};
+  }});
 }
 async function checkUpdates(force){
   if(!HAS_BACKEND || updChecking) return;
