@@ -204,7 +204,7 @@ button{font-family:inherit}
 #upload-toast .ub{height:3px;border-radius:2px;background:var(--trim);margin-top:7px;overflow:hidden}
 #upload-toast .uf{height:100%;background:var(--accent);transition:width .2s ease}
 @container (max-width:640px){ #upload-toast{left:8px;right:8px;bottom:70px;transform:translateY(20px);max-width:none;text-align:center} #upload-toast.show{transform:translateY(0)} }
-#update-toast{position:fixed;left:16px;bottom:16px;z-index:320;background:var(--panel2);border:1px solid var(--trim);
+#update-toast{position:fixed;right:16px;left:auto;bottom:16px;z-index:320;background:var(--panel2);border:1px solid var(--trim);
   border-radius:12px;padding:11px 13px 12px;font-size:13px;color:var(--fg);box-shadow:0 10px 34px rgba(0,0,0,.4);
   opacity:0;pointer-events:none;transform:translateY(16px);transition:opacity .22s ease,transform .22s ease;width:min(360px,92vw)}
 #update-toast.show{opacity:1;pointer-events:auto;transform:translateY(0)}
@@ -675,6 +675,7 @@ button{font-family:inherit}
    <div class="mtop">
      <button class="hbtn" id="m-menu" title="files"><svg viewBox="0 0 32 32"><path d="M14 4l4 4h14v22h-32v-26z"/></svg></button>
      <div class="name"><span class="dot"></span><span id="m-title">awake.lua</span></div>
+     <button class="hbtn" id="m-help" title="help"><svg viewBox="0 0 32 32"><path d="M14 24h4v4h-4zM22.667 11.333c0-3.682-2.985-6.667-6.667-6.667s-6.667 2.985-6.667 6.667h4c0-1.473 1.194-2.667 2.667-2.667s2.667 1.194 2.667 2.667c0 1.473-1.146 1.871-2.319 3.044-1.115 1.115-1.681 2.292-1.681 4.623v.667h4c0-2.667.099-2.948 1.681-4.623 1.262-1.34 2.319-2.477 2.319-4.041z"/></svg></button>
      <button class="hbtn" id="m-cfg" title="config"><svg viewBox="0 0 32 32"><path d="M29.181 19.070c-1.679-2.908-.669-6.634 2.255-8.328l-3.145-5.447c-.898.527-1.943.829-3.058.829-3.361 0-6.085-2.742-6.085-6.125h-6.289c.008 1.044-.252 2.103-.811 3.070-1.679 2.908-5.411 3.897-8.339 2.211l-3.144 5.447c.905.515 1.689 1.268 2.246 2.234 1.676 2.903.672 6.623-2.241 8.319l3.145 5.447c.895-.522 1.935-.82 3.044-.82 3.35 0 6.067 2.725 6.084 6.092h6.289c-.003-1.034.259-2.080.811-3.038 1.676-2.903 5.399-3.894 8.325-2.219l3.145-5.447c-.899-.515-1.678-1.266-2.232-2.226zM16 22.479c-3.578 0-6.479-2.901-6.479-6.479s2.901-6.479 6.479-6.479c3.578 0 6.479 2.901 6.479 6.479s-2.901 6.479-6.479 6.479z"/></svg></button>
    </div>
 
@@ -3767,6 +3768,7 @@ function boot(){
   // help (?) button → help modal
   const helpOpen=()=>{ const hb=document.getElementById('help-build'); if(hb) hb.textContent='build '+BUILD; document.getElementById('help-overlay').classList.add('on'); };
   document.getElementById('a-help').onclick=helpOpen;
+  document.getElementById('m-help').onclick=helpOpen;   // mobile top-bar help (activity bar is hidden on mobile)
   document.getElementById('help-close').onclick=()=>document.getElementById('help-overlay').classList.remove('on');
   document.getElementById('help-overlay').addEventListener('click',e=>{if(e.target.id==='help-overlay')e.currentTarget.classList.remove('on');});
   document.getElementById('m-menu').onclick=showFiles;       // unified: the file icon opens the dedicated Files browser (inline tree is editor-only, via the tab tree toggle)
