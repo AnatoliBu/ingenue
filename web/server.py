@@ -586,9 +586,11 @@ def do_clone(full, url, emit, sha=None, catalog_entry=None, recurse_submodules=T
         if not _safe_git_ref(sha):
             return False, f"refused unsafe ref {sha!r}"
         emit(f"$ git -C {os.path.basename(full)} checkout {sha}")
-        # --end-of-options stops git treating a `-`-prefixed sha as a flag (belt
-        # and suspenders with _safe_git_ref above).
-        rc2 = stream_proc(["git", "-C", full, "checkout", "--end-of-options", sha],
+        # NOTE: do NOT pass `--end-of-options` — `git checkout` uses a legacy
+        # parser that rejects it (even on git 2.30), failing with "pathspec
+        # '--end-of-options' did not match". Flag-injection is already prevented
+        # by _safe_git_ref(), whose regex forbids a leading `-`.
+        rc2 = stream_proc(["git", "-C", full, "checkout", sha],
                           None, emit, timeout=60, run_as=run_as)
         if rc2 != 0:
             return False, f"git checkout {sha} failed (rc={rc2})"
@@ -706,9 +708,10 @@ def do_rollback(full, target, emit):
     uid, gid, _, _ = target_owner()
     run_as = _run_as_target()
     emit(f"$ git -C {os.path.basename(full)} checkout {target}")
-    # --end-of-options prevents a `-`-prefixed target from being parsed as a
-    # flag; the regex above rejects the same case at the API edge.
-    rc = stream_proc(["git", "-C", full, "checkout", "--end-of-options", target],
+    # NOTE: no `--end-of-options` — `git checkout`'s legacy parser rejects it
+    # (fails as a bogus pathspec, breaking every rollback). _safe_git_ref()
+    # already rejects `-`-prefixed targets at the API edge, so this is safe.
+    rc = stream_proc(["git", "-C", full, "checkout", target],
                      None, emit, timeout=60, run_as=run_as)
     if rc != 0:
         return False, f"git checkout {target} exited {rc}"
