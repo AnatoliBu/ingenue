@@ -343,7 +343,7 @@ def start_job(kind, name, what, fn):
     jid, job = _new_job(kind, name)
 
     def work():
-        global _engine_cache
+        global _engine_cache, _sc_covered_cache
         try:
             ok, err = fn(job.emit)
             job.finish(bool(ok), err)
@@ -352,6 +352,7 @@ def start_job(kind, name, what, fn):
             job.finish(False, str(e))
         finally:
             _engine_cache = None        # a just-installed script may provide an engine — rescan next analyze
+            _sc_covered_cache = None    # install/heal may add/move Extensions .so — re-derive 'covered' set
             _release_busy()
     threading.Thread(target=work, daemon=True).start()
     return jid, None
@@ -1840,6 +1841,13 @@ def analyze_dir(full, name):
     downloads = sorted(set(u for u in urls
                            if re.search(r"\.(tar\.gz|tgz|zip|tar\.xz)|/releases/download/|archive\.org", u)))
     sc_ext = sorted(set(re.findall(r"([A-Za-z0-9_]+_scsynth\.so)", blob)))
+    # Don't offer to install plugins the OS already provides with the right arch
+    # (PanicOS ships PortedPlugins system-wide). Re-installing them duplicates the
+    # same UGen classes and breaks the load — so split referenced .so into what's
+    # already covered vs genuinely missing, and only the missing set drives an offer.
+    sc_covered = sc_plugins_provided()
+    sc_ext_present = [s for s in sc_ext if s in sc_covered]
+    missing_sc_ext = [s for s in sc_ext if s not in sc_covered]
     # library names can contain dots/hyphens (mx.samples, mx.synths, 4-big-knobs) — the old
     # [A-Za-z0-9_]+ class silently dropped those, so dotted deps never flagged for heal.
     # Also filter out anything the script bundles under its own lib/<X>/ — those require's
@@ -1876,8 +1884,13 @@ def analyze_dir(full, name):
         "git_url": git_remote(full),                     # inferred clone url — enables reinstall/update off-catalog
         "install_script": bool(find_installer(full)),
         "downloads": downloads[:12],
-        "sc_extensions": sc_ext,
-        "needs_sc_ext": bool(sc_ext) or "Extensions/" in blob,
+        "sc_extensions": sc_ext,                         # every *_scsynth.so the script references
+        "sc_ext_present": sc_ext_present,                # …of those, ones the OS already provides (right arch)
+        "missing_sc_ext": missing_sc_ext,                # …and ones genuinely absent — the only ones we offer
+        # A bare "Extensions/" mention (no named .so) only counts when the OS
+        # provides NO correct-arch plugins at all — otherwise it's the system's
+        # own pack (PanicOS PortedPlugins) and re-installing would duplicate classes.
+        "needs_sc_ext": bool(missing_sc_ext) or ("Extensions/" in blob and not sc_covered),
         "requires_scripts": reqs,
         "engines": engines,
         "missing_engines": missing_engines,              # engine.name targets not installed on device
@@ -2016,6 +2029,41 @@ def _so_basenames_in_ext_dirs():
                     if a:
                         found.setdefault(f, a[1])  # first/system copy wins
     return found
+
+
+_sc_covered_cache = None
+
+
+def sc_plugins_provided():
+    """Set of SuperCollider plugin .so basenames the OS *already provides* where
+    scsynth scans — counting only copies whose arch matches the one this host's
+    scsynth loads. These are 'covered': re-installing a script's own plugin pack
+    on top would duplicate the same UGen classes (a hard DUPLICATE error that
+    stops the script loading) — so analyze_dir must NOT offer to install them.
+
+    Arch-aware on purpose: a 32-bit copy 'present' on a 64-bit host does NOT count
+    as covered (scsynth can't load it), but a 64-bit copy of the same plugin DOES
+    — so the missing-arch case the user hit (PanicOS ships PortedPlugins 64-bit;
+    a script's 32-bit pack should be skipped, not re-dropped) resolves correctly.
+
+    `_so_basenames_in_ext_dirs()` collapses to one arch per basename (system copy
+    wins), which could hide a correct-arch user copy behind a wrong-arch system
+    one — so we re-walk here and accept a basename the moment ANY correct-arch
+    copy turns up. Cached; invalidated after any install/heal (see start_job)."""
+    global _sc_covered_cache
+    if _sc_covered_cache is not None:
+        return _sc_covered_cache
+    want = ARCH_ELF.get(os.uname().machine)            # ELF arch scsynth loads here
+    covered = set()
+    for d in sc_ext_dirs():
+        for root, _dirs, files in os.walk(d):
+            for f in files:
+                if f.endswith(".so") and f not in covered:
+                    a = elf_arch(os.path.join(root, f))
+                    if a and a[1] == want:
+                        covered.add(f)
+    _sc_covered_cache = covered
+    return covered
 
 
 def scplugins_status():

@@ -2294,7 +2294,7 @@ async function fetchDepsUrl(url){
     const j=await r.json(); return j.error?null:j; }catch(_){ return null; }
 }
 const DEP_MAX_DEPTH=4;
-function depStub(name,extra){ return Object.assign({name,requires_scripts:[],nb:false,needs_sc_ext:false,sc_extensions:[],downloads:[],native:[],install_script:false,needs_setup:false,children:[],installed:false},extra||{}); }
+function depStub(name,extra){ return Object.assign({name,requires_scripts:[],nb:false,needs_sc_ext:false,sc_extensions:[],sc_ext_present:[],missing_sc_ext:[],downloads:[],native:[],install_script:false,needs_setup:false,children:[],installed:false},extra||{}); }
 // Resolve a required-dependency name to an installable entry WITHOUT gating on the
 // catalog: catalog/overlay first, then (if GitHub is connected) an exact-name repo
 // search. A `require "<name>/lib"` only gives us the folder name, never the owner —
@@ -2354,7 +2354,12 @@ function depNodeRows(rep){
       rows.push(R('🆗','norns version',`pins norns ≥ <b>${reqLbl}</b>${dev?' — your device meets it':''}`));
   }
   if(rep.nb) rows.push(R('🎹','nb voices','plays through nb — install an nb voice (the nb_* player mods) to make sound'));
-  if(rep.needs_sc_ext) rows.push(R('🔌','SuperCollider engine extension',((rep.sc_extensions||[]).join(', ')||'extension')+' — installed if missing'));
+  if(rep.needs_sc_ext){
+    const miss=rep.missing_sc_ext||rep.sc_extensions||[], have=rep.sc_ext_present||[];
+    let d=(miss.join(', ')||'extension')+' — installed if missing';
+    if(have.length) d+=`<br><span style="color:#5c5">already provided by the OS: ${have.join(', ')}</span>`;
+    rows.push(R('🔌','SuperCollider engine extension',d));
+  }
   if((rep.downloads||[]).length) rows.push(R('⬇','downloads ('+rep.downloads.length+')',
     rep.downloads.map(u=>`<a href="${u}" target="_blank" rel="noopener">${u.split('/').slice(-1)[0]}</a>`).join('<br>')));
   // Cross-script download hint: this script downloads an artifact hosted by
