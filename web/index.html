@@ -1287,37 +1287,69 @@ const DEP_OVERLAY=[
 ];
 
 /* ============ load the real community catalog (350 scripts) ============ */
+// nornslist is the live data provider: its nightly scrape commits catalog.json
+// (the full catalog — community + gh-exclusive + soft-launch) and feed.json (per-repo
+// HEAD sha for update detection). We fetch them fresh from raw main each load so the
+// device tracks the latest nightly with NO ingenue redeploy. Bundled snapshots remain
+// as an offline fallback.
+const NL_RAW='https://raw.githubusercontent.com/seajaysec/nornslist/main';
+// Map a nornslist catalog.json row (long-form headers) to an ingenue entry, deriving
+// the source CATEGORY the Available tab filters on:
+//   community  — source=community (the maiden/norns.community catalog)
+//   softlaunch — source=github + a llllllll.co Discussion URL (a lines thread but not
+//                yet on norns.community)
+//   ghx        — source=github with no discussion (github-exclusive)
+function nlRowToEntry(e){
+  const src=(e.source||'community').toLowerCase();
+  const discU=(e['Discussion URL']||'').trim();
+  const cat = src==='community' ? 'community' : (discU ? 'softlaunch' : 'ghx');
+  return {
+    n:e.Name, a:e.Author||'unknown', d:e.Description||'',
+    tags:(Array.isArray(e.Tags)?e.Tags:[]).slice(0,8),
+    proj:e['Project URL']||'', docU:e['Documentation URL']||'', discU,
+    comm:e['Community URL']||'', doc:e['Documentation URL']?1:0, disc:discU?1:0,
+    demo:e.Demo||'', upd:e['Last Updated']||'', stars:e.stars||0,
+    facets:Array.isArray(e.facets)?e.facets:[], readme:e.readme||'',
+    images:Array.isArray(e.images)?e.images:[], engine:e.engine||'',
+    sha:e.sha||'', status:e.status||'active',
+    cat, srcs:[src==='community'?'community':'github'], gh: src==='github'?1:0,
+  };
+}
 async function loadCatalog(){
   try{
-    const r=await fetch('community.json',{cache:'no-store'}); if(!r.ok) throw new Error(r.status);
-    const j=await r.json();
-    const entries=(j.entries||[]).map(e=>({
-      n:e.project_name, a:e.author||'unknown', d:e.description||'',
-      v:'', tags:(e.tags||[]).slice(0,5), doc:e.documentation_url?1:0, disc:e.discussion_url?1:0,
-      proj:e.project_url, docU:e.documentation_url, discU:e.discussion_url, srcs:['community']
-    }));
-    // enrich with demo videos / last-updated / community page from the nornslist scraper
+    // Primary: nornslist's full live catalog. Fallback: the bundled community snapshot.
+    let entries=null;
     try{
-      const ex=await (await fetch('enriched.json',{cache:'no-store'})).json();
-      entries.forEach(e=>{ const x=ex[e.n.toLowerCase()]; if(x){ e.demo=x.demo; e.upd=x.upd; e.comm=x.comm;
-        e.proj=e.proj||x.proj; e.docU=e.docU||x.doc; e.discU=e.discU||x.disc; } });
+      const r=await fetch(`${NL_RAW}/catalog.json`,{cache:'no-store'});
+      if(r.ok){ const j=await r.json(); if(Array.isArray(j.scripts)) entries=j.scripts.map(nlRowToEntry); }
     }catch(_){}
-    // B7: optional nightly precomputed feed from the nornslist scraper — engine names,
-    // nb-voice flag, README text + images, extra tags. ingenue uses it the moment it exists
-    // (no live GitHub/community fetches needed); absent → we compute those live on demand.
+    if(!entries){
+      const r=await fetch('community.json',{cache:'no-store'}); if(!r.ok) throw new Error(r.status);
+      const j=await r.json();
+      entries=(j.entries||[]).map(e=>({
+        n:e.project_name, a:e.author||'unknown', d:e.description||'',
+        tags:(e.tags||[]).slice(0,5), proj:e.project_url, docU:e.documentation_url, discU:e.discussion_url,
+        doc:e.documentation_url?1:0, disc:e.discussion_url?1:0, cat:'community', srcs:['community'], gh:0
+      }));
+    }
+    // feed.json (raw main, bundled fallback): community SHAs + engine/nb/readme/images.
+    // catalog.json already carries these for discovered repos; feed fills community rows.
     try{
-      const feed=await (await fetch('feed.json',{cache:'no-store'})).json();
+      let feed=null;
+      try{ const fr=await fetch(`${NL_RAW}/feed.json`,{cache:'no-store'}); if(fr.ok) feed=await fr.json(); }catch(_){}
+      if(!feed){ feed=await (await fetch('feed.json',{cache:'no-store'})).json(); }
       const fm=feed.scripts||feed;
-      entries.forEach(e=>{ const x=fm[e.n.toLowerCase()]; if(!x) return;
-        if(x.engine) e.engine=x.engine; if(x.nb) e.nb=1;
-        if(x.facets) e.facets=x.facets; if(x.nb_role) e.nbRole=x.nb_role;   // structural facets from the scraper (same model as live discovery)
-        if(x.readme) e.readme=x.readme; if(x.images) e.images=x.images;
-        if(x.tags) e.tags=Array.from(new Set((e.tags||[]).concat(x.tags))).slice(0,8);
-        if(x.upd) e.upd=e.upd||x.upd; });
+      entries.forEach(e=>{ const x=fm[(e.n||'').toLowerCase()]; if(!x) return;
+        if(x.engine&&!e.engine) e.engine=x.engine; if(x.nb) e.nb=1; if(x.nb_role) e.nbRole=x.nb_role;
+        if(x.facets&&!(e.facets&&e.facets.length)) e.facets=x.facets;
+        if(x.readme&&!e.readme) e.readme=x.readme;
+        if(x.images&&!(e.images&&e.images.length)) e.images=x.images;
+        if(x.sha&&!e.sha) e.sha=x.sha; if(x.upd&&!e.upd) e.upd=x.upd;
+        if(x.tags) e.tags=Array.from(new Set((e.tags||[]).concat(x.tags))).slice(0,8); });
     }catch(_){}
     // merge known un-catalogued lib-deps (nb, …) so they're visible/installable
     // and resolve when a script requires them (traceDeps/runHeal look them up here)
-    DEP_OVERLAY.forEach(o=>{ if(!entries.some(e=>norm(e.n)===norm(o.n))) entries.push({doc:0,disc:0,...o}); });
+    DEP_OVERLAY.forEach(o=>{ if(!entries.some(e=>norm(e.n)===norm(o.n))) entries.push({doc:0,disc:0,cat:'community',...o}); });
     REPO.available = entries;
     scriptsState.catalog='ready';
     // The installed list loads first and INDEPENDENTLY (loadScripts → probeInstalled),
