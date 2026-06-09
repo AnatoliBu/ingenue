@@ -1367,6 +1367,7 @@ async function loadCatalog(){
     // and resolve when a script requires them (traceDeps/runHeal look them up here)
     DEP_OVERLAY.forEach(o=>{ if(!entries.some(e=>norm(e.n)===norm(o.n))) entries.push({doc:0,disc:0,cat:'community',...o}); });
     REPO.available = entries;
+    await loadMyRepos();                              // token-gated: fold in the user's own (public+private) repos
     scriptsState.catalog='ready';
     // The installed list loads first and INDEPENDENTLY (loadScripts → probeInstalled),
     // so a catalog hiccup can never blank it. Re-mark it here only to enrich the
@@ -1380,6 +1381,30 @@ async function loadCatalog(){
     renderRepoIfOpen();
     return false;
   }
+}
+// Token-gated: fold the connected user's own repos (public + private) into the
+// catalog as the 'mine' source category. No-ops without a token. This is the only
+// thing a GitHub token is used for now (plus authenticating the manual GitHub
+// update check). Best-effort: any failure leaves the catalog untouched.
+async function loadMyRepos(){
+  if(!ghConnected) return;
+  let me=null; try{ me=await ghWhoami(); }catch(_){}
+  if(!me) return;
+  try{
+    const r=await fetch('https://api.github.com/search/repositories?per_page=100&q='
+      +encodeURIComponent('user:'+me+' language:lua'),{headers:ghHeaders()});
+    if(!r.ok) return;
+    const items=(await r.json()).items||[];
+    const have=new Set(REPO.available.map(e=>norm(e.n)));
+    items.forEach(it=>{
+      const nm=it.name||''; if(!nm || have.has(norm(nm))) return;   // skip dups already in the catalog
+      have.add(norm(nm));
+      REPO.available.push({ n:nm, a:(it.owner||{}).login||me, d:it.description||'',
+        tags:[], proj:it.html_url||'', upd:(it.pushed_at||'').slice(0,10),
+        stars:it.stargazers_count||0, facets:['script'], readme:'', images:[], demo:'',
+        sha:'', cat:'mine', srcs:['mine'], gh:1, priv:it.private?1:0 });
+    });
+  }catch(_){}
 }
 let HAS_BACKEND=false;             // true when the device API is reachable (real install/remove)
 let scriptsState={installed:'loading',catalog:'loading'};   // per-source: 'loading'|'ready'|'error'|'demo'
@@ -2171,9 +2196,9 @@ let tagFilter=new Set(), filtersOpen=false, hideInstalled=false;
 // Available-tab source CATEGORIES (from nornslist): the maiden/community catalog,
 // soft launch (on github + a lines thread, not yet on norns.community), and
 // github-exclusive (found only on github). All on by default.
-const CAT_META={community:['◉','norns.community','#DEB887'],softlaunch:['◐','soft launch','#c9a0ff'],ghx:['◯','gh exclusive','#7ee787']};
-const CAT_ORDER=['community','softlaunch','ghx'];
-let catFilter=new Set(CAT_ORDER);
+const CAT_META={community:['◉','norns.community','#DEB887'],softlaunch:['◐','soft launch','#c9a0ff'],ghx:['◯','gh exclusive','#7ee787'],mine:['★','my repos','#7fbfff']};
+const CAT_ORDER=['community','softlaunch','ghx'];   // 'mine' appended only when a token is connected
+let catFilter=new Set([...CAT_ORDER,'mine']);
 function catBar(){
   const counts={community:0,softlaunch:0,ghx:0};
   (REPO.available||[]).forEach(p=>{ const c=p.cat||'community'; if(c in counts) counts[c]++; });
@@ -2199,8 +2224,10 @@ function ddHTML(key,label,opts,sel){
 // The three Available-tab filter dropdowns, computed from the current catalog.
 function filterDropdownsHTML(){
   const av=REPO.available||[];
-  const sc={community:0,softlaunch:0,ghx:0}; av.forEach(p=>{ const c=p.cat||'community'; if(c in sc) sc[c]++; });
-  const src=ddHTML('src','source',CAT_ORDER.map(id=>({value:id,label:CAT_META[id][1],count:sc[id]})),catFilter);
+  const sc={community:0,softlaunch:0,ghx:0,mine:0}; av.forEach(p=>{ const c=p.cat||'community'; if(c in sc) sc[c]++; });
+  // 'my repos' only appears once a token is connected (and there's something to show)
+  const srcOrder=CAT_ORDER.concat((ghConnected||sc.mine)?['mine']:[]);
+  const src=ddHTML('src','source',srcOrder.map(id=>({value:id,label:CAT_META[id][1],count:sc[id]})),catFilter);
   const tc={script:0,mod:0,library:0,engine:0}; av.forEach(p=>(p.facets||[]).forEach(f=>{ if(f in tc) tc[f]++; }));
   const type=ddHTML('type','type',TYPE_ORDER.map(t=>({value:t,label:t,count:tc[t]})),typeFilter);
   const tcount={}; av.forEach(p=>entryTags(p).forEach(t=>{ tcount[t]=(tcount[t]||0)+1; }));
