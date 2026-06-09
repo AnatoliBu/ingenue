@@ -2209,8 +2209,9 @@ function filterDropdownsHTML(){
   return src+type+tags;
 }
 function ddCloseAll(){ document.querySelectorAll('.dd.open').forEach(d=>d.classList.remove('open')); }
-// per-script update detection (installed tab): scanned via /api/updates/check
-let updChecking=false, updCheckedAt=0, updFilter=false, updProgress={done:0,total:0};
+// per-script update detection (installed tab). Default: fast diff vs nornslist's
+// published sha (no GitHub call). Secondary: live GitHub check for bleeding edge.
+let updChecking=false, updCheckedAt=0, updFilter=false, updProgress={done:0,total:0}, updSource='';
 const NB_TAG='additional voice';
 function isNbVoice(p){ if(p.nb) return true; const t=(p.tags||[]).map(x=>String(x).toLowerCase());
   return t.includes('nb')||t.includes('n.b.')||/\bnb\b|note ?bridge|nb_|nb\//i.test(((p.d||'')+' '+(p.n||''))); }
@@ -2993,18 +2994,20 @@ function updStripHTML(){
     return `<div class="upd-strip checking"><span class="ispin"></span><span>checking for updates… ${updProgress.done}/${updProgress.total}</span>`
       +`<span class="upd-bar"><span class="upd-fill" style="width:${pct}%"></span></span></div>`;
   }
+  const ghBtn=`<button class="upd-recheck gh" data-updcheck-gh="1" title="query GitHub directly for commits newer than nornslist's last nightly — slower, needs a token for speed, catches bleeding-edge">⎇ check GitHub</button>`;
   if(updCheckedAt){
     const chip = N
       ? `<button class="upd-chip ${updFilter?'on':''}" data-updfilter="1">⬆ updates available (${N})</button>`
-      : `<span class="upd-none">✓ all scripts up to date</span>`;
-    return `<div class="upd-strip">${chip}<button class="upd-recheck" data-updcheck="1">↻ re-check</button></div>`;
+      : `<span class="upd-none">✓ up to date${updSource==='github'?' (vs GitHub)':' (vs nornslist)'}</span>`;
+    return `<div class="upd-strip">${chip}<button class="upd-recheck" data-updcheck="1">↻ re-check</button>${ghBtn}</div>`;
   }
   // no check run yet this session — manual trigger only (no auto-checking)
-  return `<div class="upd-strip"><button class="upd-chip" data-updcheck="1">↻ check for updates</button></div>`;
+  return `<div class="upd-strip"><button class="upd-chip" data-updcheck="1">↻ check for updates</button>${ghBtn}</div>`;
 }
 function wireUpdStrip(root){
   (root||document).querySelectorAll('[data-updfilter]').forEach(b=>b.onclick=()=>{updFilter=!updFilter;renderRepo();});
   (root||document).querySelectorAll('[data-updcheck]').forEach(b=>b.onclick=()=>checkUpdates(true));
+  (root||document).querySelectorAll('[data-updcheck-gh]').forEach(b=>b.onclick=()=>checkUpdatesGithub(true));
 }
 function refreshUpdStrip(){    // in-place refresh of strip + badges only — NO updateGrid (would refire
   const v=document.getElementById('repoview'); if(!v||repoTab!=='installed') return;  // every card's giturl)
@@ -3038,7 +3041,7 @@ function applyUpdResults(res){
 async function checkUpdates(force){
   if(!HAS_BACKEND || updChecking) return;
   if(!force && updCheckedAt) return;          // cached this session — manual ↻ re-check overrides
-  updChecking=true; updFilter=false; updProgress={done:0,total:REPO.installed.length};
+  updChecking=true; updFilter=false; updSource='nornslist'; updProgress={done:0,total:REPO.installed.length};
   refreshUpdStrip();
   // Update detection without any GitHub call: ask the device for each installed
   // script's LOCAL HEAD sha + commit date (one local-git call, no network), and
@@ -3062,6 +3065,32 @@ async function checkUpdates(force){
   updChecking=false; updCheckedAt=Date.now();
   updProgress={done:REPO.installed.length,total:REPO.installed.length};
   refreshUpdStrip(); updateGrid();              // flip flagged cards Reinstall→Update, drop badges
+}
+// Bleeding-edge variant: query GitHub directly (git ls-remote per installed repo,
+// server-side job) for commits newer than nornslist's last nightly. Slower, but
+// catches the absolute latest. Faster/reliable with a token (5000 vs 60 req/hr).
+async function checkUpdatesGithub(force){
+  if(!HAS_BACKEND || updChecking) return;
+  updChecking=true; updFilter=false; updSource='github'; updProgress={done:0,total:REPO.installed.length};
+  refreshUpdStrip();
+  let jid=null;
+  try{ const j=await (await fetch('api/updates/check',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'})).json(); jid=j.job; }
+  catch(e){ updChecking=false; refreshUpdStrip(); return; }
+  if(!jid){ updChecking=false; refreshUpdStrip(); return; }
+  let from=0, dead=0;
+  const tick=async()=>{
+    let j=null;
+    try{ j=await (await fetch('api/job?id='+encodeURIComponent(jid)+'&from='+from,{cache:'no-store'})).json(); }
+    catch(e){ if(++dead>8){ updChecking=false; refreshUpdStrip(); return; } return void setTimeout(tick,1000); }
+    dead=0;
+    if(j.gone){ updChecking=false; updCheckedAt=Date.now(); refreshUpdStrip(); updateGrid(); return; }
+    if(j.results) applyUpdResults(j.results);
+    if(typeof j.next==='number') from=j.next;
+    if(j.done){ updChecking=false; updCheckedAt=Date.now(); refreshUpdStrip(); updateGrid(); return; }
+    refreshUpdStrip();
+    setTimeout(tick,800);
+  };
+  tick();
 }
 async function updateAllBehind(){              // "Update all" on installed = update only the behind ones, serialized
   const behind=REPO.installed.filter(p=>p.upd_avail);
