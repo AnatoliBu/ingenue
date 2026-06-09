@@ -1422,7 +1422,7 @@ function applyRealInstalled(names, entries){
 async function refreshInstalled(){
   const real=await fetchInstalled(); if(!real) return;
   INSTALLED_NAMES=real; scriptsState.installed='ready';
-  applyRealInstalled(real, REPO.available.filter(p=>p.srcs.includes('community')));
+  applyRealInstalled(real, REPO.available);   // match against ALL sources so installed gh/soft-launch scripts carry their sha too
   if(document.getElementById('repoview').classList.contains('on')) renderRepo();
 }
 
@@ -2137,7 +2137,8 @@ function bulkInstall(){
 }
 function repoBaseList(tab){
   let list=REPO[tab];
-  if(tab!=='installed'){ const av=availSources(); list=list.filter(p=>p.srcs.some(s=>av.includes(s)&&srcFilter.has(s))); }
+  if(tab==='available'){ list=list.filter(p=>catFilter.has(p.cat||'community')); }   // 3 source categories
+  else if(tab!=='installed'){ const av=availSources(); list=list.filter(p=>p.srcs.some(s=>av.includes(s)&&srcFilter.has(s))); }
   return list;
 }
 function sortCmp(a,b){
@@ -2151,6 +2152,21 @@ function knownNames(){ const s=new Set(); REPO.installed.forEach(p=>s.add(p.n.to
   REPO.available.forEach(p=>{ if(p.srcs.includes('community')) s.add(p.n.toLowerCase()); }); return s; }
 /* ===== B6: tag filter facet + dynamic "additional voice" (nb) tag ===== */
 let tagFilter=new Set(), filtersOpen=false, hideInstalled=false;
+// Available-tab source CATEGORIES (from nornslist): the maiden/community catalog,
+// soft launch (on github + a lines thread, not yet on norns.community), and
+// github-exclusive (found only on github). All on by default.
+const CAT_META={community:['◉','norns.community','#DEB887'],softlaunch:['◐','soft launch','#c9a0ff'],ghx:['◯','gh exclusive','#7ee787']};
+const CAT_ORDER=['community','softlaunch','ghx'];
+let catFilter=new Set(CAT_ORDER);
+function catBar(){
+  const counts={community:0,softlaunch:0,ghx:0};
+  (REPO.available||[]).forEach(p=>{ const c=p.cat||'community'; if(c in counts) counts[c]++; });
+  const chips=CAT_ORDER.map(id=>{ const m=CAT_META[id], on=catFilter.has(id);
+    return `<span class="srcchip ${on?'on':'off'}" data-cat="${id}" style="--c:${m[2]}" title="${m[1]}"><i></i>${m[1]} <b style="opacity:.6">${counts[id]}</b></span>`;
+  }).join('');
+  const hideInst=`<span class="srcchip ${hideInstalled?'on':''}" data-hideinst="1" style="--c:var(--ok,#6c6)"><i></i>${hideInstalled?'hiding installed':'hide installed'}</span>`;
+  return `<div class="srcbar"><span class="lbl">sources</span>${chips}${hideInst}</div>`;
+}
 // per-script update detection (installed tab): scanned via /api/updates/check
 let updChecking=false, updCheckedAt=0, updFilter=false, updProgress={done:0,total:0};
 const NB_TAG='additional voice';
@@ -2981,24 +2997,28 @@ async function checkUpdates(force){
   if(!force && updCheckedAt) return;          // cached this session — manual ↻ re-check overrides
   updChecking=true; updFilter=false; updProgress={done:0,total:REPO.installed.length};
   refreshUpdStrip();
-  let jid=null;
-  try{ const j=await (await fetch('api/updates/check',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'})).json(); jid=j.job; }
+  // Update detection without any GitHub call: ask the device for each installed
+  // script's LOCAL HEAD sha + commit date (one local-git call, no network), and
+  // diff against the sha nornslist already published (carried on each installed
+  // entry from catalog/feed via applyRealInstalled). A differing sha is only an
+  // UPDATE when nornslist's last-update is newer than the local commit — otherwise
+  // the user is ahead / on a fork, so we don't nag.
+  let shas={};
+  try{ shas=await (await fetch('api/installed/shas',{cache:'no-store'})).json(); }
   catch(e){ updChecking=false; refreshUpdStrip(); return; }
-  if(!jid){ updChecking=false; refreshUpdStrip(); return; }
-  let from=0, dead=0;
-  const tick=async()=>{
-    let j=null;
-    try{ j=await (await fetch('api/job?id='+encodeURIComponent(jid)+'&from='+from,{cache:'no-store'})).json(); }
-    catch(e){ if(++dead>8){ updChecking=false; refreshUpdStrip(); return; } return void setTimeout(tick,1000); }
-    dead=0;
-    if(j.gone){ updChecking=false; updCheckedAt=Date.now(); refreshUpdStrip(); updateGrid(); return; }
-    if(j.results) applyUpdResults(j.results);
-    if(typeof j.next==='number') from=j.next;
-    if(j.done){ updChecking=false; updCheckedAt=Date.now(); refreshUpdStrip(); updateGrid(); return; }  // re-render once so flagged cards flip Reinstall→Update
-    refreshUpdStrip();
-    setTimeout(tick,800);
-  };
-  tick();
+  REPO.installed.forEach(p=>{
+    p.upd_avail=0; p.upd_err='';
+    const local=shas[p.dir||p.n]; const remoteSha=(p.sha||'').trim();
+    if(!local || !local.sha){ p.upd_err='local sha unknown'; return; }   // not a git clone
+    if(!remoteSha) return;                       // nornslist has no sha for this script → can't tell, don't nag
+    if(local.sha===remoteSha) return;            // up to date
+    const ld=(local.date||''), rd=(p.upd||'');   // ISO YYYY-MM-DD, string-comparable
+    if(rd && ld && rd<=ld) return;               // local same-day-or-newer → diverged/ahead, not behind
+    p.upd_avail=1;
+  });
+  updChecking=false; updCheckedAt=Date.now();
+  updProgress={done:REPO.installed.length,total:REPO.installed.length};
+  refreshUpdStrip(); updateGrid();              // flip flagged cards Reinstall→Update, drop badges
 }
 async function updateAllBehind(){              // "Update all" on installed = update only the behind ones, serialized
   const behind=REPO.installed.filter(p=>p.upd_avail);
@@ -3170,7 +3190,7 @@ function renderRepo(){
   const _cnt=(st,n)=>(st==='ready'||st==='demo')?n:'…';   // show '…' while a source is still loading/errored, not a misleading 0
   const tabs=`<div class="rd-tabs">
         <button class="rd-tab ${tab==='installed'?'on':''}" data-rt="installed">installed <span class="ct">${_cnt(scriptsState.installed,REPO.installed.length)}</span></button>
-        <button class="rd-tab ${tab==='available'?'on':''}" data-rt="available">available <span class="ct">${_cnt(scriptsState.catalog,REPO.available.filter(p=>p.srcs.some(s=>availSources().includes(s))).length)}</span></button>
+        <button class="rd-tab ${tab==='available'?'on':''}" data-rt="available">available <span class="ct">${_cnt(scriptsState.catalog,REPO.available.filter(p=>catFilter.has(p.cat||'community')).length)}</span></button>
         <button class="rd-tab ${tab==='discover'?'on':''}" data-rt="discover">discover <span class="ct">${ghConnected?REPO.discover.length:'⌗'}</span></button>
         <button class="rd-toggle" id="rd-toggle" title="hide / show search"><svg viewBox="0 0 32 32"><path d="M16 21L6 11l2.1-2.1L16 16.8 23.9 8.9 26 11z"/></svg></button>
       </div>`;
@@ -3225,7 +3245,7 @@ function renderRepo(){
         ${tab!=='discover'?`<label class="rd-search"><svg viewBox="0 0 32 32"><path d="${I.search}"/></svg><input id="rd-q" placeholder="${ph}"></label>`:''}
         ${sortSel}${allBtn}
         ${tab!=='discover'?`<button class="rd-filtertoggle" id="rd-filttog">⚲ filters${(srcFilter.size<SRC_ORDER.length||tagFilter.size)?' <span class="fct">'+(tagFilter.size+(SRC_ORDER.length-srcFilter.size))+'</span>':''}</button>`:''}
-      </div><div class="rd-filters${filtersOpen?' open':''}" id="rd-filters">${tab==='installed'?'':srcBar(tab)}${tab!=='discover'?tagBar(tab):''}</div></div>
+      </div><div class="rd-filters${filtersOpen?' open':''}" id="rd-filters">${tab==='installed'?'':(tab==='available'?catBar():srcBar(tab))}${tab!=='discover'?tagBar(tab):''}</div></div>
     <div class="rd-scroll"><div>${head}${tab==='installed'?updStripHTML():''}<div class="rd-grid">${list.map(p=>repoCard(p,tab)).join('')||`<div class="gh-empty"><p>nothing here yet.</p></div>`}</div>${pager}</div></div>
     <div class="bulkbar" id="bulkbar"></div>`;
   v.querySelectorAll('[data-rt]').forEach(b=>b.onclick=()=>{repoTab=b.dataset.rt;repoQuery='';_discUser=null;selection.clear();renderRepo();});
@@ -3235,6 +3255,9 @@ function renderRepo(){
   });
   v.querySelectorAll('[data-src]').forEach(c=>c.onclick=()=>{
     const id=c.dataset.src; srcFilter.has(id)?srcFilter.delete(id):srcFilter.add(id); renderRepo();
+  });
+  v.querySelectorAll('[data-cat]').forEach(c=>c.onclick=()=>{
+    const id=c.dataset.cat; catFilter.has(id)?catFilter.delete(id):catFilter.add(id); renderRepo();
   });
   v.querySelectorAll('[data-tag]').forEach(c=>c.onclick=()=>{ const t=c.dataset.tag; tagFilter.has(t)?tagFilter.delete(t):tagFilter.add(t); renderRepo(); });
   v.querySelectorAll('[data-tagclear]').forEach(c=>c.onclick=()=>{ tagFilter.clear(); renderRepo(); });

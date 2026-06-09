@@ -2887,6 +2887,22 @@ class H(http.server.SimpleHTTPRequestHandler):
                 return self._json(sorted(d for d in os.listdir(CODE)
                                          if os.path.isdir(os.path.join(CODE, d))
                                          and not d.startswith(".") and d != "ingenue"))
+            if path == "/api/installed/shas":
+                # Local HEAD sha + commit date per installed git repo — NO network.
+                # The UI diffs these against nornslist's catalog/feed sha to detect
+                # updates without a single GitHub call (the old per-script ls-remote).
+                out = {}
+                for d in sorted(os.listdir(CODE)):
+                    full = os.path.join(CODE, d)
+                    if (not os.path.isdir(full) or d.startswith(".") or d == "ingenue"
+                            or not os.path.isdir(os.path.join(full, ".git"))):
+                        continue
+                    # one git call gets both HEAD sha and its commit date
+                    line = _git_out(full, ["log", "-1", "--format=%H %cI", "HEAD"])
+                    if line:
+                        sha, _, date = line.partition(" ")
+                        out[d] = {"sha": sha, "date": date[:10]}
+                return self._json(out)
             if path == "/api/favorites":
                 return self._json(favorites_overview())
             if path == "/api/deps":
