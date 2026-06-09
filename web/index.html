@@ -230,6 +230,22 @@ button{font-family:inherit}
   font:inherit;font-size:13px;padding:7px 26px 7px 12px;border-radius:9px;cursor:pointer;white-space:nowrap;
   background-image:linear-gradient(45deg,transparent 50%,var(--muted) 50%),linear-gradient(135deg,var(--muted) 50%,transparent 50%);
   background-position:calc(100% - 14px) 50%,calc(100% - 9px) 50%;background-size:5px 5px,5px 5px;background-repeat:no-repeat}
+/* multiselect filter dropdowns (Source / Type / Tags) — replace the chip soup */
+.dd{position:relative;display:inline-block}
+.dd-btn{appearance:none;border:1px solid var(--trim);background:var(--panel);color:var(--fg);font:inherit;font-size:13px;
+  padding:7px 24px 7px 12px;border-radius:9px;cursor:pointer;white-space:nowrap;display:inline-flex;align-items:center;gap:6px;
+  background-image:linear-gradient(45deg,transparent 50%,var(--muted) 50%),linear-gradient(135deg,var(--muted) 50%,transparent 50%);
+  background-position:calc(100% - 14px) 50%,calc(100% - 9px) 50%;background-size:5px 5px,5px 5px;background-repeat:no-repeat}
+.dd-btn.act{border-color:var(--accent2);color:var(--accent2)}
+.dd-btn .ddn{font-size:11px;background:var(--accent2);color:var(--bg);border-radius:9px;padding:0 6px;font-weight:600}
+.dd-pop{position:absolute;z-index:60;top:calc(100% + 4px);left:0;min-width:190px;max-height:320px;overflow:auto;
+  background:var(--panel2,var(--panel));border:1px solid var(--trim);border-radius:10px;padding:5px;display:none;
+  box-shadow:0 12px 32px rgba(0,0,0,.45)}
+.dd.open .dd-pop{display:block}
+.dd-opt{display:flex;align-items:center;gap:8px;padding:6px 9px;border-radius:7px;cursor:pointer;font-size:13px;color:var(--fg);white-space:nowrap}
+.dd-opt:hover{background:color-mix(in srgb,var(--fg) 8%,transparent)}
+.dd-opt input{accent-color:var(--accent2);width:15px;height:15px;flex:0 0 auto}
+.dd-opt .ct{margin-left:auto;font-size:11px;color:var(--muted)}
 .rd-pager{display:flex;align-items:center;justify-content:center;gap:14px;padding:20px 10px 8px}
 .rd-pager .pginfo{font-size:12.5px;color:var(--muted)}
 .rd-scroll{flex:1;min-height:0;overflow-y:auto;overflow-x:hidden;padding:14px;-webkit-overflow-scrolling:touch}
@@ -2167,6 +2183,32 @@ function catBar(){
   const hideInst=`<span class="srcchip ${hideInstalled?'on':''}" data-hideinst="1" style="--c:var(--ok,#6c6)"><i></i>${hideInstalled?'hiding installed':'hide installed'}</span>`;
   return `<div class="srcbar"><span class="lbl">sources</span>${chips}${hideInst}</div>`;
 }
+// Structural TYPE facet (from nornslist): script / mod / library / engine.
+const TYPE_ORDER=['script','mod','library','engine'];
+let typeFilter=new Set(TYPE_ORDER);
+// Generic multiselect dropdown. key wires to DD_SETS; opts=[{value,label,count}].
+const DD_SETS={src:catFilter,type:typeFilter,tag:tagFilter};
+function ddHTML(key,label,opts,sel){
+  const sub=opts.filter(o=>sel.has(o.value)).length;
+  const partial = key==='tag' ? sel.size>0 : (sub<opts.length);   // tags: blank=all, so any selection is "active"
+  const badge = (key==='tag'?sel.size:(partial?sub:0))>0 && partial ? `<span class="ddn">${key==='tag'?sel.size:sub}</span>` : '';
+  const items=opts.map(o=>`<label class="dd-opt"><input type="checkbox" data-ddval="${esc(o.value)}" ${sel.has(o.value)?'checked':''}>${esc(o.label)}${o.count!=null?`<span class="ct">${o.count}</span>`:''}</label>`).join('')
+    || `<div class="dd-opt" style="color:var(--muted)">none</div>`;
+  return `<span class="dd" data-dd="${key}"><button class="dd-btn ${partial?'act':''}" type="button">${esc(label)}${badge}</button><div class="dd-pop">${items}</div></span>`;
+}
+// The three Available-tab filter dropdowns, computed from the current catalog.
+function filterDropdownsHTML(){
+  const av=REPO.available||[];
+  const sc={community:0,softlaunch:0,ghx:0}; av.forEach(p=>{ const c=p.cat||'community'; if(c in sc) sc[c]++; });
+  const src=ddHTML('src','source',CAT_ORDER.map(id=>({value:id,label:CAT_META[id][1],count:sc[id]})),catFilter);
+  const tc={script:0,mod:0,library:0,engine:0}; av.forEach(p=>(p.facets||[]).forEach(f=>{ if(f in tc) tc[f]++; }));
+  const type=ddHTML('type','type',TYPE_ORDER.map(t=>({value:t,label:t,count:tc[t]})),typeFilter);
+  const tcount={}; av.forEach(p=>entryTags(p).forEach(t=>{ tcount[t]=(tcount[t]||0)+1; }));
+  const topTags=Object.entries(tcount).sort((a,b)=>b[1]-a[1]).slice(0,24).map(([t,c])=>({value:t,label:t,count:c}));
+  const tags=ddHTML('tag','tags',topTags,tagFilter);
+  return src+type+tags;
+}
+function ddCloseAll(){ document.querySelectorAll('.dd.open').forEach(d=>d.classList.remove('open')); }
 // per-script update detection (installed tab): scanned via /api/updates/check
 let updChecking=false, updCheckedAt=0, updFilter=false, updProgress={done:0,total:0};
 const NB_TAG='additional voice';
@@ -2190,6 +2232,7 @@ function repoList(tab){
     list=list.filter(p=>!p.inst && !ins.has(p.n.toLowerCase())); }
   if(repoQuery && tab!=='discover'){ const q=repoQuery.toLowerCase();   // discover searches GitHub on Enter, not live
     list=list.filter(p=>(p.n+' '+p.a+' '+(p.tags||[]).join(' ')+' '+(p.d||'')).toLowerCase().includes(q)); }
+  if(typeFilter.size<TYPE_ORDER.length && tab==='available'){ list=list.filter(p=>{ const f=(p.facets||[]); return [...typeFilter].some(t=>f.includes(t)); }); }
   if(tagFilter.size && tab!=='discover'){ list=list.filter(p=>{ const t=entryTags(p); return [...tagFilter].every(f=>t.includes(f)); }); }
   if(updFilter && tab==='installed'){ list=list.filter(p=>p.upd_avail); }   // "updates available" facet
   return list.sort(sortCmp);
@@ -3185,13 +3228,14 @@ function srcBar(tab){
   return `<div class="srcbar"><span class="lbl">sources</span>${chips}<span class="srcchip add" data-addsrc="1">+ add</span>${hideInst}${extra}</div>`;
 }
 function renderRepo(){
-  const v=document.getElementById('repoview'); const tab=repoTab;
+  const v=document.getElementById('repoview');
+  if(repoTab==='discover') repoTab='available';   // discover tab retired — nornslist provides the full catalog
+  const tab=repoTab;
   v.classList.remove('collapsed');
   const _cnt=(st,n)=>(st==='ready'||st==='demo')?n:'…';   // show '…' while a source is still loading/errored, not a misleading 0
   const tabs=`<div class="rd-tabs">
         <button class="rd-tab ${tab==='installed'?'on':''}" data-rt="installed">installed <span class="ct">${_cnt(scriptsState.installed,REPO.installed.length)}</span></button>
-        <button class="rd-tab ${tab==='available'?'on':''}" data-rt="available">available <span class="ct">${_cnt(scriptsState.catalog,REPO.available.filter(p=>catFilter.has(p.cat||'community')).length)}</span></button>
-        <button class="rd-tab ${tab==='discover'?'on':''}" data-rt="discover">discover <span class="ct">${ghConnected?REPO.discover.length:'⌗'}</span></button>
+        <button class="rd-tab ${tab==='available'?'on':''}" data-rt="available">available <span class="ct">${_cnt(scriptsState.catalog,repoBaseList('available').length)}</span></button>
         <button class="rd-toggle" id="rd-toggle" title="hide / show search"><svg viewBox="0 0 32 32"><path d="M16 21L6 11l2.1-2.1L16 16.8 23.9 8.9 26 11z"/></svg></button>
       </div>`;
 
@@ -3225,63 +3269,48 @@ function renderRepo(){
   }
 
   const list=repoList(tab);
-  const allBtn = tab==='installed'
-    ? `<button class="rd-pill-btn" data-act="refresh"><svg viewBox="0 0 32 32"><path d="${I.refresh}"/></svg>Update all</button>`
-    : tab==='discover'
-    ? `<button class="rd-pill-btn" data-act="search"><svg viewBox="0 0 32 32"><path d="${I.refresh}"/></svg>Refresh</button>`
-    : `<button class="rd-pill-btn" data-act="refresh"><svg viewBox="0 0 32 32"><path d="${I.refresh}"/></svg>Refresh all</button>`;
-  const ph = tab==='discover' ? 'search github for norns scripts — press enter ↵' : 'search scripts, authors, tags…';
-  const opts=[['recent','recent'],['updated','last updated'],['name','name a–z'],['author','author']].concat(tab==='discover'?[['stars','stars']]:[]);
+  const allBtn = `<button class="rd-pill-btn" data-act="refresh"><svg viewBox="0 0 32 32"><path d="${I.refresh}"/></svg>${tab==='installed'?'Update all':'Refresh all'}</button>`;
+  const opts=[['recent','recent'],['updated','last updated'],['name','name a–z'],['author','author'],['stars','stars']];
   const sortSel=`<select class="rd-sort" id="rd-sort" title="sort">${opts.map(o=>`<option value="${o[0]}" ${sortMode===o[0]?'selected':''}>sort: ${o[1]}</option>`).join('')}</select>`;
-  const discLabel = _discUser ? `<button class="rd-pill-btn" id="disc-clearuser" title="back to all norns">← @${esc(_discUser)}'s norns repos${ghConnected?'':' (known)'}</button>` : 'norns repos on github';
-  const head = `<div class="rd-cathead"><span class="nm rd-count">${list.length} ${tab==='discover'?'results':'scripts'}</span>${tab!=='installed'?`<span>${tab==='discover'?discLabel:'from '+availSources().filter(s=>!SRC[s].auth||ghConnected).length+' sources'}</span>`:''}<span class="line"></span><button class="selall-btn" data-selall>select all</button></div>`;
-  const totalPages = tab==='discover' ? Math.max(1,Math.ceil(_discTotal/DISC_PER)) : 1;  // kept only to disable 'next' on the last page
-  const pager = (tab==='discover' && _discTotal>0) ? `<div class="rd-pager">
-      <button class="fv-btn" data-page="${_discPage-1}" ${_discPage<=1?'disabled':''}>‹ prev</button>
-      <span class="pginfo">page ${_discPage}</span>
-      <button class="fv-btn" data-page="${_discPage+1}" ${_discPage>=totalPages?'disabled':''}>next ›</button></div>` : '';
+  const filterDD = tab==='available' ? filterDropdownsHTML() : '';
+  const hideInstBtn = tab!=='installed' ? `<button class="rd-pill-btn ${hideInstalled?'on':''}" id="hide-inst-btn" title="hide scripts already installed">${hideInstalled?'✓ ':''}hide installed</button>` : '';
+  const head = `<div class="rd-cathead"><span class="nm rd-count">${list.length} scripts</span>${tab==='available'?'<span>via nornslist</span>':''}<span class="line"></span><button class="selall-btn" data-selall>select all</button></div>`;
   v.innerHTML=`<div class="rd-top">${tabs}
       <div class="rd-toolbar">
-        ${tab!=='discover'?`<label class="rd-search"><svg viewBox="0 0 32 32"><path d="${I.search}"/></svg><input id="rd-q" placeholder="${ph}"></label>`:''}
-        ${sortSel}${allBtn}
-        ${tab!=='discover'?`<button class="rd-filtertoggle" id="rd-filttog">⚲ filters${(srcFilter.size<SRC_ORDER.length||tagFilter.size)?' <span class="fct">'+(tagFilter.size+(SRC_ORDER.length-srcFilter.size))+'</span>':''}</button>`:''}
-      </div><div class="rd-filters${filtersOpen?' open':''}" id="rd-filters">${tab==='installed'?'':(tab==='available'?catBar():srcBar(tab))}${tab!=='discover'?tagBar(tab):''}</div></div>
-    <div class="rd-scroll"><div>${head}${tab==='installed'?updStripHTML():''}<div class="rd-grid">${list.map(p=>repoCard(p,tab)).join('')||`<div class="gh-empty"><p>nothing here yet.</p></div>`}</div>${pager}</div></div>
+        <label class="rd-search"><svg viewBox="0 0 32 32"><path d="${I.search}"/></svg><input id="rd-q" placeholder="search scripts, authors, tags…"></label>
+        ${filterDD}${sortSel}${hideInstBtn}${allBtn}
+      </div></div>
+    <div class="rd-scroll"><div>${head}${tab==='installed'?updStripHTML():''}<div class="rd-grid">${list.map(p=>repoCard(p,tab)).join('')||`<div class="gh-empty"><p>nothing here yet.</p></div>`}</div></div></div>
     <div class="bulkbar" id="bulkbar"></div>`;
   v.querySelectorAll('[data-rt]').forEach(b=>b.onclick=()=>{repoTab=b.dataset.rt;repoQuery='';_discUser=null;selection.clear();renderRepo();});
   v.querySelectorAll('[data-selall]').forEach(b=>b.onclick=()=>{
     const cur=repoList(repoTab); const allSel=cur.length&&cur.every(p=>selection.has(p.n));
     cur.forEach(p=>allSel?selection.delete(p.n):selection.add(p.n)); updateGrid(); updateBulkBar();
   });
-  v.querySelectorAll('[data-src]').forEach(c=>c.onclick=()=>{
-    const id=c.dataset.src; srcFilter.has(id)?srcFilter.delete(id):srcFilter.add(id); renderRepo();
-  });
-  v.querySelectorAll('[data-cat]').forEach(c=>c.onclick=()=>{
-    const id=c.dataset.cat; catFilter.has(id)?catFilter.delete(id):catFilter.add(id); renderRepo();
-  });
-  v.querySelectorAll('[data-tag]').forEach(c=>c.onclick=()=>{ const t=c.dataset.tag; tagFilter.has(t)?tagFilter.delete(t):tagFilter.add(t); renderRepo(); });
-  v.querySelectorAll('[data-tagclear]').forEach(c=>c.onclick=()=>{ tagFilter.clear(); renderRepo(); });
-  const ft=document.getElementById('rd-filttog'); if(ft) ft.onclick=()=>{ filtersOpen=!filtersOpen; const f=document.getElementById('rd-filters'); if(f) f.classList.toggle('open',filtersOpen); };
-  v.querySelectorAll('[data-addsrc]').forEach(c=>c.onclick=openCfg);
+  // filter dropdowns (source / type / tags): toggle open + check to filter live
+  v.querySelectorAll('.dd-pop').forEach(p=>p.addEventListener('click',e=>e.stopPropagation()));
+  v.querySelectorAll('.dd > .dd-btn').forEach(btn=>btn.addEventListener('click',e=>{
+    e.stopPropagation(); const dd=btn.parentElement, was=dd.classList.contains('open');
+    ddCloseAll(); if(!was) dd.classList.add('open');
+  }));
+  v.querySelectorAll('.dd [data-ddval]').forEach(cb=>cb.addEventListener('change',()=>{
+    const dd=cb.closest('.dd'), key=dd.dataset.dd, set=DD_SETS[key];
+    cb.checked?set.add(cb.dataset.ddval):set.delete(cb.dataset.ddval);
+    const partial = key==='tag' ? set.size>0 : [...dd.querySelectorAll('[data-ddval]')].some(x=>!x.checked);
+    dd.querySelector('.dd-btn').classList.toggle('act',partial);
+    updateGrid();
+  }));
+  document.removeEventListener('click',ddCloseAll); document.addEventListener('click',ddCloseAll);
+  const hib=document.getElementById('hide-inst-btn'); if(hib) hib.onclick=()=>{ hideInstalled=!hideInstalled; renderRepo(); };
   const q=document.getElementById('rd-q');
-  if(q){
-    if(tab==='discover'){ q.value=_discQuery; q.addEventListener('keydown',e=>{ if(e.key==='Enter'){ _discUser=null; ghSearch(q.value,1); } }); }
-    else { q.value=repoQuery; q.addEventListener('input',e=>{repoQuery=e.target.value;updateGrid();}); }
-  }
+  if(q){ q.value=repoQuery; q.addEventListener('input',e=>{repoQuery=e.target.value;updateGrid();}); }
   const ss=document.getElementById('rd-sort'); if(ss) ss.addEventListener('change',e=>{sortMode=e.target.value;updateGrid();});
   v.querySelectorAll('[data-act]').forEach(b=>b.onclick=()=>{
-    if(b.dataset.act==='search'){ const i=document.getElementById('rd-q'); _discUser=null; ghSearch(i?i.value:'',1); }
-    else if(repoTab==='installed'){ updateAllBehind(); }   // "Update all" = update the scripts found behind
+    if(repoTab==='installed'){ updateAllBehind(); }   // "Update all" = update the scripts found behind
     else { const t=b.innerHTML; b.innerHTML='✓ done'; setTimeout(()=>{b.innerHTML=t;},900); }
   });
   wireUpdStrip(v);   // update checking is manual only — the "check for updates" button is the sole multi-script trigger
-  v.querySelectorAll('[data-hideknown]').forEach(c=>c.onclick=()=>{ discHideKnown=!discHideKnown; renderRepo(); });
-  v.querySelectorAll('[data-hideinst]').forEach(c=>c.onclick=()=>{ hideInstalled=!hideInstalled; renderRepo(); });
-  const dcu=document.getElementById('disc-clearuser'); if(dcu) dcu.onclick=()=>{ _discUser=null; _discLoaded=false; ghSearch('',1); };
-  v.querySelectorAll('[data-minerepos]').forEach(c=>c.onclick=()=>{ discMineOnly=!discMineOnly; _discUser=null; _discLoaded=false; ghSearch('',1); });
-  v.querySelectorAll('[data-page]').forEach(b=>b.onclick=()=>{ const p=+b.dataset.page; if(p>=1 && !b.disabled) ghSearch(_discQuery,p); });
   wireCards(v,list,tab); updateBulkBar();
-  if(tab==='discover' && ghConnected && !_discLoaded) ghSearch('');   // default: "norns script", not "sequencer"
   const tg=document.getElementById('rd-toggle'); if(tg) tg.onclick=()=>v.classList.toggle('collapsed');
   const sc=v.querySelector('.rd-scroll'); let lst=0;
   if(sc) sc.addEventListener('scroll',()=>{ const t=sc.scrollTop;
