@@ -1456,7 +1456,7 @@ function applyRealInstalled(names, entries){
   const byNorm={}; entries.forEach(e=>{ byNorm[norm(e.n)]=e; });
   REPO.installed = names.slice().sort().map(nm=>{
     const e=byNorm[norm(nm)];
-    if(e){ e.inst=1; e.dir=nm; return {...e, inst:1, dir:nm}; }   // dir = the real on-disk folder name
+    if(e){ e.inst=1; e.dir=nm; return e; }   // SAME object as the catalog entry so update flags sync to the unified view
     return { n:nm, a:'(on device)', d:'installed script — not in the community catalog', tags:[], srcs:['community'], inst:1, local:1, dir:nm };
   });
   INSTALLED_ENGINES={};                            // engines actually present, derived from installed scripts
@@ -2179,10 +2179,12 @@ function bulkInstall(){
   } else go();
 }
 function repoBaseList(tab){
-  let list=REPO[tab];
-  if(tab==='available'){ list=list.filter(p=>catFilter.has(p.cat||'community')); }   // 3 source categories
-  else if(tab!=='installed'){ const av=availSources(); list=list.filter(p=>p.srcs.some(s=>av.includes(s)&&srcFilter.has(s))); }
-  return list;
+  if(tab==='installed') return REPO.installed||[];   // legacy/internal callers only
+  // Unified view: the catalog (source-filtered) + any installed scripts that aren't
+  // in the catalog (local-only), so one list covers browse + manage + update.
+  const list=(REPO.available||[]).filter(p=>catFilter.has(p.cat||'community'));
+  const localOnly=(REPO.installed||[]).filter(p=>p.local);
+  return list.concat(localOnly);
 }
 function sortCmp(a,b){
   // base = ascending for the field; sortDir flips it. So 'last updated' + desc =
@@ -2260,15 +2262,16 @@ function tagBar(tab){
   return `<div class="rd-tagbar" style="display:flex;flex-wrap:wrap;gap:6px;padding:8px 12px 2px;align-items:center">${clear}${tags.slice(0,48).map(([t,c])=>chip(t,c,tagFilter.has(t))).join('')}</div>`;
 }
 function repoList(tab){
-  let list=repoBaseList(tab).slice();
-  if(tab==='discover' && discHideKnown && !_discUser){ const k=knownNames(); list=list.filter(p=>!k.has(p.n.toLowerCase())); }
-  if(hideInstalled && tab!=='installed'){ const ins=new Set(REPO.installed.map(p=>p.n.toLowerCase()));   // "hide installed" — applies to available + discover
+  // "updates only" is a cross-source view of everything installed that's behind —
+  // it bypasses the source/hide-installed filters so the count matches what's shown.
+  let list=(updFilter ? (REPO.installed||[]) : repoBaseList(tab)).slice();
+  if(hideInstalled && !updFilter){ const ins=new Set(REPO.installed.map(p=>p.n.toLowerCase()));
     list=list.filter(p=>!p.inst && !ins.has(p.n.toLowerCase())); }
-  if(repoQuery && tab!=='discover'){ const q=repoQuery.toLowerCase();   // discover searches GitHub on Enter, not live
+  if(repoQuery){ const q=repoQuery.toLowerCase();
     list=list.filter(p=>(p.n+' '+p.a+' '+(p.tags||[]).join(' ')+' '+(p.d||'')).toLowerCase().includes(q)); }
-  if(typeFilter.size<TYPE_ORDER.length && tab==='available'){ list=list.filter(p=>{ const f=(p.facets||[]); return [...typeFilter].some(t=>f.includes(t)); }); }
-  if(tagFilter.size && tab!=='discover'){ list=list.filter(p=>{ const t=entryTags(p); return [...tagFilter].every(f=>t.includes(f)); }); }
-  if(updFilter && tab==='installed'){ list=list.filter(p=>p.upd_avail); }   // "updates available" facet
+  if(typeFilter.size<TYPE_ORDER.length){ list=list.filter(p=>{ const f=(p.facets||[]); return [...typeFilter].some(t=>f.includes(t)); }); }
+  if(tagFilter.size){ list=list.filter(p=>{ const t=entryTags(p); return [...tagFilter].every(f=>t.includes(f)); }); }
+  if(updFilter){ list=list.filter(p=>p.upd_avail); }   // "updates available" facet
   return list.sort(sortCmp);
 }
 function updateGrid(){
@@ -3018,7 +3021,7 @@ async function reinstallFlow(p, btn){
    every installed git repo in parallel and reports which are behind upstream.
    No GitHub token (kept browser-only by design); works on any git host. */
 function clearUpdAvail(name){ const p=REPO.installed.find(x=>norm(x.dir||x.n)===norm(name)); if(p) p.upd_avail=0;
-  if(repoTab==='installed'){ refreshUpdStrip(); updateGrid(); } }   // updateGrid so the card flips Update→Reinstall + drops the badge
+  refreshUpdStrip(); updateGrid(); }   // updateGrid so the card flips Update→Remove + drops the badge
 function updStripHTML(){
   if(!HAS_BACKEND) return '';
   const N=REPO.installed.filter(p=>p.upd_avail).length;
@@ -3032,7 +3035,8 @@ function updStripHTML(){
     const chip = N
       ? `<button class="upd-chip ${updFilter?'on':''}" data-updfilter="1">⬆ updates available (${N})</button>`
       : `<span class="upd-none">✓ up to date${updSource==='github'?' (vs GitHub)':' (vs nornslist)'}</span>`;
-    return `<div class="upd-strip">${chip}<button class="upd-recheck" data-updcheck="1">↻ re-check</button>${ghBtn}</div>`;
+    const updAll = N ? `<button class="upd-recheck" data-updall="1" style="border-color:var(--accent2);color:var(--accent2)">⬆ update all (${N})</button>` : '';
+    return `<div class="upd-strip">${chip}${updAll}<button class="upd-recheck" data-updcheck="1">↻ re-check</button>${ghBtn}</div>`;
   }
   // no check run yet this session — manual trigger only (no auto-checking)
   return `<div class="upd-strip"><button class="upd-chip" data-updcheck="1">↻ check for updates</button>${ghBtn}</div>`;
@@ -3041,9 +3045,10 @@ function wireUpdStrip(root){
   (root||document).querySelectorAll('[data-updfilter]').forEach(b=>b.onclick=()=>{updFilter=!updFilter;renderRepo();});
   (root||document).querySelectorAll('[data-updcheck]').forEach(b=>b.onclick=()=>checkUpdates(true));
   (root||document).querySelectorAll('[data-updcheck-gh]').forEach(b=>b.onclick=()=>checkUpdatesGithub(true));
+  (root||document).querySelectorAll('[data-updall]').forEach(b=>b.onclick=()=>updateAllBehind());
 }
 function refreshUpdStrip(){    // in-place refresh of strip + badges only — NO updateGrid (would refire
-  const v=document.getElementById('repoview'); if(!v||repoTab!=='installed') return;  // every card's giturl)
+  const v=document.getElementById('repoview'); if(!v) return;  // every card's giturl)
   const html=updStripHTML(); const cur=v.querySelector('.upd-strip');
   const tmp=document.createElement('div'); tmp.innerHTML=html; const nu=tmp.firstElementChild;
   if(cur){ if(nu) cur.replaceWith(nu); else cur.remove(); }
@@ -3051,7 +3056,7 @@ function refreshUpdStrip(){    // in-place refresh of strip + badges only — NO
   wireUpdStrip(v); applyUpdBadges();
 }
 function applyUpdBadges(){     // toggle ↻update badges on already-rendered installed cards — no re-render, no fetch
-  const v=document.getElementById('repoview'); if(!v||repoTab!=='installed') return;
+  const v=document.getElementById('repoview'); if(!v) return;
   const byName={}; v.querySelectorAll('.rd-grid .card[data-pn]').forEach(c=>{ byName[c.getAttribute('data-pn')]=c; });
   REPO.installed.forEach(p=>{
     const card=byName[p.dir||p.n]; if(!card) return;   // getAttribute returns the decoded name
@@ -3241,9 +3246,12 @@ function repoCard(p,tab){
   const badge = st==='update'   ? `<span class="okb upd"><svg viewBox="0 0 32 32"><path d="${I.refresh}"/></svg>update</span>`
               : st==='installed'? `<span class="okb"><svg viewBox="0 0 32 32"><path d="${I.check}"/></svg>installed</span>` : '';
   const lock=p.priv?`<span class="lock">private</span>`:'';
-  const actions = (tab==='installed')
-    ? `${p.upd_avail?'<button class="btn btn-update">Update</button>':'<button class="btn btn-reinstall">Reinstall</button>'}<button class="btn btn-remove">Remove</button>`
-    : (p.inst?`<button class="btn btn-remove">Remove</button>`:`<button class="btn btn-install">${tab==='discover'?'Clone':'Install'}</button>`);
+  // unified actions: update (if behind) + remove for installed; install otherwise
+  const actions = p.upd_avail
+    ? `<button class="btn btn-update">Update</button><button class="btn btn-remove">Remove</button>`
+    : p.inst
+    ? `<button class="btn btn-remove">Remove</button>`
+    : `<button class="btn btn-install">Install</button>`;
   const pills=(p.tags||[]).map(t=>`<span class="pill" data-tag="${t}">${t}</span>`).join('');
   const doc=(p.doc||p.docU)?`<span class="lnk" title="documentation"><svg viewBox="0 0 32 32"><path d="${I.book}"/></svg></span>`:'';
   const disc=(p.disc||p.discU)?`<span class="lnk" title="discussion"><svg viewBox="0 0 32 32"><path d="${I.chat}"/></svg></span>`:'';
@@ -3295,9 +3303,10 @@ function renderRepo(){
   const tab=repoTab;
   v.classList.remove('collapsed');
   const _cnt=(st,n)=>(st==='ready'||st==='demo')?n:'…';   // show '…' while a source is still loading/errored, not a misleading 0
+  const _nUpd=REPO.installed.filter(p=>p.upd_avail).length;
   const tabs=`<div class="rd-tabs">
-        <button class="rd-tab ${tab==='installed'?'on':''}" data-rt="installed">installed <span class="ct">${_cnt(scriptsState.installed,REPO.installed.length)}</span></button>
-        <button class="rd-tab ${tab==='available'?'on':''}" data-rt="available">available <span class="ct">${_cnt(scriptsState.catalog,repoBaseList('available').length)}</span></button>
+        <span class="rd-tab on" style="cursor:default">scripts <span class="ct">${_cnt(scriptsState.catalog,repoBaseList('available').length)}</span></span>
+        ${REPO.installed.length?`<span class="rd-tab" style="cursor:default;color:var(--muted);box-shadow:none">${REPO.installed.length} installed${_nUpd?` · <b style="color:var(--accent2)">${_nUpd} update${_nUpd>1?'s':''}</b>`:''}</span>`:''}
         <button class="rd-toggle" id="rd-toggle" title="hide / show search"><svg viewBox="0 0 32 32"><path d="M16 21L6 11l2.1-2.1L16 16.8 23.9 8.9 26 11z"/></svg></button>
       </div>`;
 
@@ -3317,21 +3326,18 @@ function renderRepo(){
 
   // Loading / error state for the current source — never render an empty grid or a
   // "0 scripts" count as if it were real (installed=device, available=catalog).
-  const tabState = tab==='installed' ? scriptsState.installed
-                 : tab==='available' ? scriptsState.catalog : 'ready';
+  const tabState = scriptsState.catalog;
   if(tabState==='loading' || tabState==='error'){
-    const what = tab==='installed' ? 'installed scripts' : 'catalog';
     const strip = tabState==='loading'
-      ? `<div class="upd-strip"><span class="ispin"></span><span>loading ${what}…</span><span class="upd-bar"><span class="upd-fill indet"></span></span></div>`
-      : `<div class="upd-strip err"><span>⚠ ${tab==='installed'?'couldn’t reach ingenue on the device':'catalog failed to load'}</span><button class="upd-recheck" data-reload="1">↻ retry</button></div>`;
+      ? `<div class="upd-strip"><span class="ispin"></span><span>loading catalog…</span><span class="upd-bar"><span class="upd-fill indet"></span></span></div>`
+      : `<div class="upd-strip err"><span>⚠ catalog failed to load</span><button class="upd-recheck" data-reload="1">↻ retry</button></div>`;
     v.innerHTML=`<div class="rd-top">${tabs}</div><div class="rd-scroll"><div>${strip}</div></div>`;
-    v.querySelectorAll('[data-rt]').forEach(b=>b.onclick=()=>{repoTab=b.dataset.rt;repoQuery='';_discUser=null;selection.clear();renderRepo();});
     v.querySelectorAll('[data-reload]').forEach(b=>b.onclick=()=>loadScripts());
     return;
   }
 
   const list=repoList(tab);
-  const allBtn = `<button class="rd-pill-btn" data-act="refresh"><svg viewBox="0 0 32 32"><path d="${I.refresh}"/></svg>${tab==='installed'?'Update all':'Refresh all'}</button>`;
+  const allBtn = `<button class="rd-pill-btn" data-act="refresh"><svg viewBox="0 0 32 32"><path d="${I.refresh}"/></svg>Refresh all</button>`;
   const opts=[['updated','last updated'],['name','name'],['author','author'],['stars','stars']];
   const sortSel=`<select class="rd-sort" id="rd-sort" title="sort by">${opts.map(o=>`<option value="${o[0]}" ${sortMode===o[0]?'selected':''}>sort: ${o[1]}</option>`).join('')}</select>`
     +`<button class="rd-pill-btn" id="rd-sortdir" style="flex:0 0 auto;min-width:0;padding:7px 12px;font-size:15px;line-height:1" title="${sortDir==='asc'?'ascending — click for descending':'descending — click for ascending'}">${sortDir==='asc'?'↑':'↓'}</button>`;
@@ -3343,7 +3349,7 @@ function renderRepo(){
         <label class="rd-search"><svg viewBox="0 0 32 32"><path d="${I.search}"/></svg><input id="rd-q" placeholder="search scripts, authors, tags…"></label>
         ${filterDD}${sortSel}${hideInstBtn}${allBtn}
       </div></div>
-    <div class="rd-scroll"><div>${head}${tab==='installed'?updStripHTML():''}<div class="rd-grid">${list.map(p=>repoCard(p,tab)).join('')||`<div class="gh-empty"><p>nothing here yet.</p></div>`}</div></div></div>
+    <div class="rd-scroll"><div>${head}${updStripHTML()}<div class="rd-grid">${list.map(p=>repoCard(p,tab)).join('')||`<div class="gh-empty"><p>nothing here yet.</p></div>`}</div></div></div>
     <div class="bulkbar" id="bulkbar"></div>`;
   v.querySelectorAll('[data-rt]').forEach(b=>b.onclick=()=>{repoTab=b.dataset.rt;repoQuery='';_discUser=null;selection.clear();renderRepo();});
   v.querySelectorAll('[data-selall]').forEach(b=>b.onclick=()=>{
@@ -3373,8 +3379,11 @@ function renderRepo(){
     if(repoTab==='installed'){ updateAllBehind(); }   // "Update all" = update the scripts found behind
     else { const t=b.innerHTML; b.innerHTML='✓ done'; setTimeout(()=>{b.innerHTML=t;},900); }
   });
-  wireUpdStrip(v);   // update checking is manual only — the "check for updates" button is the sole multi-script trigger
+  wireUpdStrip(v);
   wireCards(v,list,tab); updateBulkBar();
+  // Auto-run the fast (no-GitHub) update check once the device + catalog are ready,
+  // so the "updates available" filter + Update all are populated without a manual click.
+  if(HAS_BACKEND && scriptsState.installed==='ready' && !updCheckedAt && !updChecking) checkUpdates(false);
   const tg=document.getElementById('rd-toggle'); if(tg) tg.onclick=()=>v.classList.toggle('collapsed');
   const sc=v.querySelector('.rd-scroll'); let lst=0;
   if(sc) sc.addEventListener('scroll',()=>{ const t=sc.scrollTop;
