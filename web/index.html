@@ -258,6 +258,11 @@ button{font-family:inherit}
 .dd-opt:hover{background:color-mix(in srgb,var(--fg) 8%,transparent)}
 .dd-opt input{accent-color:var(--accent2);width:15px;height:15px;flex:0 0 auto}
 .dd-opt .ct{margin-left:auto;font-size:11px;color:var(--muted)}
+.dd-sep{height:1px;background:var(--trim);margin:5px 6px}
+.cathead-ic{border:0;background:transparent;color:var(--muted);cursor:pointer;padding:3px;display:inline-grid;place-items:center;border-radius:6px}
+.cathead-ic svg{width:14px;height:14px;fill:currentColor}
+.cathead-ic:hover{color:var(--fg);background:color-mix(in srgb,var(--fg) 9%,transparent)}
+.cathead-ic.spin svg{animation:isp .7s linear infinite}
 .rd-pager{display:flex;align-items:center;justify-content:center;gap:14px;padding:20px 10px 8px}
 .rd-pager .pginfo{font-size:12.5px;color:var(--muted)}
 .rd-scroll{flex:1;min-height:0;overflow-y:auto;overflow-x:hidden;padding:14px;-webkit-overflow-scrolling:touch}
@@ -2245,15 +2250,15 @@ const TYPE_ORDER=['script','mod','library','engine'];
 let typeFilter=new Set(TYPE_ORDER);
 // Generic multiselect dropdown. key wires to DD_SETS; opts=[{value,label,count}].
 const DD_SETS={src:catFilter,type:typeFilter,tag:tagFilter};
-function ddHTML(key,label,opts,sel){
+function ddHTML(key,label,opts,sel,footer){
   const sub=opts.filter(o=>sel.has(o.value)).length;
   const partial = key==='tag' ? sel.size>0 : (sub<opts.length);   // tags: blank=all, so any selection is "active"
   // No count in the button label — appending it (badge OR text) collapsed the button's
-  // width in both engines. The `.act` colored border signals an active filter; the
+  // width in both engines. The `.dd-on` colored border signals an active filter; the
   // per-option counts live inside the dropdown.
   const items=opts.map(o=>`<label class="dd-opt"><input type="checkbox" data-ddval="${esc(o.value)}" ${sel.has(o.value)?'checked':''}>${esc(o.label)}${o.count!=null?`<span class="ct">${o.count}</span>`:''}</label>`).join('')
     || `<div class="dd-opt" style="color:var(--muted)">none</div>`;
-  return `<span class="dd" data-dd="${key}"><button class="dd-btn ${partial?'dd-on':''}" type="button">${esc(label)}</button><div class="dd-pop">${items}</div></span>`;
+  return `<span class="dd" data-dd="${key}"><button class="dd-btn ${partial?'dd-on':''}" type="button">${esc(label)}</button><div class="dd-pop">${items}${footer||''}</div></span>`;
 }
 // The three Available-tab filter dropdowns, computed from the current catalog.
 function filterDropdownsHTML(){
@@ -2261,7 +2266,10 @@ function filterDropdownsHTML(){
   const sc={community:0,softlaunch:0,ghx:0,mine:0}; av.forEach(p=>{ const c=p.cat||'community'; if(c in sc) sc[c]++; });
   // 'my repos' only appears once a token is connected (and there's something to show)
   const srcOrder=CAT_ORDER.concat((ghConnected||sc.mine)?['mine']:[]);
-  const src=ddHTML('src','source',srcOrder.map(id=>({value:id,label:CAT_META[id][1],count:sc[id]})),catFilter);
+  // "hide installed" folds into the source dropdown — it's a 'what to show' toggle,
+  // and it keeps the toolbar to search + 3 filters + sort.
+  const srcFooter=`<div class="dd-sep"></div><label class="dd-opt"><input type="checkbox" id="dd-hideinst" ${hideInstalled?'checked':''}>hide installed</label>`;
+  const src=ddHTML('src','source',srcOrder.map(id=>({value:id,label:CAT_META[id][1],count:sc[id]})),catFilter,srcFooter);
   const tc={script:0,mod:0,library:0,engine:0}; av.forEach(p=>(p.facets||[]).forEach(f=>{ if(f in tc) tc[f]++; }));
   const type=ddHTML('type','type',TYPE_ORDER.map(t=>({value:t,label:t,count:tc[t]})),typeFilter);
   const tcount={}; av.forEach(p=>entryTags(p).forEach(t=>{ tcount[t]=(tcount[t]||0)+1; }));
@@ -3366,17 +3374,16 @@ function renderRepo(){
   }
 
   const list=repoList(tab);
-  const allBtn = `<button class="rd-pill-btn rd-icon" data-act="refresh" title="reload the catalog from nornslist"><svg viewBox="0 0 32 32"><path d="${I.refresh}"/></svg></button>`;
-  const opts=[['updated','last updated'],['name','name'],['author','author'],['stars','stars']];
-  const sortSel=`<select class="rd-sort" id="rd-sort" title="sort by">${opts.map(o=>`<option value="${o[0]}" ${sortMode===o[0]?'selected':''}>sort: ${o[1]}</option>`).join('')}</select>`
-    +`<button class="rd-pill-btn" id="rd-sortdir" style="flex:0 0 auto;min-width:0;padding:7px 12px;font-size:15px;line-height:1" title="${sortDir==='asc'?'ascending — click for descending':'descending — click for ascending'}">${sortDir==='asc'?'↑':'↓'}</button>`;
+  // sort: field + direction baked into single options (no separate toggle button)
+  const sopts=[['updated:desc','newest first'],['updated:asc','oldest first'],['name:asc','name A–Z'],['name:desc','name Z–A'],['stars:desc','most stars'],['author:asc','author A–Z']];
+  const curSort=sortMode+':'+sortDir;
+  const sortSel=`<select class="rd-sort" id="rd-sort" title="sort">${sopts.map(o=>`<option value="${o[0]}" ${curSort===o[0]?'selected':''}>${o[1]}</option>`).join('')}</select>`;
   const filterDD = tab==='available' ? filterDropdownsHTML() : '';
-  const hideInstBtn = tab!=='installed' ? `<button class="rd-pill-btn ${hideInstalled?'on':''}" id="hide-inst-btn" title="hide scripts already installed">${hideInstalled?'✓ ':''}hide installed</button>` : '';
-  const head = `<div class="rd-cathead"><span class="nm rd-count">${list.length} scripts</span>${tab==='available'?'<span>via nornslist</span>':''}<span class="line"></span><button class="selall-btn" data-selall>select all</button></div>`;
+  const head = `<div class="rd-cathead"><span class="nm rd-count">${list.length} scripts</span>${tab==='available'?'<span>via nornslist</span>':''}<span class="line"></span><button class="cathead-ic" data-act="refresh" title="reload the catalog from nornslist"><svg viewBox="0 0 32 32"><path d="${I.refresh}"/></svg></button><button class="selall-btn" data-selall>select all</button></div>`;
   v.innerHTML=`<div class="rd-top">${tabs}
       <div class="rd-toolbar">
         <label class="rd-search"><svg viewBox="0 0 32 32"><path d="${I.search}"/></svg><input id="rd-q" placeholder="search scripts, authors, tags…"></label>
-        <div class="rd-controls">${filterDD}${sortSel}${hideInstBtn}${allBtn}</div>
+        <div class="rd-controls">${filterDD}${sortSel}</div>
       </div></div>
     <div class="rd-scroll"><div>${head}${updStripHTML()}<div class="rd-grid">${list.map(p=>repoCard(p,tab)).join('')||`<div class="gh-empty"><p>nothing here yet.</p></div>`}</div></div></div>
     <div class="bulkbar" id="bulkbar"></div>`;
@@ -3399,15 +3406,12 @@ function renderRepo(){
     updateGrid();
   }));
   document.removeEventListener('click',ddCloseAll); document.addEventListener('click',ddCloseAll);
-  const hib=document.getElementById('hide-inst-btn'); if(hib) hib.onclick=()=>{ hideInstalled=!hideInstalled; renderRepo(); };
+  // "hide installed" now lives inside the source dropdown (a 'what to show' toggle)
+  const hib=document.getElementById('dd-hideinst'); if(hib) hib.addEventListener('change',()=>{ hideInstalled=hib.checked; updateGrid(); });
   const q=document.getElementById('rd-q');
   if(q){ q.value=repoQuery; q.addEventListener('input',e=>{repoQuery=e.target.value;updateGrid();}); }
-  const ss=document.getElementById('rd-sort'); if(ss) ss.addEventListener('change',e=>{sortMode=e.target.value;updateGrid();});
-  const sd=document.getElementById('rd-sortdir'); if(sd) sd.onclick=()=>{ sortDir=sortDir==='asc'?'desc':'asc'; renderRepo(); };
-  v.querySelectorAll('[data-act]').forEach(b=>b.onclick=()=>{
-    if(repoTab==='installed'){ updateAllBehind(); }   // "Update all" = update the scripts found behind
-    else { const t=b.innerHTML; b.innerHTML='✓ done'; setTimeout(()=>{b.innerHTML=t;},900); }
-  });
+  const ss=document.getElementById('rd-sort'); if(ss) ss.addEventListener('change',e=>{ const [f,d]=e.target.value.split(':'); sortMode=f; sortDir=d||'desc'; updateGrid(); });
+  v.querySelectorAll('[data-act="refresh"]').forEach(b=>b.onclick=()=>{ b.classList.add('spin'); loadCatalog().then(()=>{ b.classList.remove('spin'); updateGrid(); }); });
   wireUpdStrip(v);
   wireCards(v,list,tab); updateBulkBar();
   // Auto-run the fast (no-GitHub) update check once the device + catalog are ready,
