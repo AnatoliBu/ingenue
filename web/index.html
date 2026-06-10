@@ -2248,8 +2248,9 @@ function catBar(){
 // Structural TYPE facet (from nornslist): script / mod / library / engine.
 const TYPE_ORDER=['script','mod','library','engine'];
 let typeFilter=new Set(TYPE_ORDER);
-// Generic multiselect dropdown. key wires to DD_SETS; opts=[{value,label,count}].
-const DD_SETS={src:catFilter,type:typeFilter,tag:tagFilter};
+// Generic multiselect dropdown. key -> the live filter Set (looked up fresh so a
+// reassigned set is never stale); opts=[{value,label,count}].
+const ddSet=k=>k==='src'?catFilter:k==='type'?typeFilter:tagFilter;
 function ddHTML(key,label,opts,sel,footer){
   const sub=opts.filter(o=>sel.has(o.value)).length;
   const partial = key==='tag' ? sel.size>0 : (sub<opts.length);   // tags: blank=all, so any selection is "active"
@@ -2260,24 +2261,75 @@ function ddHTML(key,label,opts,sel,footer){
     || `<div class="dd-opt" style="color:var(--muted)">none</div>`;
   return `<span class="dd" data-dd="${key}"><button class="dd-btn ${partial?'dd-on':''}" type="button">${esc(label)}</button><div class="dd-pop">${items}${footer||''}</div></span>`;
 }
-// The three Available-tab filter dropdowns, computed from the current catalog.
+// The unified browse set with every filter applied EXCEPT the named facet — so each
+// dropdown's per-option counts reflect the OTHER active selections (faceted search).
+function filteredExcept(except){
+  let list=(REPO.available||[]).concat((REPO.installed||[]).filter(p=>p.local));
+  if(except!=='src') list=list.filter(p=>catFilter.has(p.cat||'community'));
+  if(except!=='hideinst' && hideInstalled){ const ins=new Set(REPO.installed.map(p=>p.n.toLowerCase()));
+    list=list.filter(p=>!p.inst && !ins.has(p.n.toLowerCase())); }
+  if(repoQuery){ const q=repoQuery.toLowerCase();
+    list=list.filter(p=>(p.n+' '+p.a+' '+(p.tags||[]).join(' ')+' '+(p.d||'')).toLowerCase().includes(q)); }
+  if(except!=='type' && typeFilter.size<TYPE_ORDER.length) list=list.filter(p=>{ const f=(p.facets||[]); return [...typeFilter].some(t=>f.includes(t)); });
+  if(except!=='tag' && tagFilter.size) list=list.filter(p=>{ const t=entryTags(p); return [...tagFilter].every(f=>t.includes(f)); });
+  return list;
+}
+// The three Available-tab filter dropdowns. Counts are faceted: each option shows how
+// many results it would yield given the OTHER active filters.
 function filterDropdownsHTML(){
-  const av=REPO.available||[];
-  const sc={community:0,softlaunch:0,ghx:0,mine:0}; av.forEach(p=>{ const c=p.cat||'community'; if(c in sc) sc[c]++; });
+  const baseSrc=filteredExcept('src');
+  const sc={community:0,softlaunch:0,ghx:0,mine:0}; baseSrc.forEach(p=>{ const c=p.cat||'community'; if(c in sc) sc[c]++; });
   // 'my repos' only appears once a token is connected (and there's something to show)
-  const srcOrder=CAT_ORDER.concat((ghConnected||sc.mine)?['mine']:[]);
-  // "hide installed" folds into the source dropdown — it's a 'what to show' toggle,
-  // and it keeps the toolbar to search + 3 filters + sort.
+  const srcOrder=CAT_ORDER.concat((ghConnected||sc.mine||catFilter.has('mine'))?['mine']:[]);
   const srcFooter=`<div class="dd-sep"></div><label class="dd-opt"><input type="checkbox" id="dd-hideinst" ${hideInstalled?'checked':''}>hide installed</label>`;
   const src=ddHTML('src','source',srcOrder.map(id=>({value:id,label:CAT_META[id][1],count:sc[id]})),catFilter,srcFooter);
-  const tc={script:0,mod:0,library:0,engine:0}; av.forEach(p=>(p.facets||[]).forEach(f=>{ if(f in tc) tc[f]++; }));
+  const baseType=filteredExcept('type');
+  const tc={script:0,mod:0,library:0,engine:0}; baseType.forEach(p=>(p.facets||[]).forEach(f=>{ if(f in tc) tc[f]++; }));
   const type=ddHTML('type','type',TYPE_ORDER.map(t=>({value:t,label:t,count:tc[t]})),typeFilter);
-  const tcount={}; av.forEach(p=>entryTags(p).forEach(t=>{ tcount[t]=(tcount[t]||0)+1; }));
+  const baseTag=filteredExcept('tag');
+  const tcount={}; baseTag.forEach(p=>entryTags(p).forEach(t=>{ tcount[t]=(tcount[t]||0)+1; }));
+  // keep any selected tags visible even if their faceted count is 0 in the current set
+  tagFilter.forEach(t=>{ if(!(t in tcount)) tcount[t]=0; });
   const topTags=Object.entries(tcount).sort((a,b)=>b[1]-a[1]).slice(0,24).map(([t,c])=>({value:t,label:t,count:c}));
   const tags=ddHTML('tag','tags',topTags,tagFilter);
   return src+type+tags;
 }
 function ddCloseAll(){ document.querySelectorAll('.dd.open').forEach(d=>d.classList.remove('open')); }
+// sort: emoji + short word, field+direction baked into the value
+const SORT_OPTS=[['updated:desc','🆕 newest'],['updated:asc','🕰 oldest'],['name:asc','🔠 A–Z'],['name:desc','🔠 Z–A'],['stars:desc','⭐ stars'],['author:asc','👤 author']];
+function controlsHTML(){
+  const cur=sortMode+':'+sortDir;
+  const sortSel=`<select class="rd-sort" id="rd-sort" title="sort">${SORT_OPTS.map(o=>`<option value="${o[0]}" ${cur===o[0]?'selected':''}>${o[1]}</option>`).join('')}</select>`;
+  return filterDropdownsHTML()+sortSel;
+}
+// Rebuild the filter controls (recomputes faceted counts) and re-open `openKey`.
+// Called lazily when a dropdown OPENS, so counts reflect the other live filters
+// without rebuilding the menu mid-toggle (which would feel janky on multi-select).
+function paintControls(openKey){
+  const v=document.getElementById('repoview'); if(!v) return;
+  const wrap=v.querySelector('.rd-controls'); if(!wrap) return;
+  wrap.innerHTML=controlsHTML();
+  if(openKey){ const dd=wrap.querySelector('.dd[data-dd="'+openKey+'"]'); if(dd) dd.classList.add('open'); }
+  wireControls(v);
+}
+function wireControls(v){
+  v.querySelectorAll('.dd-pop').forEach(p=>p.addEventListener('click',e=>e.stopPropagation()));
+  v.querySelectorAll('.dd > .dd-btn').forEach(btn=>btn.addEventListener('click',e=>{
+    e.stopPropagation(); const key=btn.parentElement.dataset.dd, willOpen=!btn.parentElement.classList.contains('open');
+    ddCloseAll();
+    if(willOpen) paintControls(key);   // reopen with fresh faceted counts
+  }));
+  v.querySelectorAll('.dd [data-ddval]').forEach(cb=>cb.addEventListener('change',()=>{
+    const dd=cb.closest('.dd'), key=dd.dataset.dd, set=ddSet(key);
+    cb.checked?set.add(cb.dataset.ddval):set.delete(cb.dataset.ddval);
+    const partial = key==='tag' ? set.size>0 : [...dd.querySelectorAll('[data-ddval]')].some(x=>!x.checked);
+    dd.querySelector('.dd-btn').classList.toggle('dd-on',partial);
+    updateGrid();   // no rebuild while toggling — counts refresh next time a menu opens
+  }));
+  document.removeEventListener('click',ddCloseAll); document.addEventListener('click',ddCloseAll);
+  const hib=document.getElementById('dd-hideinst'); if(hib) hib.addEventListener('change',()=>{ hideInstalled=hib.checked; updateGrid(); });
+  const ss=document.getElementById('rd-sort'); if(ss) ss.addEventListener('change',e=>{ const [f,d]=e.target.value.split(':'); sortMode=f; sortDir=d||'desc'; updateGrid(); });
+}
 // per-script update detection (installed tab). Default: fast diff vs nornslist's
 // published sha (no GitHub call). Secondary: live GitHub check for bleeding edge.
 let updChecking=false, updCheckedAt=0, updFilter=false, updProgress={done:0,total:0}, updSource='';
@@ -2312,7 +2364,8 @@ function updateGrid(){
   const v=document.getElementById('repoview'); const grid=v.querySelector('.rd-grid'); if(!grid) return;
   const tab=repoTab, list=repoList(tab);
   grid.innerHTML=list.map(p=>repoCard(p,tab)).join('')||`<div class="gh-empty"><p>nothing matches “${repoQuery}”.</p></div>`;
-  const cnt=v.querySelector('.rd-count'); if(cnt) cnt.textContent=list.length+(tab==='discover'?' results':' scripts');
+  const cnt=v.querySelector('.rd-count'); if(cnt) cnt.textContent=list.length+' scripts';
+  const tc=v.querySelector('.js-tabcount'); if(tc) tc.textContent=list.length;   // tab count tracks the filtered list too
   wireCards(v,list,tab); updateBulkBar();
 }
 /* --- install trust gate: warn for anything outside the built-in community catalog --- */
@@ -3342,7 +3395,7 @@ function renderRepo(){
   const _cnt=(st,n)=>(st==='ready'||st==='demo')?n:'…';   // show '…' while a source is still loading/errored, not a misleading 0
   const _nUpd=REPO.installed.filter(p=>p.upd_avail).length;
   const tabs=`<div class="rd-tabs">
-        <span class="rd-tab on" style="cursor:default">scripts <span class="ct">${_cnt(scriptsState.catalog,repoBaseList('available').length)}</span></span>
+        <span class="rd-tab on" style="cursor:default">scripts <span class="ct js-tabcount">${_cnt(scriptsState.catalog,repoList(tab).length)}</span></span>
         ${REPO.installed.length?`<span class="rd-tab" style="cursor:default;color:var(--muted);box-shadow:none">${REPO.installed.length} installed${_nUpd?` · <b style="color:var(--accent2)">${_nUpd} update${_nUpd>1?'s':''}</b>`:''}</span>`:''}
         <button class="rd-toggle" id="rd-toggle" title="hide / show search"><svg viewBox="0 0 32 32"><path d="M16 21L6 11l2.1-2.1L16 16.8 23.9 8.9 26 11z"/></svg></button>
       </div>`;
@@ -3374,16 +3427,11 @@ function renderRepo(){
   }
 
   const list=repoList(tab);
-  // sort: field + direction baked into single options (no separate toggle button)
-  const sopts=[['updated:desc','newest first'],['updated:asc','oldest first'],['name:asc','name A–Z'],['name:desc','name Z–A'],['stars:desc','most stars'],['author:asc','author A–Z']];
-  const curSort=sortMode+':'+sortDir;
-  const sortSel=`<select class="rd-sort" id="rd-sort" title="sort">${sopts.map(o=>`<option value="${o[0]}" ${curSort===o[0]?'selected':''}>${o[1]}</option>`).join('')}</select>`;
-  const filterDD = tab==='available' ? filterDropdownsHTML() : '';
   const head = `<div class="rd-cathead"><span class="nm rd-count">${list.length} scripts</span>${tab==='available'?'<span>via nornslist</span>':''}<span class="line"></span><button class="cathead-ic" data-act="refresh" title="reload the catalog from nornslist"><svg viewBox="0 0 32 32"><path d="${I.refresh}"/></svg></button><button class="selall-btn" data-selall>select all</button></div>`;
   v.innerHTML=`<div class="rd-top">${tabs}
       <div class="rd-toolbar">
         <label class="rd-search"><svg viewBox="0 0 32 32"><path d="${I.search}"/></svg><input id="rd-q" placeholder="search scripts, authors, tags…"></label>
-        <div class="rd-controls">${filterDD}${sortSel}</div>
+        <div class="rd-controls">${tab==='available'?controlsHTML():''}</div>
       </div></div>
     <div class="rd-scroll"><div>${head}${updStripHTML()}<div class="rd-grid">${list.map(p=>repoCard(p,tab)).join('')||`<div class="gh-empty"><p>nothing here yet.</p></div>`}</div></div></div>
     <div class="bulkbar" id="bulkbar"></div>`;
@@ -3392,26 +3440,10 @@ function renderRepo(){
     const cur=repoList(repoTab); const allSel=cur.length&&cur.every(p=>selection.has(p.n));
     cur.forEach(p=>allSel?selection.delete(p.n):selection.add(p.n)); updateGrid(); updateBulkBar();
   });
-  // filter dropdowns (source / type / tags): toggle open + check to filter live
-  v.querySelectorAll('.dd-pop').forEach(p=>p.addEventListener('click',e=>e.stopPropagation()));
-  v.querySelectorAll('.dd > .dd-btn').forEach(btn=>btn.addEventListener('click',e=>{
-    e.stopPropagation(); const dd=btn.parentElement, was=dd.classList.contains('open');
-    ddCloseAll(); if(!was) dd.classList.add('open');
-  }));
-  v.querySelectorAll('.dd [data-ddval]').forEach(cb=>cb.addEventListener('change',()=>{
-    const dd=cb.closest('.dd'), key=dd.dataset.dd, set=DD_SETS[key];
-    cb.checked?set.add(cb.dataset.ddval):set.delete(cb.dataset.ddval);
-    const partial = key==='tag' ? set.size>0 : [...dd.querySelectorAll('[data-ddval]')].some(x=>!x.checked);
-    dd.querySelector('.dd-btn').classList.toggle('dd-on',partial);
-    updateGrid();
-  }));
-  document.removeEventListener('click',ddCloseAll); document.addEventListener('click',ddCloseAll);
-  // "hide installed" now lives inside the source dropdown (a 'what to show' toggle)
-  const hib=document.getElementById('dd-hideinst'); if(hib) hib.addEventListener('change',()=>{ hideInstalled=hib.checked; updateGrid(); });
+  wireControls(v);   // dropdowns (faceted counts repaint on change) + sort
   const q=document.getElementById('rd-q');
   if(q){ q.value=repoQuery; q.addEventListener('input',e=>{repoQuery=e.target.value;updateGrid();}); }
-  const ss=document.getElementById('rd-sort'); if(ss) ss.addEventListener('change',e=>{ const [f,d]=e.target.value.split(':'); sortMode=f; sortDir=d||'desc'; updateGrid(); });
-  v.querySelectorAll('[data-act="refresh"]').forEach(b=>b.onclick=()=>{ b.classList.add('spin'); loadCatalog().then(()=>{ b.classList.remove('spin'); updateGrid(); }); });
+  v.querySelectorAll('[data-act="refresh"]').forEach(b=>b.onclick=()=>{ b.classList.add('spin'); loadCatalog().then(()=>{ b.classList.remove('spin'); renderRepo(); }); });
   wireUpdStrip(v);
   wireCards(v,list,tab); updateBulkBar();
   // Auto-run the fast (no-GitHub) update check once the device + catalog are ready,
