@@ -180,7 +180,7 @@ button{font-family:inherit}
 /* ============ repo manager view ============ */
 .repoview{flex:1;min-width:0;min-height:0;display:none;flex-direction:column;background:var(--bg);container-type:inline-size}
 .repoview.on{display:flex}
-.rd-top{flex:0 0 auto;background:var(--panel2);border-bottom:1px solid var(--trim);min-width:0}
+.rd-top{flex:0 0 auto;background:var(--panel2);border-bottom:1px solid var(--trim);min-width:0;position:relative;z-index:5}
 .rd-tabs{display:flex;gap:2px;padding:8px 12px 0;overflow:hidden}
 .rd-tab{appearance:none;border:0;background:transparent;cursor:pointer;font-size:13.5px;color:var(--muted);
   padding:7px 12px 9px;border-radius:8px 8px 0 0;display:flex;gap:6px;align-items:center;white-space:nowrap}
@@ -362,9 +362,9 @@ button{font-family:inherit}
 .rd-toggle:hover{background:color-mix(in srgb,var(--fg) 10%,transparent);color:var(--fg)}
 .rd-toggle svg{width:16px;height:16px;fill:currentColor;transition:transform .2s}
 .repoview.collapsed .rd-toggle svg{transform:rotate(180deg)}
-.rd-toolbar,.srcbar{transition:max-height .22s ease,opacity .15s ease,padding .22s ease;overflow:hidden;max-height:140px}
+.rd-toolbar,.srcbar{transition:max-height .22s ease,opacity .15s ease,padding .22s ease;max-height:140px}   /* overflow visible so filter dropdowns can escape; clipped only while collapsed */
 .rd-filters{transition:max-height .22s ease,opacity .15s ease;overflow:hidden;max-height:600px}   /* desktop: filters (sources + tags) collapse too, not just the search bar */
-.repoview.collapsed .rd-toolbar,.repoview.collapsed .srcbar,.repoview.collapsed .rd-filters{max-height:0;opacity:0;padding-top:0;padding-bottom:0}
+.repoview.collapsed .rd-toolbar,.repoview.collapsed .srcbar,.repoview.collapsed .rd-filters{max-height:0;opacity:0;overflow:hidden;padding-top:0;padding-bottom:0}
 
 /* cards are always expanded (rich view) */
 .card{cursor:default}
@@ -2192,13 +2192,13 @@ function sortCmp(a,b){
 function knownNames(){ const s=new Set(); REPO.installed.forEach(p=>s.add(p.n.toLowerCase()));
   REPO.available.forEach(p=>{ if(p.srcs.includes('community')) s.add(p.n.toLowerCase()); }); return s; }
 /* ===== B6: tag filter facet + dynamic "additional voice" (nb) tag ===== */
-let tagFilter=new Set(), filtersOpen=false, hideInstalled=false;
+let tagFilter=new Set(), filtersOpen=false, hideInstalled=true;   // default: hide already-installed scripts
 // Available-tab source CATEGORIES (from nornslist): the maiden/community catalog,
 // soft launch (on github + a lines thread, not yet on norns.community), and
 // github-exclusive (found only on github). All on by default.
 const CAT_META={community:['◉','norns.community','#DEB887'],softlaunch:['◐','soft launch','#c9a0ff'],ghx:['◯','gh exclusive','#7ee787'],mine:['★','my repos','#7fbfff']};
 const CAT_ORDER=['community','softlaunch','ghx'];   // 'mine' appended only when a token is connected
-let catFilter=new Set([...CAT_ORDER,'mine']);
+let catFilter=new Set(['community']);   // default: only the curated norns.community source engaged
 function catBar(){
   const counts={community:0,softlaunch:0,ghx:0};
   (REPO.available||[]).forEach(p=>{ const c=p.cat||'community'; if(c in counts) counts[c]++; });
