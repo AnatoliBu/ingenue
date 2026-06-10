@@ -2296,7 +2296,7 @@ function filterDropdownsHTML(){
 }
 function ddCloseAll(){ document.querySelectorAll('.dd.open').forEach(d=>d.classList.remove('open')); }
 // sort: emoji + short word, field+direction baked into the value
-const SORT_OPTS=[['updated:desc','🆕 newest'],['updated:asc','🕰 oldest'],['name:asc','🔠 A–Z'],['name:desc','🔠 Z–A'],['stars:desc','⭐ stars'],['author:asc','👤 author']];
+const SORT_OPTS=[['updated:desc','⬇️ date'],['updated:asc','⬆️ date'],['name:asc','⬆️ A–Z'],['name:desc','⬇️ Z–A'],['stars:desc','⭐ stars'],['author:asc','🎹 user']];
 function controlsHTML(){
   const cur=sortMode+':'+sortDir;
   const sortSel=`<select class="rd-sort" id="rd-sort" title="sort">${SORT_OPTS.map(o=>`<option value="${o[0]}" ${cur===o[0]?'selected':''}>${o[1]}</option>`).join('')}</select>`;
