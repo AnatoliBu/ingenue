@@ -186,8 +186,8 @@ button{font-family:inherit}
   padding:7px 12px 9px;border-radius:8px 8px 0 0;display:flex;gap:6px;align-items:center;white-space:nowrap}
 .rd-tab .ct{font-size:11px;background:var(--trim);color:var(--fg);border-radius:10px;padding:1px 7px}
 .rd-tab.on{color:var(--fg);font-weight:600;box-shadow:inset 0 -2px 0 var(--accent2)}
-.rd-toolbar{display:flex;gap:7px;align-items:center;padding:8px 12px 8px;min-width:0}
-.rd-search{flex:1;min-width:0;display:flex;align-items:center;gap:8px;background:var(--panel);border:1px solid var(--trim);
+.rd-toolbar{display:flex;gap:7px;align-items:center;padding:8px 12px 8px;min-width:0;flex-wrap:wrap}
+.rd-search{flex:1 1 200px;min-width:160px;display:flex;align-items:center;gap:8px;background:var(--panel);border:1px solid var(--trim);
   border-radius:9px;padding:7px 11px}
 .rd-search svg{width:15px;height:15px;fill:var(--muted);flex:0 0 auto}
 .rd-search input{flex:1;min-width:0;border:0;background:transparent;outline:none;font-size:14px;color:var(--fg)}
@@ -231,7 +231,8 @@ button{font-family:inherit}
   background-image:linear-gradient(45deg,transparent 50%,var(--muted) 50%),linear-gradient(135deg,var(--muted) 50%,transparent 50%);
   background-position:calc(100% - 14px) 50%,calc(100% - 9px) 50%;background-size:5px 5px,5px 5px;background-repeat:no-repeat}
 /* multiselect filter dropdowns (Source / Type / Tags) — replace the chip soup */
-.dd{position:relative;display:inline-block}
+.dd{position:relative;display:inline-block;flex:0 0 max-content}
+.dd-btn{min-width:max-content}
 .dd-btn{appearance:none;border:1px solid var(--trim);background:var(--panel);color:var(--fg);font:inherit;font-size:13px;
   padding:7px 24px 7px 12px;border-radius:9px;cursor:pointer;white-space:nowrap;display:inline-flex;align-items:center;gap:6px;
   background-image:linear-gradient(45deg,transparent 50%,var(--muted) 50%),linear-gradient(135deg,var(--muted) 50%,transparent 50%);
@@ -1366,7 +1367,8 @@ async function loadCatalog(){
     // merge known un-catalogued lib-deps (nb, …) so they're visible/installable
     // and resolve when a script requires them (traceDeps/runHeal look them up here)
     DEP_OVERLAY.forEach(o=>{ if(!entries.some(e=>norm(e.n)===norm(o.n))) entries.push({doc:0,disc:0,cat:'community',...o}); });
-    REPO.available = entries;
+    // ingenue is infra running ON the device (it self-updates) — never an install target
+    REPO.available = entries.filter(e=>norm(e.n||'')!=='ingenue');
     await loadMyRepos();                              // token-gated: fold in the user's own (public+private) repos
     scriptsState.catalog='ready';
     // The installed list loads first and INDEPENDENTLY (loadScripts → probeInstalled),
@@ -1397,7 +1399,7 @@ async function loadMyRepos(){
     const items=(await r.json()).items||[];
     const have=new Set(REPO.available.map(e=>norm(e.n)));
     items.forEach(it=>{
-      const nm=it.name||''; if(!nm || have.has(norm(nm))) return;   // skip dups already in the catalog
+      const nm=it.name||''; if(!nm || norm(nm)==='ingenue' || have.has(norm(nm))) return;   // skip ingenue + dups already in the catalog
       have.add(norm(nm));
       REPO.available.push({ n:nm, a:(it.owner||{}).login||me, d:it.description||'',
         tags:[], proj:it.html_url||'', upd:(it.pushed_at||'').slice(0,10),
@@ -2152,7 +2154,7 @@ function acceptAC(i){
 function hideAC(){ document.getElementById('ac').classList.remove('show'); acItems=[]; acIdx=-1; }
 
 /* ============ repo manager ============ */
-let repoTab='available', repoQuery='', sortMode='recent';
+let repoTab='available', repoQuery='', sortMode='updated', sortDir='desc';
 const selection=new Set();   // selected script names for bulk install/update
 function updateBulkBar(){
   const bar=document.getElementById('bulkbar'); if(!bar) return;
@@ -2183,11 +2185,15 @@ function repoBaseList(tab){
   return list;
 }
 function sortCmp(a,b){
-  if(sortMode==='name')    return a.n.localeCompare(b.n);
-  if(sortMode==='author')  return (a.a||'').localeCompare(b.a||'');
-  if(sortMode==='stars')   return (b.stars||0)-(a.stars||0);
-  if(sortMode==='updated') return (b.upd||'').localeCompare(a.upd||'');
-  return 0; // recent = source order
+  // base = ascending for the field; sortDir flips it. So 'last updated' + desc =
+  // newest first, 'stars' + desc = most first, 'name' + asc = a–z.
+  let r=0;
+  if(sortMode==='name')        r=(a.n||'').localeCompare(b.n||'');
+  else if(sortMode==='author') r=(a.a||'').localeCompare(b.a||'') || (a.n||'').localeCompare(b.n||'');
+  else if(sortMode==='stars')  r=(a.stars||0)-(b.stars||0);
+  else /* updated */           r=(a.upd||'').localeCompare(b.upd||'');
+  if(r===0) r=(a.n||'').localeCompare(b.n||'');   // stable tiebreak
+  return sortDir==='asc' ? r : -r;
 }
 function knownNames(){ const s=new Set(); REPO.installed.forEach(p=>s.add(p.n.toLowerCase()));
   REPO.available.forEach(p=>{ if(p.srcs.includes('community')) s.add(p.n.toLowerCase()); }); return s; }
@@ -3326,8 +3332,9 @@ function renderRepo(){
 
   const list=repoList(tab);
   const allBtn = `<button class="rd-pill-btn" data-act="refresh"><svg viewBox="0 0 32 32"><path d="${I.refresh}"/></svg>${tab==='installed'?'Update all':'Refresh all'}</button>`;
-  const opts=[['recent','recent'],['updated','last updated'],['name','name a–z'],['author','author'],['stars','stars']];
-  const sortSel=`<select class="rd-sort" id="rd-sort" title="sort">${opts.map(o=>`<option value="${o[0]}" ${sortMode===o[0]?'selected':''}>sort: ${o[1]}</option>`).join('')}</select>`;
+  const opts=[['updated','last updated'],['name','name'],['author','author'],['stars','stars']];
+  const sortSel=`<select class="rd-sort" id="rd-sort" title="sort by">${opts.map(o=>`<option value="${o[0]}" ${sortMode===o[0]?'selected':''}>sort: ${o[1]}</option>`).join('')}</select>`
+    +`<button class="rd-pill-btn" id="rd-sortdir" style="flex:0 0 auto;min-width:0;padding:7px 12px;font-size:15px;line-height:1" title="${sortDir==='asc'?'ascending — click for descending':'descending — click for ascending'}">${sortDir==='asc'?'↑':'↓'}</button>`;
   const filterDD = tab==='available' ? filterDropdownsHTML() : '';
   const hideInstBtn = tab!=='installed' ? `<button class="rd-pill-btn ${hideInstalled?'on':''}" id="hide-inst-btn" title="hide scripts already installed">${hideInstalled?'✓ ':''}hide installed</button>` : '';
   const head = `<div class="rd-cathead"><span class="nm rd-count">${list.length} scripts</span>${tab==='available'?'<span>via nornslist</span>':''}<span class="line"></span><button class="selall-btn" data-selall>select all</button></div>`;
@@ -3361,6 +3368,7 @@ function renderRepo(){
   const q=document.getElementById('rd-q');
   if(q){ q.value=repoQuery; q.addEventListener('input',e=>{repoQuery=e.target.value;updateGrid();}); }
   const ss=document.getElementById('rd-sort'); if(ss) ss.addEventListener('change',e=>{sortMode=e.target.value;updateGrid();});
+  const sd=document.getElementById('rd-sortdir'); if(sd) sd.onclick=()=>{ sortDir=sortDir==='asc'?'desc':'asc'; renderRepo(); };
   v.querySelectorAll('[data-act]').forEach(b=>b.onclick=()=>{
     if(repoTab==='installed'){ updateAllBehind(); }   // "Update all" = update the scripts found behind
     else { const t=b.innerHTML; b.innerHTML='✓ done'; setTimeout(()=>{b.innerHTML=t;},900); }
