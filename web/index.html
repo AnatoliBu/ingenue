@@ -2922,7 +2922,7 @@ async function classifyRepo(owner,name,branch,pushed){
           {headers:{...ghHeaders(),'Accept':'application/vnd.github.raw'}});
         if(fr.ok){ const blob=await fr.text();
           if(NORNS_FP.test(blob)) isNorns=true;
-          if(/nb:add_player/.test(blob)){ vProv.push('nb'); }
+          if(/nb:add_player\b/.test(blob)){ vProv.push('nb'); }
           else if(/nb:add_param|require[\s(]*['"][^'"]*nb\/lib/.test(blob)){ vUse.push('nb'); }
           (blob.match(/require[\s(]*['"]([A-Za-z0-9_.\-]+)\/lib/g)||[]).forEach(m=>{
             const lib=(m.match(/['"]([A-Za-z0-9_.\-]+)\/lib/)||[])[1];

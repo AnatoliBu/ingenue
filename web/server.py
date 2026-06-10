@@ -1878,7 +1878,7 @@ def analyze_dir(full, name):
     # Voice classification mirroring nornslist _detect_voices (parity fixtures in
     # nornslist tasks/test_voice_parity.py). provides = voices other scripts load.
     v_provides, v_uses = [], []
-    if re.search(r"nb:add_player", blob) or re.match(r"nb[_-]", name.lower()):
+    if re.search(r"nb:add_player\b", blob) or re.match(r"nb[_-]", name.lower()):
         v_provides.append("nb")
     elif nb_referenced and "nb" not in bundled:
         v_uses.append("nb")
