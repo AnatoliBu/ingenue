@@ -1852,7 +1852,7 @@ def analyze_dir(full, name):
     # [A-Za-z0-9_]+ class silently dropped those, so dotted deps never flagged for heal.
     # Also filter out anything the script bundles under its own lib/<X>/ — those require's
     # resolve locally and are not missing.
-    reqs = sorted(set(r for r in re.findall(r"require[\s(]+['\"]([A-Za-z0-9_.\-]+)/lib", blob)
+    reqs = sorted(set(r for r in re.findall(r"require[\s(]*['\"]([A-Za-z0-9_.\-]+)/lib", blob)
                       if r not in (name, "core") and r.strip(".") and r.lower() not in bundled))
     native = []
     if any(f.endswith("go.mod") for f in files): native.append("go")
@@ -1874,7 +1874,25 @@ def analyze_dir(full, name):
     # at_sea, etc.) self-resolve their require's and don't need the standalone
     # nb script installed — flagging them as needing nb was a recurring false
     # positive that drove agents to re-install nb-voice onto already-working setups.
-    nb_referenced = bool(re.search(r"require[\s(]+['\"]nb/|/nb/lib|nb_voice|nb:add", blob))
+    nb_referenced = bool(re.search(r"require[\s(]*['\"]nb/|/nb/lib|nb_voice|nb:add", blob))
+    # Voice classification mirroring nornslist _detect_voices (parity fixtures in
+    # nornslist tasks/test_voice_parity.py). provides = voices other scripts load.
+    v_provides, v_uses = [], []
+    if re.search(r"nb:add_player", blob) or re.match(r"nb[_-]", name.lower()):
+        v_provides.append("nb")
+    elif nb_referenced and "nb" not in bundled:
+        v_uses.append("nb")
+    for lib in reqs:
+        if lib in ("mx.samples", "mx.synths"):
+            v_uses.append(lib)
+    has_top_script = any("/" not in f and f.endswith(".lua") for f in files)
+    if self_engines and not has_top_script:
+        v_provides.append("sc-engine")
+    if missing_engines or [e for e in engines if e.lower() not in self_engines]:
+        v_uses.append("sc-engine")
+    voices = {"provides": sorted(set(v_provides)),
+              "uses": sorted(set(u for u in v_uses if u not in v_provides))}
+    voices["systems"] = sorted(set(voices["provides"]) | set(voices["uses"]))
     vreq_m = _NORNS_REQUIRED_RE.search(blob)
     vreq = int(vreq_m.group(1)) if vreq_m else None
     rep = {
@@ -1894,7 +1912,7 @@ def analyze_dir(full, name):
         "requires_scripts": reqs,
         "engines": engines,
         "missing_engines": missing_engines,              # engine.name targets not installed on device
-        "nb": nb_referenced and "nb" not in bundled,
+        "voices": voices,                                # {provides,uses,systems} — voice role classification
         "bundled_libs": sorted(bundled),                 # for transparency in the UI/debug
         "native": sorted(set(native)),
         # Hint: download URLs that point at another script's github releases.
@@ -1910,7 +1928,7 @@ def analyze_dir(full, name):
         "mod_bangs": _scan_mod_bang_in_add_params(full),
     }
     rep["needs_setup"] = bool(rep["install_script"] or rep["downloads"] or rep["needs_sc_ext"]
-                              or rep["nb"] or rep["requires_scripts"] or rep["missing_engines"])
+                              or rep["voices"]["uses"] or rep["requires_scripts"] or rep["missing_engines"])
     return rep
 
 
