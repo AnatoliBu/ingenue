@@ -194,6 +194,8 @@ button{font-family:inherit}
 .rd-pill-btn{border:1px solid var(--trim);background:var(--panel);color:var(--fg);font-size:13px;padding:7px 12px;
   border-radius:9px;cursor:pointer;display:inline-flex;align-items:center;gap:7px;white-space:nowrap}
 .rd-pill-btn svg{width:14px;height:14px;fill:currentColor}
+.rd-pill-btn:hover{border-color:var(--muted)}
+.rd-icon{padding:7px 9px}.rd-icon svg{width:15px;height:15px}
 .rd-filtertoggle{display:none;border:1px solid var(--trim);background:var(--panel);color:var(--fg);font-size:13px;padding:7px 12px;border-radius:9px;cursor:pointer;align-items:center;gap:6px;white-space:nowrap}
 .rd-filtertoggle .fct{background:var(--accent,#8af);color:#000;border-radius:9px;padding:0 6px;font-size:11px}
 .rd-pill-btn.on{border-color:var(--accent);color:var(--accent)}
@@ -253,7 +255,7 @@ button{font-family:inherit}
 .rd-cathead{display:flex;align-items:center;gap:10px;margin:0 4px 10px;color:var(--muted);font-size:12px;text-transform:uppercase;letter-spacing:.06em}
 .rd-cathead .nm{font-weight:700;color:var(--fg);font-size:14px;text-transform:none}
 .rd-cathead .line{flex:1;height:1px;background:var(--trim)}
-.rd-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(310px,1fr));gap:12px}
+.rd-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:14px}
 .facets{display:flex;flex-wrap:wrap;gap:5px;margin:7px 0 0}
 .facet{font-size:10.5px;line-height:1.6;padding:1px 7px;border-radius:9px;white-space:nowrap;border:1px solid color-mix(in srgb,var(--fc) 45%,transparent);background:color-mix(in srgb,var(--fc) 14%,transparent);color:var(--fc)}
 .gh-load{max-width:340px;margin:38px auto;text-align:center}
@@ -262,7 +264,7 @@ button{font-family:inherit}
 .gh-bar-fill{height:100%;width:0;background:var(--accent,#8af);border-radius:4px;transition:width .18s ease}
 .gh-bar.indet .gh-bar-fill{width:38%;position:absolute;animation:ghslide 1.05s ease-in-out infinite}
 @keyframes ghslide{0%{left:-38%}100%{left:100%}}
-.card{background:var(--panel);border:1px solid var(--trim);border-radius:13px;padding:14px 15px;display:flex;
+.card{background:var(--panel);border:1px solid var(--trim);border-radius:13px;padding:15px 16px;display:flex;
   flex-direction:column;gap:9px;transition:border-color .15s,transform .15s,box-shadow .15s}
 .card:hover{border-color:var(--accent2);box-shadow:0 4px 16px rgba(0,0,0,.14)}  /* no transform → no scroll repaint jank */
 .card .head{display:flex;align-items:flex-start;gap:10px;flex-wrap:wrap}   /* buttons drop below the name on narrow cards instead of overlapping it */
@@ -282,20 +284,24 @@ button{font-family:inherit}
 .card .lnk:hover{background:color-mix(in srgb,var(--fg) 12%,transparent);color:var(--fg)}
 .card .lnk svg{width:15px;height:15px;fill:currentColor}
 .act-row{display:flex;gap:6px;flex:0 1 auto;flex-wrap:wrap;justify-content:flex-end}
-.btn{appearance:none;border:0;font-size:12px;font-weight:600;border-radius:8px;padding:6px 11px;cursor:pointer;white-space:nowrap}
+.btn{appearance:none;border:1px solid transparent;font-size:12px;font-weight:600;border-radius:8px;padding:7px 14px;cursor:pointer;white-space:nowrap;transition:background .14s,border-color .14s,color .14s,filter .14s}
 .modsview .mods-toggle{padding:5px 10px}   /* keep it compact next to Reinstall/Remove */
-.btn-install{background:var(--accent);color:#241a0d}
-.btn-update{background:transparent;border:1px solid var(--accent2);color:var(--accent2)}
-.btn-reinstall{background:transparent;border:1px solid var(--trim);color:var(--muted)}
-.btn-remove{background:transparent;border:1px solid var(--trim);color:var(--muted)}
-.btn-remove:hover{border-color:var(--err);color:var(--err)}
+/* browse-first hierarchy: install is quiet (outline), update is the one filled CTA,
+   remove is a ghost. */
+.btn-install{background:transparent;border-color:color-mix(in srgb,var(--accent) 50%,transparent);color:var(--accent)}
+.btn-install:hover{background:var(--accent);border-color:var(--accent);color:#241a0d}
+.btn-update{background:var(--accent2);border-color:var(--accent2);color:var(--bg)}
+.btn-update:hover{filter:brightness(1.07)}
+.btn-reinstall{background:transparent;border-color:var(--trim);color:var(--muted)}
+.btn-remove{background:transparent;border-color:transparent;color:var(--faint)}
+.btn-remove:hover{color:var(--err)}
 .btn-danger{background:var(--err);color:#fff;border:0}
 .btn-danger:hover{filter:brightness(1.08)}
 
 /* source tags + filters + github */
 .srctag{font-size:10.5px;font-weight:600;border-radius:20px;padding:2px 8px 2px 6px;display:inline-flex;align-items:center;gap:5px}
 .srctag i{width:7px;height:7px;border-radius:50%;display:block;flex:0 0 auto}
-.card.gh{border-left:3px solid var(--srcc,var(--trim))}
+.card.gh{border-left:2px solid color-mix(in srgb,var(--srcc,var(--trim)) 55%,transparent)}
 .card .stars{font-size:11.5px;color:var(--muted);font-family:ui-monospace,monospace}
 .lock{font-size:10px;font-weight:600;color:var(--muted);border:1px solid var(--trim);border-radius:20px;padding:1px 7px;text-transform:uppercase;letter-spacing:.04em}
 .srcbar{display:flex;align-items:center;gap:6px;flex-wrap:wrap;padding:0 12px 8px;min-width:0}
@@ -371,7 +377,7 @@ button{font-family:inherit}
 .card{cursor:default}
 .okb.upd{color:var(--accent2)!important;background:color-mix(in srgb,var(--accent2) 18%,transparent)!important}
 /* installed-tab update-detection strip */
-.upd-strip{display:flex;align-items:center;gap:10px;margin:0 4px 12px;font-size:12.5px;color:var(--muted);flex-wrap:wrap}
+.upd-strip{display:flex;align-items:center;gap:8px;margin:0 2px 14px;padding:9px 11px;font-size:12.5px;color:var(--muted);flex-wrap:wrap;background:var(--panel);border:1px solid var(--trim);border-radius:11px}
 .upd-strip .ispin{width:13px;height:13px;border:2px solid var(--trim);border-top-color:var(--accent2);border-radius:50%;animation:isp .7s linear infinite;flex:0 0 auto}
 .upd-strip .upd-bar{flex:1;min-width:120px;height:5px;border-radius:3px;background:var(--trim);overflow:hidden}
 .upd-strip .upd-fill{display:block;height:100%;background:var(--accent2);transition:width .3s ease}
@@ -379,11 +385,14 @@ button{font-family:inherit}
 @keyframes indet{0%{margin-left:-42%}100%{margin-left:104%}}
 .upd-strip.err{color:var(--err)}
 .upd-strip.err .upd-recheck{margin-left:auto}
-.upd-chip{border:1px solid var(--accent2);background:color-mix(in srgb,var(--accent2) 14%,transparent);color:var(--accent2);
-  font:inherit;font-size:12.5px;font-weight:600;padding:5px 11px;border-radius:11px;cursor:pointer}
-.upd-chip.on{background:var(--accent2);color:var(--bg)}
+.upd-all{border:1px solid var(--accent2);background:var(--accent2);color:var(--bg);font:inherit;font-size:12px;font-weight:600;padding:6px 13px;border-radius:11px;cursor:pointer;margin-right:auto}
+.upd-all:hover{filter:brightness(1.07)}
+.upd-chip{border:1px solid color-mix(in srgb,var(--accent2) 45%,transparent);background:transparent;color:var(--accent2);
+  font:inherit;font-size:12px;font-weight:600;padding:5px 11px;border-radius:11px;cursor:pointer}
+.upd-chip.on{background:var(--accent2);color:var(--bg);border-color:var(--accent2)}
 .upd-none{color:var(--ok,#6c6);font-weight:600}
-.upd-recheck{border:1px solid var(--trim);background:transparent;color:var(--muted);font:inherit;font-size:12px;padding:5px 10px;border-radius:11px;cursor:pointer}
+.upd-recheck{border:0;background:transparent;color:var(--muted);font:inherit;font-size:11.5px;padding:5px 7px;border-radius:8px;cursor:pointer}
+.upd-recheck:hover{color:var(--fg);background:color-mix(in srgb,var(--fg) 8%,transparent)}
 .upd-recheck:hover{color:var(--fg);border-color:var(--fg)}
 .pill{cursor:pointer}
 .expand-cue{color:var(--muted);font-size:11px;transition:transform .18s;margin-left:2px}
@@ -454,7 +463,11 @@ button{font-family:inherit}
 
 /* B1: multi-select + bulk install */
 .repoview{position:relative}
-.csel{display:inline-flex;align-items:center;margin-right:3px;flex:0 0 auto}
+/* bulk-select is a power feature: keep it out of the way until you hover a card
+   (or have a selection going), so browsing stays calm. */
+.csel{display:inline-flex;align-items:center;margin-right:3px;flex:0 0 auto;opacity:0;transition:opacity .14s}
+.card:hover .csel{opacity:.5}
+.csel:hover,.csel:has(input:checked){opacity:1}
 .csel input{width:16px;height:16px;accent-color:var(--accent2);cursor:pointer;margin:0}
 .selall-btn{border:1px solid var(--trim);background:transparent;color:var(--muted);font-size:11.5px;border-radius:7px;
   padding:3px 9px;cursor:pointer;white-space:nowrap}
@@ -656,14 +669,15 @@ button{font-family:inherit}
   /* mods grid out-specifies the line above (.modsview .rd-grid), so re-state it here:
      single column (no horizontal overflow on narrow phones) + params' padding */
   .modsview .rd-grid{grid-template-columns:1fr;padding:6px 10px 28px}
-  .rd-toolbar{flex-wrap:wrap;padding:7px 12px}
+  .rd-toolbar{flex-wrap:wrap;padding:8px 12px;gap:8px}
   .rd-search{flex-basis:100%;order:-1}
-  .rd-pill-btn{flex:1;justify-content:center}
   /* phone: src + tag filter bars collapse behind a "filters" toggle to save vertical space */
   .rd-filtertoggle{display:inline-flex}
   .rd-filters{display:none}
   .rd-filters.open{display:block;border-top:1px solid var(--trim);max-height:46vh;overflow-y:auto;-webkit-overflow-scrolling:touch}
-  .card .head{flex-direction:column}.act-row{width:100%}.act-row .btn{flex:1;text-align:center}
+  /* keep name + action on one row even on narrow cards; action stays compact (right) */
+  .card .head{flex-direction:row;align-items:flex-start}.act-row{flex:0 0 auto;width:auto}
+  .csel{opacity:.4}   /* no hover on touch — keep bulk-select tappable but faint */
   .theme-grid{grid-template-columns:repeat(auto-fill,minmax(108px,1fr))}
   /* config becomes a full-screen sheet — never floats or clips */
   .overlay{padding:0;align-items:stretch}
@@ -3030,16 +3044,19 @@ function updStripHTML(){
     return `<div class="upd-strip checking"><span class="ispin"></span><span>checking for updates… ${updProgress.done}/${updProgress.total}</span>`
       +`<span class="upd-bar"><span class="upd-fill" style="width:${pct}%"></span></span></div>`;
   }
-  const ghBtn=`<button class="upd-recheck gh" data-updcheck-gh="1" title="query GitHub directly for commits newer than nornslist's last nightly — slower, needs a token for speed, catches bleeding-edge">⎇ check GitHub</button>`;
+  const ghBtn=`<button class="upd-recheck gh" data-updcheck-gh="1" title="query GitHub directly for commits newer than nornslist's last nightly — slower, needs a token for speed, catches bleeding-edge">⎇ GitHub</button>`;
+  const recheck=`<button class="upd-recheck" data-updcheck="1" title="re-check against nornslist">↻ re-check</button>`;
   if(updCheckedAt){
-    const chip = N
-      ? `<button class="upd-chip ${updFilter?'on':''}" data-updfilter="1">⬆ updates available (${N})</button>`
-      : `<span class="upd-none">✓ up to date${updSource==='github'?' (vs GitHub)':' (vs nornslist)'}</span>`;
-    const updAll = N ? `<button class="upd-recheck" data-updall="1" style="border-color:var(--accent2);color:var(--accent2)">⬆ update all (${N})</button>` : '';
-    return `<div class="upd-strip">${chip}${updAll}<button class="upd-recheck" data-updcheck="1">↻ re-check</button>${ghBtn}</div>`;
+    if(N){
+      return `<div class="upd-strip">`
+        +`<button class="upd-all" data-updall="1">⬆ update all (${N})</button>`
+        +`<button class="upd-chip ${updFilter?'on':''}" data-updfilter="1" title="show only scripts with an update">${updFilter?'showing updates':`${N} to update`}</button>`
+        +`${recheck}${ghBtn}</div>`;
+    }
+    return `<div class="upd-strip"><span class="upd-none" style="margin-right:auto">✓ all up to date <span style="color:var(--faint)">· vs ${updSource==='github'?'GitHub':'nornslist'}</span></span>${recheck}${ghBtn}</div>`;
   }
-  // no check run yet this session — manual trigger only (no auto-checking)
-  return `<div class="upd-strip"><button class="upd-chip" data-updcheck="1">↻ check for updates</button>${ghBtn}</div>`;
+  // no check run yet this session
+  return `<div class="upd-strip"><span style="margin-right:auto">check installed scripts for updates</span>${recheck}${ghBtn}</div>`;
 }
 function wireUpdStrip(root){
   (root||document).querySelectorAll('[data-updfilter]').forEach(b=>b.onclick=()=>{updFilter=!updFilter;renderRepo();});
@@ -3337,7 +3354,7 @@ function renderRepo(){
   }
 
   const list=repoList(tab);
-  const allBtn = `<button class="rd-pill-btn" data-act="refresh"><svg viewBox="0 0 32 32"><path d="${I.refresh}"/></svg>Refresh all</button>`;
+  const allBtn = `<button class="rd-pill-btn rd-icon" data-act="refresh" title="reload the catalog from nornslist"><svg viewBox="0 0 32 32"><path d="${I.refresh}"/></svg></button>`;
   const opts=[['updated','last updated'],['name','name'],['author','author'],['stars','stars']];
   const sortSel=`<select class="rd-sort" id="rd-sort" title="sort by">${opts.map(o=>`<option value="${o[0]}" ${sortMode===o[0]?'selected':''}>sort: ${o[1]}</option>`).join('')}</select>`
     +`<button class="rd-pill-btn" id="rd-sortdir" style="flex:0 0 auto;min-width:0;padding:7px 12px;font-size:15px;line-height:1" title="${sortDir==='asc'?'ascending — click for descending':'descending — click for ascending'}">${sortDir==='asc'?'↑':'↓'}</button>`;
