@@ -1386,7 +1386,7 @@ async function loadCatalog(){
       if(!feed){ feed=await (await fetch('feed.json',{cache:'no-store'})).json(); }
       const fm=feed.scripts||feed;
       entries.forEach(e=>{ const x=fm[(e.n||'').toLowerCase()]; if(!x) return;
-        if(x.engine&&!e.engine) e.engine=x.engine; if(x.nb) e.nb=1; if(x.nb_role) e.nbRole=x.nb_role;
+        if(x.engine&&!e.engine) e.engine=x.engine; if(x.voices) e.voices=x.voices;
         if(x.facets&&!(e.facets&&e.facets.length)) e.facets=x.facets;
         if(x.readme&&!e.readme) e.readme=x.readme;
         if(x.images&&!(e.images&&e.images.length)) e.images=x.images;
@@ -2334,7 +2334,8 @@ function wireControls(v){
 // published sha (no GitHub call). Secondary: live GitHub check for bleeding edge.
 let updChecking=false, updCheckedAt=0, updFilter=false, updProgress={done:0,total:0}, updSource='';
 const NB_TAG='additional voice';
-function isNbVoice(p){ if(p.nb) return true; const t=(p.tags||[]).map(x=>String(x).toLowerCase());
+function provGetsVoice(p){ return !!(p.voices && (p.voices.provides||[]).length); }
+function isNbVoice(p){ if(provGetsVoice(p)) return true; const t=(p.tags||[]).map(x=>String(x).toLowerCase());
   return t.includes('nb')||t.includes('n.b.')||/\bnb\b|note ?bridge|nb_|nb\//i.test(((p.d||'')+' '+(p.n||''))); }
 function entryTags(p){ const base=(p.tags||[]).map(String); return isNbVoice(p)?base.concat(NB_TAG):base; }
 function allTags(tab){
@@ -2568,7 +2569,10 @@ function depNodeRows(rep){
     else
       rows.push(R('🆗','norns version',`pins norns ≥ <b>${reqLbl}</b>${dev?' — your device meets it':''}`));
   }
-  if(rep.nb) rows.push(R('🎹','nb voices','plays through nb — install an nb voice (the nb_* player mods) to make sound'));
+  if(rep.voices && (rep.voices.uses||[]).includes('nb'))
+    rows.push(R('🎹','nb-ready','plays through nb — install an nb voice (the nb_* player mods) to make sound'));
+  if(rep.voices && (rep.voices.provides||[]).includes('nb'))
+    rows.push(R('🎹','nb voices','registers nb voice(s) other scripts can play'));
   if(rep.needs_sc_ext){
     const miss=rep.missing_sc_ext||rep.sc_extensions||[], have=rep.sc_ext_present||[];
     let d=(miss.join(', ')||'extension')+' — installed if missing';
@@ -2896,7 +2900,7 @@ async function classifyRepo(owner,name,branch,pushed){
   const key=(owner+'/'+name).toLowerCase()+'@'+(pushed||'');
   if(key in _classCache) return _classCache[key];
   const persisted=_clsGet(key); if(persisted) return _classCache[key]=persisted;
-  const dunno={ok:true,facets:[],nb:0,nbRole:null};   // can't inspect (rate/redirect) → don't over-filter; not persisted
+  const dunno={ok:true,facets:[],voices:{provides:[],uses:[],systems:[]}};   // can't inspect (rate/redirect) → don't over-filter; not persisted
   try{
     const tr=await fetch(`https://api.github.com/repos/${owner}/${name}/git/trees/${branch||'HEAD'}?recursive=1`,{headers:ghHeaders()});
     if(!tr.ok) return _classCache[key]=dunno;
@@ -2910,7 +2914,7 @@ async function classifyRepo(owner,name,branch,pushed){
     // the one key file to read: script main (prefer <name>.lua), else mod.lua, else a lib file
     const keyFile = topLua.find(p=>p.toLowerCase()===name.toLowerCase()+'.lua') || topLua[0]
                   || (hasMod?'lib/mod.lua':null) || libLua[0] || null;
-    let nb=0, nbRole=null;
+    let vProv=[],vUse=[];
     if(keyFile){
       try{
         const ep=keyFile.split('/').map(encodeURIComponent).join('/');
@@ -2918,20 +2922,26 @@ async function classifyRepo(owner,name,branch,pushed){
           {headers:{...ghHeaders(),'Accept':'application/vnd.github.raw'}});
         if(fr.ok){ const blob=await fr.text();
           if(NORNS_FP.test(blob)) isNorns=true;
-          if(/nb:add_player/.test(blob)){ nb=1; nbRole='provides'; }          // registers voices → a voice pack
-          else if(/nb:add_param|require[\s(]*['"][^'"]*nb\/lib/.test(blob)){ nb=1; nbRole='uses'; } // assignable voices in-script
+          if(/nb:add_player/.test(blob)){ vProv.push('nb'); }
+          else if(/nb:add_param|require[\s(]*['"][^'"]*nb\/lib/.test(blob)){ vUse.push('nb'); }
+          (blob.match(/require[\s(]*['"]([A-Za-z0-9_.\-]+)\/lib/g)||[]).forEach(m=>{
+            const lib=(m.match(/['"]([A-Za-z0-9_.\-]+)\/lib/)||[])[1];
+            if(lib==='mx.samples'||lib==='mx.synths') vUse.push(lib);
+          });
         }
       }catch(_){}
     }
     // provider whose add_player lives in a lib/ file we didn't read → fall back to the nb_ naming convention
-    if(!nb && (hasMod||libLua.length) && /(^|[^a-z])nb([^a-z]|$)/i.test(name)){ nb=1; nbRole='provides'; }
-    if(!isNorns){ const res={ok:false,facets:[],nb:0,nbRole:null}; _clsPut(key,res); return _classCache[key]=res; }
+    if(!vProv.includes('nb') && (hasMod||libLua.length) && /(^|[^a-z])nb([^a-z]|$)/i.test(name)){ vProv.push('nb'); }
+    const voices={provides:[...new Set(vProv)],uses:[...new Set(vUse)].filter(u=>!vProv.includes(u))};
+    voices.systems=[...new Set([...voices.provides,...voices.uses])];
+    if(!isNorns){ const res={ok:false,facets:[],voices:{provides:[],uses:[],systems:[]}}; _clsPut(key,res); return _classCache[key]=res; }
     const facets=[];
     if(topLua.length) facets.push('script');
     if(hasMod) facets.push('mod');
     if(!topLua.length && !hasMod && libLua.length) facets.push('library');
     if(hasEngine) facets.push('engine');
-    const res={ok:true,facets,nb,nbRole};
+    const res={ok:true,facets,voices};
     _clsPut(key,res); return _classCache[key]=res;
   }catch(_){ return _classCache[key]=dunno; }
 }
@@ -2974,7 +2984,7 @@ async function ghSearch(query,page){
       if(it.owner&&me&&it.owner.login===me) srcs.push('mine');
       return { n:it.name, a:it.owner?it.owner.login:'?', owner:it.owner?it.owner.login:'', d:it.description||'(no description)', v:'',
         tags:(it.topics||[]).slice(0,5), stars:it.stargazers_count, upd:(it.pushed_at||'').slice(0,10),
-        proj:it.html_url, priv:!!it.private, srcs, gh:1, facets:c.facets||[], nb:c.nb?1:0, nbRole:c.nbRole };
+        proj:it.html_url, priv:!!it.private, srcs, gh:1, facets:c.facets||[], voices:c.voices||{provides:[],uses:[],systems:[]} };
     });
     _discLoaded=true; if(repoTab==='discover') renderRepo();
   }catch(err){ if(grid) grid.innerHTML=`<div class="gh-empty"><p>GitHub search failed: ${err.message}</p></div>`; }
@@ -3328,7 +3338,11 @@ function installState(p,tab){ if(p.upd_avail) return 'update'; if(tab==='install
 const FACET_META={script:['▶','script','#7ee787'],mod:['◆','mod','#c678dd'],library:['❏','library','#56b6c2'],engine:['♪','engine','#e5c07b']};
 function facetHTML(p){
   let out=(p.facets||[]).map(f=>{ const m=FACET_META[f]; return m?`<span class="facet" style="--fc:${m[2]}">${m[0]} ${m[1]}</span>`:''; }).join('');
-  if(p.nb) out+=`<span class="facet" style="--fc:var(--ok,#6c6)">🎹 ${p.nbRole==='provides'?'nb voices':'nb-ready'}</span>`;
+  if(p.voices){ const pr=(p.voices.provides||[]),us=(p.voices.uses||[]);
+    if(pr.includes('nb')) out+=`<span class="facet" style="--fc:var(--ok,#6c6)">🎹 nb voices</span>`;
+    else if(us.includes('nb')) out+=`<span class="facet" style="--fc:var(--ok,#6c6)">🎹 nb-ready</span>`;
+    pr.filter(s=>s!=='nb').forEach(s=>out+=`<span class="facet">🎚 ${s}</span>`);
+  }
   return out?`<div class="facets">${out}</div>`:'';
 }
 function repoCard(p,tab){
