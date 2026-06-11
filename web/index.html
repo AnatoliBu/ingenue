@@ -2183,7 +2183,8 @@ function acceptAC(i){
 function hideAC(){ document.getElementById('ac').classList.remove('show'); acItems=[]; acIdx=-1; }
 
 /* ============ repo manager ============ */
-let repoTab='available', repoQuery='', sortMode='updated', sortDir='desc';
+let repoTab='installed', repoQuery='', sortMode='updated', sortDir='desc';   // manage-first: open on YOUR installed scripts
+let _repoScroll=0;   // remembered repo-view scroll — restored across full re-renders (install/remove/update) so the view doesn't jump to top; reset to 0 on mode switch
 const selection=new Set();   // selected script names for bulk install/update
 function updateBulkBar(){
   const bar=document.getElementById('bulkbar'); if(!bar) return;
@@ -2297,11 +2298,14 @@ function filterDropdownsHTML(){
 function ddCloseAll(){ document.querySelectorAll('.dd.open').forEach(d=>d.classList.remove('open')); }
 // sort: emoji + short word, field+direction baked into the value
 const SORT_OPTS=[['updated:desc','⬇️ date'],['updated:asc','⬆️ date'],['name:asc','⬆️ A–Z'],['name:desc','⬇️ Z–A'],['stars:desc','⭐ stars'],['author:asc','🎹 user']];
-function controlsHTML(){
+function sortSelHTML(){
   const cur=sortMode+':'+sortDir;
-  const sortSel=`<select class="rd-sort" id="rd-sort" title="sort">${SORT_OPTS.map(o=>`<option value="${o[0]}" ${cur===o[0]?'selected':''}>${o[1]}</option>`).join('')}</select>`;
-  return filterDropdownsHTML()+sortSel;
+  return `<select class="rd-sort" id="rd-sort" title="sort">${SORT_OPTS.map(o=>`<option value="${o[0]}" ${cur===o[0]?'selected':''}>${o[1]}</option>`).join('')}</select>`;
 }
+// Full controls (source/type/tag dropdowns + sort) are for Browse; manage modes
+// (installed/updates) get search + sort only — their counts come from the device,
+// not the catalog, so the faceted source/type dropdowns don't apply.
+function controlsHTML(){ return filterDropdownsHTML()+sortSelHTML(); }
 // Rebuild the filter controls (recomputes faceted counts) and re-open `openKey`.
 // Called lazily when a dropdown OPENS, so counts reflect the other live filters
 // without rebuilding the menu mid-toggle (which would feel janky on multi-select).
@@ -2349,16 +2353,20 @@ function tagBar(tab){
   return `<div class="rd-tagbar" style="display:flex;flex-wrap:wrap;gap:6px;padding:8px 12px 2px;align-items:center">${clear}${tags.slice(0,48).map(([t,c])=>chip(t,c,tagFilter.has(t))).join('')}</div>`;
 }
 function repoList(tab){
-  // "updates only" is a cross-source view of everything installed that's behind —
-  // it bypasses the source/hide-installed filters so the count matches what's shown.
-  let list=(updFilter ? (REPO.installed||[]) : repoBaseList(tab)).slice();
-  if(hideInstalled && !updFilter){ const ins=new Set(REPO.installed.map(p=>p.n.toLowerCase()));
-    list=list.filter(p=>!p.inst && !ins.has(p.n.toLowerCase())); }
+  // Mode-routed base list. Manage modes (installed/updates) are the device's own
+  // scripts; browse ('available') is the nornslist catalog (source + hide-installed).
+  let list;
+  if(tab==='installed')      list=(REPO.installed||[]).slice();
+  else if(tab==='updates')   list=(REPO.installed||[]).filter(p=>p.upd_avail);
+  else {                     // 'available' = browse the catalog
+    list=repoBaseList(tab).slice();
+    if(hideInstalled){ const ins=new Set(REPO.installed.map(p=>p.n.toLowerCase()));
+      list=list.filter(p=>!p.inst && !ins.has(p.n.toLowerCase())); }
+  }
   if(repoQuery){ const q=repoQuery.toLowerCase();
     list=list.filter(p=>(p.n+' '+p.a+' '+(p.tags||[]).join(' ')+' '+(p.d||'')).toLowerCase().includes(q)); }
   if(typeFilter.size<TYPE_ORDER.length){ list=list.filter(p=>{ const f=(p.facets||[]); return [...typeFilter].some(t=>f.includes(t)); }); }
   if(tagFilter.size){ list=list.filter(p=>{ const t=entryTags(p); return [...tagFilter].every(f=>t.includes(f)); }); }
-  if(updFilter){ list=list.filter(p=>p.upd_avail); }   // "updates available" facet
   return list.sort(sortCmp);
 }
 function updateGrid(){
@@ -3131,10 +3139,12 @@ function updStripHTML(){
   const recheck=`<button class="upd-recheck" data-updcheck="1" title="re-check against nornslist">↻ re-check</button>`;
   if(updCheckedAt){
     if(N){
+      // "updates" is its own mode now (no in-strip filter chip); the strip just
+      // surfaces update-all + the count, plus the re-check actions.
+      const toUpd=repoTab==='updates'?'':`<button class="upd-chip" data-rt="updates" title="switch to the updates view">${N} to update</button>`;
       return `<div class="upd-strip">`
         +`<button class="upd-all" data-updall="1">⬆ update all (${N})</button>`
-        +`<button class="upd-chip ${updFilter?'on':''}" data-updfilter="1" title="show only scripts with an update">${updFilter?'showing updates':`${N} to update`}</button>`
-        +`${recheck}${ghBtn}</div>`;
+        +`${toUpd}${recheck}${ghBtn}</div>`;
     }
     return `<div class="upd-strip"><span class="upd-none" style="margin-right:auto">✓ all up to date <span style="color:var(--faint)">· vs ${updSource==='github'?'GitHub':'nornslist'}</span></span>${recheck}${ghBtn}</div>`;
   }
@@ -3142,7 +3152,7 @@ function updStripHTML(){
   return `<div class="upd-strip"><span style="margin-right:auto">check installed scripts for updates</span>${recheck}${ghBtn}</div>`;
 }
 function wireUpdStrip(root){
-  (root||document).querySelectorAll('[data-updfilter]').forEach(b=>b.onclick=()=>{updFilter=!updFilter;renderRepo();});
+  (root||document).querySelectorAll('.upd-strip [data-rt]').forEach(b=>b.onclick=()=>{_repoScroll=0;repoTab=b.dataset.rt;repoQuery='';selection.clear();renderRepo();});
   (root||document).querySelectorAll('[data-updcheck]').forEach(b=>b.onclick=()=>checkUpdates(true));
   (root||document).querySelectorAll('[data-updcheck-gh]').forEach(b=>b.onclick=()=>checkUpdatesGithub(true));
   (root||document).querySelectorAll('[data-updall]').forEach(b=>b.onclick=()=>updateAllBehind());
@@ -3408,9 +3418,13 @@ function renderRepo(){
   v.classList.remove('collapsed');
   const _cnt=(st,n)=>(st==='ready'||st==='demo')?n:'…';   // show '…' while a source is still loading/errored, not a misleading 0
   const _nUpd=REPO.installed.filter(p=>p.upd_avail).length;
+  const _nInst=REPO.installed.length;
+  // Manage-first mode bar: Installed / Updates (your device) + Browse (the catalog).
+  const mtab=(id,label,n,hl)=>`<button class="rd-tab ${tab===id?'on':''}" data-rt="${id}">${label}${n?` <span class="ct"${hl?' style="color:var(--accent2)"':''}>${n}</span>`:''}</button>`;
   const tabs=`<div class="rd-tabs">
-        <span class="rd-tab on" style="cursor:default">scripts <span class="ct js-tabcount">${_cnt(scriptsState.catalog,repoList(tab).length)}</span></span>
-        ${REPO.installed.length?`<span class="rd-tab" style="cursor:default;color:var(--muted);box-shadow:none">${REPO.installed.length} installed${_nUpd?` · <b style="color:var(--accent2)">${_nUpd} update${_nUpd>1?'s':''}</b>`:''}</span>`:''}
+        ${mtab('installed','installed',_nInst,false)}
+        ${mtab('updates','updates',_nUpd,true)}
+        ${mtab('available','browse',0,false)}
         <button class="rd-toggle" id="rd-toggle" title="hide / show search"><svg viewBox="0 0 32 32"><path d="M16 21L6 11l2.1-2.1L16 16.8 23.9 8.9 26 11z"/></svg></button>
       </div>`;
 
@@ -3428,10 +3442,19 @@ function renderRepo(){
     return;
   }
 
-  // Loading / error state for the current source — never render an empty grid or a
-  // "0 scripts" count as if it were real (installed=device, available=catalog).
+  // Manage modes (installed/updates) need the device — show a nudge in web-preview
+  // or before the device API connects, rather than a confusing empty list.
+  if((tab==='installed'||tab==='updates') && !HAS_BACKEND){
+    v.innerHTML=`<div class="rd-top">${tabs}</div><div class="rd-scroll"><div class="gh-empty">
+        <h3>${tab==='updates'?'updates':'installed scripts'}</h3>
+        <p>connect to your norns to see and manage what's installed on the device.</p>
+        <button class="btn btn-install" data-rt="available">browse the catalog →</button></div></div>`;
+    v.querySelectorAll('[data-rt]').forEach(b=>b.onclick=()=>{_repoScroll=0;repoTab=b.dataset.rt;renderRepo();});
+    return;
+  }
+  // Loading / error state for the CATALOG (browse only — manage modes don't wait on it).
   const tabState = scriptsState.catalog;
-  if(tabState==='loading' || tabState==='error'){
+  if(tab==='available' && (tabState==='loading' || tabState==='error')){
     const strip = tabState==='loading'
       ? `<div class="upd-strip"><span class="ispin"></span><span>loading catalog…</span><span class="upd-bar"><span class="upd-fill indet"></span></span></div>`
       : `<div class="upd-strip err"><span>⚠ catalog failed to load</span><button class="upd-recheck" data-reload="1">↻ retry</button></div>`;
@@ -3441,15 +3464,19 @@ function renderRepo(){
   }
 
   const list=repoList(tab);
-  const head = `<div class="rd-cathead"><span class="nm rd-count">${list.length} scripts</span>${tab==='available'?'<span>via nornslist</span>':''}<span class="line"></span><button class="cathead-ic" data-act="refresh" title="reload the catalog from nornslist"><svg viewBox="0 0 32 32"><path d="${I.refresh}"/></svg></button><button class="selall-btn" data-selall>select all</button></div>`;
+  const _where=tab==='available'?'<span>via nornslist</span>':tab==='updates'?'<span>behind upstream</span>':'<span>on your norns</span>';
+  const _empty=tab==='installed'?'<p>no scripts installed on the device yet — switch to <b>browse</b> to install some.</p>'
+              :tab==='updates'?'<p>everything on your norns is up to date. ✓</p>'
+              :'<p>nothing matches your filters.</p>';
+  const head = `<div class="rd-cathead"><span class="nm rd-count">${list.length} scripts</span>${_where}<span class="line"></span><button class="cathead-ic" data-act="refresh" title="reload the catalog from nornslist"><svg viewBox="0 0 32 32"><path d="${I.refresh}"/></svg></button><button class="selall-btn" data-selall>select all</button></div>`;
   v.innerHTML=`<div class="rd-top">${tabs}
       <div class="rd-toolbar">
         <label class="rd-search"><svg viewBox="0 0 32 32"><path d="${I.search}"/></svg><input id="rd-q" placeholder="search scripts, authors, tags…"></label>
-        <div class="rd-controls">${tab==='available'?controlsHTML():''}</div>
+        <div class="rd-controls">${tab==='available'?controlsHTML():sortSelHTML()}</div>
       </div></div>
-    <div class="rd-scroll"><div>${head}${updStripHTML()}<div class="rd-grid">${list.map(p=>repoCard(p,tab)).join('')||`<div class="gh-empty"><p>nothing here yet.</p></div>`}</div></div></div>
+    <div class="rd-scroll"><div>${head}${(tab==='installed'||tab==='updates')?updStripHTML():''}<div class="rd-grid">${list.map(p=>repoCard(p,tab)).join('')||`<div class="gh-empty">${_empty}</div>`}</div></div></div>
     <div class="bulkbar" id="bulkbar"></div>`;
-  v.querySelectorAll('[data-rt]').forEach(b=>b.onclick=()=>{repoTab=b.dataset.rt;repoQuery='';_discUser=null;selection.clear();renderRepo();});
+  v.querySelectorAll('[data-rt]').forEach(b=>b.onclick=()=>{_repoScroll=0;repoTab=b.dataset.rt;repoQuery='';_discUser=null;selection.clear();renderRepo();});
   v.querySelectorAll('[data-selall]').forEach(b=>b.onclick=()=>{
     const cur=repoList(repoTab); const allSel=cur.length&&cur.every(p=>selection.has(p.n));
     cur.forEach(p=>allSel?selection.delete(p.n):selection.add(p.n)); updateGrid(); updateBulkBar();
@@ -3464,9 +3491,13 @@ function renderRepo(){
   // so the "updates available" filter + Update all are populated without a manual click.
   if(HAS_BACKEND && scriptsState.installed==='ready' && !updCheckedAt && !updChecking) checkUpdates(false);
   const tg=document.getElementById('rd-toggle'); if(tg) tg.onclick=()=>v.classList.toggle('collapsed');
-  const sc=v.querySelector('.rd-scroll'); let lst=0;
-  if(sc) sc.addEventListener('scroll',()=>{ const t=sc.scrollTop;
-    if(t>lst+6 && t>60) v.classList.add('collapsed'); else if(t<lst-6) v.classList.remove('collapsed'); lst=t; });
+  // Restore scroll across full re-renders (install/remove/update reconcile) so the
+  // view doesn't jump to top; mode switches reset _repoScroll to 0 beforehand. The
+  // scroll listener keeps _repoScroll current and drives collapse-on-scroll.
+  const sc=v.querySelector('.rd-scroll'); let lst=_repoScroll||0;
+  if(sc){ sc.scrollTop=_repoScroll||0;
+    sc.addEventListener('scroll',()=>{ const t=sc.scrollTop; _repoScroll=t;
+      if(t>lst+6 && t>60) v.classList.add('collapsed'); else if(t<lst-6) v.classList.remove('collapsed'); lst=t; }); }
 }
 
 /* ============ favorites manager ============ */
