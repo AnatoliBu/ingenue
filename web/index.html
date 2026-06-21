@@ -2212,7 +2212,7 @@ function repoBaseList(tab){
   if(tab==='installed') return REPO.installed||[];   // legacy/internal callers only
   // Unified view: the catalog (source-filtered) + any installed scripts that aren't
   // in the catalog (local-only), so one list covers browse + manage + update.
-  const list=(REPO.available||[]).filter(p=>catFilter.has(p.cat||'community'));
+  const list=visibleAvailable().filter(p=>catFilter.has(p.cat||'community'));
   const localOnly=(REPO.installed||[]).filter(p=>p.local);
   return list.concat(localOnly);
 }
@@ -2237,10 +2237,22 @@ let tagFilter=new Set(), filtersOpen=false, hideInstalled=true;   // default: hi
 const CAT_META={community:['◉','norns.community','#DEB887'],softlaunch:['◐','soft launch','#c9a0ff'],ghx:['◯','gh exclusive','#7ee787'],mine:['★','my repos','#7fbfff']};
 const CAT_ORDER=['community','softlaunch','ghx'];   // 'mine' appended only when a token is connected
 let catFilter=new Set(['community']);   // default: only the curated norns.community source engaged
+// Maintainer-only visibility. Soft-launch / gh-exclusive scripts are harvested
+// but shown ONLY to the maintainer — GH_LOGIN==='seajaysec', proven by the GitHub
+// /user whoami (a valid seajaysec token). Every other user, and every anonymous
+// visitor, sees norns.community scripts only. 'mine' (a connected user's OWN repos)
+// is always theirs to see — it never exposes anyone else's unpublished work.
+function ownerView(){ return GH_LOGIN==='seajaysec'; }
+function visibleAvailable(){
+  const owner=ownerView();
+  return (REPO.available||[]).filter(p=>{ const c=p.cat||'community';
+    return owner || c==='community' || c==='mine'; });
+}
+function visibleCats(){ return ownerView()?CAT_ORDER.slice():['community']; }
 function catBar(){
   const counts={community:0,softlaunch:0,ghx:0};
-  (REPO.available||[]).forEach(p=>{ const c=p.cat||'community'; if(c in counts) counts[c]++; });
-  const chips=CAT_ORDER.map(id=>{ const m=CAT_META[id], on=catFilter.has(id);
+  visibleAvailable().forEach(p=>{ const c=p.cat||'community'; if(c in counts) counts[c]++; });
+  const chips=visibleCats().map(id=>{ const m=CAT_META[id], on=catFilter.has(id);
     return `<span class="srcchip ${on?'on':'off'}" data-cat="${id}" style="--c:${m[2]}" title="${m[1]}"><i></i>${m[1]} <b style="opacity:.6">${counts[id]}</b></span>`;
   }).join('');
   const hideInst=`<span class="srcchip ${hideInstalled?'on':''}" data-hideinst="1" style="--c:var(--ok,#6c6)"><i></i>${hideInstalled?'hiding installed':'hide installed'}</span>`;
@@ -2265,7 +2277,7 @@ function ddHTML(key,label,opts,sel,footer){
 // The unified browse set with every filter applied EXCEPT the named facet — so each
 // dropdown's per-option counts reflect the OTHER active selections (faceted search).
 function filteredExcept(except){
-  let list=(REPO.available||[]).concat((REPO.installed||[]).filter(p=>p.local));
+  let list=visibleAvailable().concat((REPO.installed||[]).filter(p=>p.local));
   if(except!=='src') list=list.filter(p=>catFilter.has(p.cat||'community'));
   if(except!=='hideinst' && hideInstalled){ const ins=new Set(REPO.installed.map(p=>p.n.toLowerCase()));
     list=list.filter(p=>!p.inst && !ins.has(p.n.toLowerCase())); }
@@ -2281,7 +2293,7 @@ function filterDropdownsHTML(){
   const baseSrc=filteredExcept('src');
   const sc={community:0,softlaunch:0,ghx:0,mine:0}; baseSrc.forEach(p=>{ const c=p.cat||'community'; if(c in sc) sc[c]++; });
   // 'my repos' only appears once a token is connected (and there's something to show)
-  const srcOrder=CAT_ORDER.concat((ghConnected||sc.mine||catFilter.has('mine'))?['mine']:[]);
+  const srcOrder=visibleCats().concat((ghConnected||sc.mine||catFilter.has('mine'))?['mine']:[]);
   const srcFooter=`<div class="dd-sep"></div><label class="dd-opt"><input type="checkbox" id="dd-hideinst" ${hideInstalled?'checked':''}>hide installed</label>`;
   const src=ddHTML('src','source',srcOrder.map(id=>({value:id,label:CAT_META[id][1],count:sc[id]})),catFilter,srcFooter);
   const baseType=filteredExcept('type');
@@ -3914,7 +3926,7 @@ function renderGh(){
     b.innerHTML=`<div class="gh-connected"><span class="ok">✓</span> connected as <b>@${GHUSER}</b>
       <button id="gh-disc">disconnect</button></div>
       <div class="gh-hint">your public &amp; private repos and github-wide search are now available as sources below and in the <b>discover</b> tab.</div>`;
-    b.querySelector('#gh-disc').onclick=()=>{ghConnected=false;LS.set('gh',{c:false});renderGh();renderSrc();renderRepo();};
+    b.querySelector('#gh-disc').onclick=()=>{ghConnected=false;GH_LOGIN=null;LS.set('gh',{c:false});renderGh();renderSrc();renderRepo();};
   } else {
     b.innerHTML=`<div class="gh-row">
         <label class="theme-search"><svg viewBox="0 0 32 32"><path d="${I.search}"/></svg>
@@ -3926,7 +3938,9 @@ function renderGh(){
       if(!t){ const f=b.querySelector('#gh-token'); f.focus(); f.style.borderColor='var(--err)'; return; }   // a real token is required (5000/hr; empty = rate-limited)
       ghConnected = true;
       LS.set('gh',{c:true,t:t});
+      GH_LOGIN=null;                                       // re-resolve identity for the new token
       renderGh();renderSrc();renderRepo();
+      ghWhoami().then(()=>{ renderSrc();renderRepo(); });  // a seajaysec token unlocks the non-community sources
     };
   }
 }
@@ -4115,7 +4129,11 @@ function boot(){
     const nm=(document.getElementById('eng-rename').value||'').trim().replace(/[^A-Za-z0-9_]/g,'')||availableEngineName(shipEngine(enginePending.p));
     if(enginePending) proceedInstall(enginePending.p,enginePending.btn,nm); enginePending=null; };
   // ----- restore persisted preferences (localStorage) -----
-  const savedGh=LS.get('gh',null); if(savedGh&&savedGh.c) ghConnected=true;
+  const savedGh=LS.get('gh',null);
+  if(savedGh&&savedGh.c){ ghConnected=true;
+    // resolve identity from the saved token, then refresh once known — a seajaysec
+    // token unlocks the non-community sources; everyone else stays community-only.
+    ghWhoami().then(()=>{ if(GH_LOGIN&&typeof renderRepo==='function') renderRepo(); }); }
   const savedSrc=LS.get('srcon',null);
   if(savedSrc){ SRC_ORDER.forEach(id=>{ SRC_ON[id]=savedSrc[id]?1:0; if(SRC_ON[id])srcFilter.add(id); else srcFilter.delete(id); }); }
   // theme: follow OS unless a choice was saved
