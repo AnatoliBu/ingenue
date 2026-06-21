@@ -2870,6 +2870,18 @@ async function showRequirements(p){
 }
 /* demo embed helpers */
 function isUrl(u){ return typeof u==='string' && /^https?:\/\//i.test(u.trim()); }
+// Demos are auto-discovered (nornslist searches YouTube/Vimeo), so some link the
+// wrong video. Opens a pre-filled issue on nornslist (the demo's source) asking
+// the flagger what they expected and for a better/official link.
+function demoFlagURL(p){
+  const body='Script: '+(p.n||'')
+    +'\nDemo currently shown: '+((p.demo||'').trim())
+    +'\n\nnornslist auto-discovers demos by searching YouTube/Vimeo, so it sometimes'
+    +' links the wrong video.\n\nHow is this demo irrelevant — what did you expect instead?\n\n'
+    +'If you have a more official or correct demo link, please paste it here:\n';
+  return 'https://github.com/seajaysec/nornslist/issues/new?labels=demo-mismatch&title='
+    +encodeURIComponent('demo mismatch: '+(p.n||''))+'&body='+encodeURIComponent(body);
+}
 function ytId(u){ if(!u)return''; const m=u.match(/(?:youtu\.be\/|youtube\.com\/(?:watch\?v=|embed\/|v\/|shorts\/))([\w-]{11})/); return m?m[1]:''; }
 function vimeoId(u){ if(!u)return''; const m=u.match(/vimeo\.com\/(?:video\/)?(\d+)/); return m?m[1]:''; }
 function scEmbedSrc(u){ // returns a SoundCloud player src for embeddable URLs, else ''
@@ -3397,7 +3409,7 @@ function repoCard(p,tab){
       <div class="more-meta">${p.upd?`updated ${p.upd}`:'last-updated unknown'} · via ${srcNames(p)}${p.inst?` · <button class="reqs-btn" data-reqs="1">⚙ requirements</button>`:''}</div>
       ${verRow}
       ${hasLinks?`<div class="more-links">${L(p.proj,'code')}${L(p.docU,'docs')}${L(p.discU,'discuss')}${L(p.comm,'norns.community')}</div>`:''}
-      <div class="more-demo">${demoSlot}</div>
+      <div class="more-demo">${demoSlot}${dk?`<a class="more-link" href="${demoFlagURL(p)}" target="_blank" rel="noopener" title="this demo doesn't match the script? open an issue" style="opacity:.72">⚑ wrong demo?</a>`:''}</div>
       <div class="more-readme" data-readme>${isUrl(p.proj)?'<button class="readme-btn">📖 load README</button>':''}</div>
     </div>`;
   return `<div class="card open${p.gh?' gh':''}" data-pn="${esc(p.dir||p.n)}" ${p.gh?`style="--srcc:${SRC[(p.srcs||[])[0]]?SRC[(p.srcs||[])[0]].color:'var(--trim)'}"`:''}>
