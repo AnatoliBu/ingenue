@@ -2530,7 +2530,7 @@ async function fetchDepsUrl(url){
     const j=await r.json(); return j.error?null:j; }catch(_){ return null; }
 }
 const DEP_MAX_DEPTH=4;
-function depStub(name,extra){ return Object.assign({name,requires_scripts:[],nb:false,needs_sc_ext:false,sc_extensions:[],sc_ext_present:[],missing_sc_ext:[],downloads:[],native:[],install_script:false,needs_setup:false,children:[],installed:false},extra||{}); }
+function depStub(name,extra){ return Object.assign({name,requires_scripts:[],nb:false,needs_sc_ext:false,sc_extensions:[],sc_ext_present:[],missing_sc_ext:[],downloads:[],downloads_skipped:[],unresolved_engines:[],native:[],install_script:false,needs_setup:false,children:[],installed:false},extra||{}); }
 // Resolve a required-dependency name to an installable entry WITHOUT gating on the
 // catalog: catalog/overlay first, then (if GitHub is connected) an exact-name repo
 // search. A `require "<name>/lib"` only gives us the folder name, never the owner —
@@ -2569,12 +2569,17 @@ async function traceDeps(p, depth, seen){
     else { seen.add(norm(reqn)); rep.children.push(depStub(reqn,{needsUrl:true})); }
   }
   // engine.name targets that aren't installed -> the script that PROVIDES the engine
-  // (Glut -> the 'glut' script). Same resolver, so it's installable / paste-url, never silent.
+  // (Glut -> the 'glut' script). When we CAN resolve a provider we offer it as a
+  // child to install. When we CAN'T, do NOT dead-end the user on "paste a git url":
+  // an engine with no findable provider almost always means the script bundles it
+  // (a detection gap on our side) or it's a core engine — either way maiden would
+  // just clone-and-run. Record it as a soft note and proceed silently, like maiden.
+  rep.unresolved_engines = [];
   if(depth>0) for(const eng of (rep.missing_engines||[])){
     if(seen.has(norm(eng))) continue;
     const dep=await resolveDep(eng);                       // provider script, by engine name
     if(dep){ const child=await traceDeps(dep, depth-1, seen); child.forEngine=eng; rep.children.push(child); }
-    else { seen.add(norm(eng)); rep.children.push(depStub(eng,{needsUrl:true, forEngine:eng})); }
+    else { seen.add(norm(eng)); rep.unresolved_engines.push(eng); }
   }
   return rep;
 }
@@ -2601,6 +2606,18 @@ function depNodeRows(rep){
   }
   if((rep.downloads||[]).length) rows.push(R('⬇','downloads ('+rep.downloads.length+')',
     rep.downloads.map(u=>`<a href="${u}" target="_blank" rel="noopener">${u.split('/').slice(-1)[0]}</a>`).join('<br>')));
+  // Plugin-pack downloads we deliberately did NOT offer (wrong arch / already
+  // provided). Shown so the choice is visible, but never an action — installing
+  // them would break the device, which is the whole reason they're skipped.
+  (rep.downloads_skipped||[]).forEach(s=>rows.push(R('✓',
+    'skipped download: '+esc(s.url.split('/').slice(-1)[0]),
+    `<span style="color:#5c5">${esc(s.reason)}</span>`)));
+  // Engine the script names but no separate provider exists for — almost always
+  // bundled in the script itself. Informational, not an action (we proceed like
+  // maiden: a plain clone, which carries the bundled engine).
+  (rep.unresolved_engines||[]).forEach(eng=>rows.push(R('🎛',
+    `expects the <b>${esc(eng)}</b> engine`,
+    `no separate provider script found — if the script bundles this engine (most do) it'll work from the plain clone, exactly as maiden installs it. Nothing to do here.`)));
   // Cross-script download hint: this script downloads an artifact hosted by
   // ANOTHER norns script's repo (e.g. amenbreak fetches PortedPlugins from
   // tapedeck/releases). The button installs the origin script too — a hint,
@@ -2664,10 +2681,13 @@ function anyInstallScript(n){ return !!n.install_script || (n.children||[]).some
 // external `require "x/lib"`, which becomes a child) that isn't installed yet.
 function nodeActionable(n){
   // Anything that *could* be acted on, hard or soft. Used to decide whether to
-  // surface the deps overlay at all.
+  // surface the deps overlay at all. missing_engines is intentionally NOT here:
+  // a resolvable engine provider becomes an uninstalled CHILD (which surfaces the
+  // overlay on its own), and an UNresolvable one is a soft note we proceed past
+  // like maiden — it must not, by itself, pop a "needs setup" modal.
   const uninstalledOrigins = (n.download_origins||[]).some(o => !o.installed);
   return !!(n.install_script || (n.downloads||[]).length || n.needs_sc_ext
-            || (n.missing_engines||[]).length || uninstalledOrigins
+            || uninstalledOrigins
             || (n.mod_bangs||[]).length);
 }
 // HARD actions = something the user actually has to do (a clone, a heal),
@@ -2675,7 +2695,10 @@ function nodeActionable(n){
 // run". Used to decide between "needs setup" wording (with Set up everything
 // button) vs "prerequisites look satisfied" wording (informational only).
 //   - Uninstalled child script -> HARD (must clone)
-//   - Missing engine that has no resolvable provider catalog entry -> HARD
+//   - Missing engine WITH a resolvable provider -> the provider is an uninstalled
+//     child, caught by the child recursion. WITHOUT one -> a soft note, NOT hard
+//     (we can't point at anything to install; the engine is almost always bundled,
+//     so we proceed like maiden rather than blocking on a url the user can't give).
 //   - mod_bangs found -> HARD (auto-heal needed)
 //   - install_script / downloads / needs_sc_ext on an INSTALLED node -> SOFT
 //     (the install.sh has presumably already run; the user can re-run it from
@@ -2684,13 +2707,12 @@ function hardActionsOnNode(n){
   const uninstalledOrigins = (n.download_origins||[]).some(o => !o.installed);
   if((n.mod_bangs||[]).length) return true;
   if(uninstalledOrigins) return true;
-  // missing_engines is hard only when the provider can't be resolved (we have
-  // no script to point at). If we resolved a provider, it'll appear as a child
-  // and its installed-ness is what matters — recursion below covers that.
-  // For uninstalled nodes we treat install_script / downloads / sc_ext as hard
-  // (their install.sh almost certainly hasn't run yet) — for already-installed
-  // nodes they're soft.
-  if(!n.installed && (n.install_script || (n.downloads||[]).length || n.needs_sc_ext || (n.missing_engines||[]).length)) return true;
+  // missing_engines no longer counts here: a resolved provider is an uninstalled
+  // child (caught by the child recursion in treeHasHardActions), and an unresolved
+  // engine is a soft note we proceed past like maiden. For uninstalled nodes we
+  // treat install_script / downloads / sc_ext as hard (their install.sh almost
+  // certainly hasn't run yet) — for already-installed nodes they're soft.
+  if(!n.installed && (n.install_script || (n.downloads||[]).length || n.needs_sc_ext)) return true;
   return false;
 }
 function treeNeedsAction(n){ return nodeActionable(n) || (n.children||[]).some(c=>!c.installed) || (n.children||[]).some(treeNeedsAction); }

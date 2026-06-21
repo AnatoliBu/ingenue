@@ -1693,6 +1693,11 @@ def run_install(full, emit=None):
 # reads from $HOME/version.txt — see norns.lua / script.lua). We surface both so
 # the UI can warn BEFORE install, instead of letting the script fail on-device.
 _NORNS_REQUIRED_RE = re.compile(r"norns\.version\.required\s*=\s*(\d+)")
+# A SuperCollider engine is whatever subclasses CroneEngine. scsynth keys on the
+# CLASS name (`Engine_X : CroneEngine`), compiled from the .sc body — the file may
+# be named Engine_X.sc, engine_x.sc, or anything else. This is the authoritative
+# "this .sc provides engine X" signal; filename matching is only a fallback.
+_ENGINE_CLASS_RE = re.compile(r"Engine_([A-Za-z0-9_]+)\s*:\s*CroneEngine")
 _NORNS_REF_MAP = {
     "210706": "v2.5.4", "210927": "v2.6.0", "220129": "v2.6.1", "220306": "v2.7.0",
     "220321": "v2.7.1", "220802": "v2.7.2", "221214": "v2.7.3", "230405": "v2.7.4",
@@ -1770,9 +1775,19 @@ def available_engines():
             if ".git" in r:
                 continue
             for f in fs:
-                m = re.match(r"Engine_(.+)\.sc$", f)
+                if not f.endswith(".sc"):
+                    continue
+                m = re.match(r"(?i)Engine_(.+)\.sc$", f)   # filename (case-insensitive)
                 if m:
                     names.add(m.group(1).lower())
+                # …and the class declaration inside it (the signal scsynth uses) —
+                # catches engines whose file isn't named Engine_*.sc.
+                try:
+                    with open(os.path.join(r, f), encoding="utf-8", errors="ignore") as fh:
+                        for cls in _ENGINE_CLASS_RE.findall(fh.read()):
+                            names.add(cls.lower())
+                except OSError:
+                    pass
     _engine_cache = names
     return names
 
@@ -1848,6 +1863,13 @@ def analyze_dir(full, name):
     sc_covered = sc_plugins_provided()
     sc_ext_present = [s for s in sc_ext if s in sc_covered]
     missing_sc_ext = [s for s in sc_ext if s not in sc_covered]
+    # A plugin-pack download (PortedPlugins-RaspberryPi.zip etc.) is harmful to
+    # offer when it's the wrong arch for this device or the OS already provides
+    # those UGens — drop it from the offer (keep it visible as "skipped + why").
+    # sc_satisfied: the script names UGens and all are already present this arch.
+    sc_satisfied = bool(sc_ext) and not missing_sc_ext
+    downloads, downloads_skipped = classify_downloads(
+        downloads, os.uname().machine, sc_covered, sc_satisfied=sc_satisfied)
     # library names can contain dots/hyphens (mx.samples, mx.synths, 4-big-knobs) — the old
     # [A-Za-z0-9_]+ class silently dropped those, so dotted deps never flagged for heal.
     # Also filter out anything the script bundles under its own lib/<X>/ — those require's
@@ -1865,8 +1887,17 @@ def analyze_dir(full, name):
     # another script, the engine is MISSING -> launch fails with "error: missing Foo".
     engines = sorted(set(re.findall(r"engine\.name\s*=\s*['\"]([A-Za-z0-9_]+)['\"]", blob)))
     avail = available_engines()
-    self_engines = {re.match(r"Engine_(.+)\.sc$", os.path.basename(f)).group(1).lower()
-                    for f in files if re.match(r"Engine_.+\.sc$", os.path.basename(f))}
+    # Engines this script SHIPS ITSELF (so the engine.name resolves locally and is
+    # NOT missing). Authoritative signal: the `Engine_X : CroneEngine` class decl
+    # in any .sc the script carries — that is what scsynth actually compiles. We
+    # also match the Engine_*.sc filename case-INSENSITIVELY, because community
+    # scripts name the file engine_foo.sc as often as Engine_Foo.sc (pit-orchisstra
+    # ships lib/engine_rudimentssnek.sc — the old case-sensitive `Engine_` regex
+    # missed it and dead-ended the user on "paste the RudimentsSnek git url").
+    self_engines = {m.lower() for m in _ENGINE_CLASS_RE.findall(blob)}
+    self_engines |= {m.group(1).lower()
+                     for f in files
+                     for m in [re.match(r"(?i)Engine_(.+)\.sc$", os.path.basename(f))] if m}
     missing_engines = sorted(e for e in engines
                              if e.lower() not in avail and e.lower() not in self_engines)
     # nb is flagged ONLY if the script references it externally AND doesn't ship
@@ -1902,6 +1933,7 @@ def analyze_dir(full, name):
         "git_url": git_remote(full),                     # inferred clone url — enables reinstall/update off-catalog
         "install_script": bool(find_installer(full)),
         "downloads": downloads[:12],
+        "downloads_skipped": downloads_skipped,          # plugin packs dropped: wrong arch / already provided (with reason)
         "sc_extensions": sc_ext,                         # every *_scsynth.so the script references
         "sc_ext_present": sc_ext_present,                # …of those, ones the OS already provides (right arch)
         "missing_sc_ext": missing_sc_ext,                # …and ones genuinely absent — the only ones we offer
@@ -1984,6 +2016,70 @@ def elf_arch(path):
 def host_arch():
     m = os.uname().machine
     return m, m in ("aarch64", "arm64", "x86_64", "amd64")
+
+
+# A download is a SuperCollider plugin/UGen pack (the dangerous-to-offer class)
+# when its filename looks like one of the known UGen distributions. Other
+# downloads (sample packs, ONNX models, audio files) are never second-guessed.
+_PLUGIN_PACK_RE = re.compile(r"ported.?plugins|mi-?ugens|sc-?plugins|f0plugins|ugens", re.I)
+# Platform tags that mean "not a Linux/norns .so at all" — never our concern.
+_NON_LINUX_RE = re.compile(r"\bmac(os)?\b|darwin|osx|\bwin(dows|64|32)?\b|\.dmg\b|\.pkg\b", re.I)
+# Release-asset filename token -> the ELF arch the asset actually contains. Order
+# matters: aarch64/arm64 before the generic 32-bit arm tokens.
+_ASSET_ARCH_RE = [
+    (re.compile(r"aarch64|arm64", re.I), "aarch64"),
+    (re.compile(r"raspberry|\brpi\b|armv7|armhf|armel|arm32", re.I), "arm"),
+    (re.compile(r"x86[_-]?64|amd64", re.I), "x86_64"),
+]
+
+
+def _asset_arch(url):
+    """Best-effort ELF arch of a release asset from its filename, or None."""
+    base = url.rsplit("/", 1)[-1]
+    for rx, a in _ASSET_ARCH_RE:
+        if rx.search(base):
+            return a
+    return None
+
+
+def classify_downloads(downloads, host_machine, covered, sc_satisfied=False):
+    """Split a script's download URLs into (offer, skip).
+
+    Only SuperCollider plugin packs are ever skipped — re-installing those is the
+    one download class that actively BREAKS a working device:
+      * wrong arch — PortedPlugins-RaspberryPi.zip is 32-bit ARM; on aarch64
+        scsynth silently rejects it (dead engines), so offering it is harmful.
+      * already provided — when the OS already ships the correct-arch plugins (or
+        the script's named UGens are all present), the pack would duplicate UGen
+        classes, a hard error that stops the script loading.
+
+    `covered` = sc_plugins_provided() (correct-arch .so basenames the OS provides).
+    `sc_satisfied` = the script names UGen .so AND none are missing for this arch.
+    Everything that isn't a recognised plugin pack is always offered (we can't
+    know what it is, and maiden would fetch it too). Returns
+    (offer:[url], skip:[{url, reason}])."""
+    want = ARCH_ELF.get(host_machine)
+    offer, skip = [], []
+    for url in downloads:
+        base = url.rsplit("/", 1)[-1]
+        if not _PLUGIN_PACK_RE.search(base) or _NON_LINUX_RE.search(base):
+            offer.append(url)
+            continue
+        aarch = _asset_arch(url)
+        if want and aarch and aarch != want:
+            skip.append({"url": url,
+                         "reason": f"wrong arch — this build is {aarch}, your norns runs "
+                                   f"{host_machine}; installing it would break the engine"})
+            continue
+        # correct/unknown arch: skip only if we can show it's redundant
+        os_provides_ported = bool(covered) and "ported" in base.lower()
+        if os_provides_ported or sc_satisfied:
+            skip.append({"url": url,
+                         "reason": "already provided by the OS — re-installing would duplicate "
+                                   "the UGen classes and stop the script loading"})
+            continue
+        offer.append(url)
+    return offer, skip
 
 
 def sc_ext_dirs():
