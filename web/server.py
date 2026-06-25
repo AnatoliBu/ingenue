@@ -1906,8 +1906,8 @@ def analyze_dir(full, name):
     # nb script installed — flagging them as needing nb was a recurring false
     # positive that drove agents to re-install nb-voice onto already-working setups.
     nb_referenced = bool(re.search(r"require[\s(]*['\"]nb/|/nb/lib|nb_voice|nb:add", blob))
-    # Voice classification mirroring nornslist _detect_voices (parity fixtures in
-    # nornslist tasks/test_voice_parity.py). provides = voices other scripts load.
+    # Voice classification: provides = voices other scripts load; requires =
+    # voice frameworks this script consumes (nb_*, etc.).
     v_provides, v_uses = [], []
     if re.search(r"nb:add_player\b", blob) or re.match(r"nb[_-]", name.lower()):
         v_provides.append("nb")
@@ -2940,6 +2940,37 @@ def fetch_community(name_or_url):
     return {"text": desc, "images": imgs[:12], "source": "norns.community"}
 
 
+# The default catalog source is the device's local community.json. The user can
+# refresh it on demand from the official monome/norns-community repo. Host is
+# hardcoded (SSRF-safe — never a caller-supplied URL); the write is validated +
+# atomic so a bad fetch never corrupts the existing local copy.
+COMMUNITY_SRC = "https://raw.githubusercontent.com/monome/norns-community/main/community.json"
+COMMUNITY_PATH = os.path.join(HERE, "community.json")
+
+
+def refresh_catalog():
+    try:
+        req = urllib.request.Request(COMMUNITY_SRC, headers={"User-Agent": "ingenue"})
+        with urllib.request.urlopen(req, timeout=15) as r:
+            raw = r.read(8_000_000)
+        data = json.loads(raw)
+        entries = data.get("entries")
+        if not isinstance(entries, list) or not entries:
+            return {"ok": False, "error": "fetched catalog has no entries"}
+        tmp = COMMUNITY_PATH + ".tmp"
+        with open(tmp, "wb") as f:
+            f.write(raw)
+        os.replace(tmp, COMMUNITY_PATH)   # atomic; old copy survives if the fetch failed
+        return {"ok": True, "entries": len(entries),
+                "fetched_at": datetime.datetime.utcnow().isoformat() + "Z"}
+    except json.JSONDecodeError:
+        return {"ok": False, "error": "fetched catalog is not valid JSON"}
+    except PermissionError:
+        return {"ok": False, "error": "catalog is read-only on this device"}
+    except Exception as e:  # noqa: BLE001
+        return {"ok": False, "error": f"refresh failed ({e.__class__.__name__})"}
+
+
 class H(http.server.SimpleHTTPRequestHandler):
     def __init__(self, *a, **k):
         super().__init__(*a, directory=HERE, **k)
@@ -3012,7 +3043,7 @@ class H(http.server.SimpleHTTPRequestHandler):
                                          and not d.startswith(".") and d != "ingenue"))
             if path == "/api/installed/shas":
                 # Local HEAD sha + commit date per installed git repo — NO network.
-                # The UI diffs these against nornslist's catalog/feed sha to detect
+                # The UI diffs these against the catalog/feed sha to detect
                 # updates without a single GitHub call (the old per-script ls-remote).
                 out = {}
                 for d in sorted(os.listdir(CODE)):
@@ -3158,6 +3189,9 @@ class H(http.server.SimpleHTTPRequestHandler):
         path = urllib.parse.urlparse(self.path).path
         b = self._body()
         try:
+            if path == "/api/refresh-catalog":
+                # Pull the latest curated community.json to the device (best-effort).
+                return self._json(refresh_catalog())
             if path == "/api/favorites":
                 if not isinstance(b.get("order"), list):
                     return self._json({"error": "order must be a list of file paths"}, 400)

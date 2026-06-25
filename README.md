@@ -188,10 +188,9 @@ they've made for norns.
 ## layout
 
 - `web/` is the app: `index.html` (a single self-contained page), `server.py`
-  (the on-device API over the dust tree), `community.json` + `enriched.json` +
-  `feed.json` (catalog, enrichment, and per-repo facets from the
-  [nornslist](https://github.com/seajaysec/nornslist) scraper), and `vendor/`
-  (the bundled 64-bit UGen pack).
+  (the on-device API over the dust tree), `community.json` (the curated catalog,
+  the default source — refreshable on-device and augmentable with any feed URL you
+  add), and `vendor/` (the bundled 64-bit UGen pack).
 - `install.sh` is the one-line installer above.
 - `DESIGN-NOTES.md` covers what's built and what's on the backlog.
 

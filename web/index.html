@@ -4,6 +4,11 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
 <meta name="theme-color" content="#1D1F21" id="metaTheme" />
+<!-- Content-Security-Policy: defense-in-depth behind the output-escaping. script/style
+     'unsafe-inline' is required by this single-file inline-script SPA (no nonce mechanism);
+     every other directive is tightly scoped. As a <meta> it travels with the file, so it
+     applies both on-device and on a static host. -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:; connect-src 'self' https://api.github.com https://raw.githubusercontent.com https://*.githubusercontent.com https://norns.community ws://*:5555 ws:; frame-src https://www.youtube.com https://player.vimeo.com https://w.soundcloud.com; base-uri 'self'; object-src 'none'; form-action 'self'" />
 <title>ingenue · norns</title>
 <script>
 /* demo mode: load the static-site mock layer when hosted on a Pages-style
@@ -827,7 +832,17 @@ button{font-family:inherit}
          <div class="cfg-sec">sources &amp; discovery</div>
          <div class="gh-box" id="gh-box"></div>
          <div class="src-list" id="src-list"></div>
-         <button class="rd-pill-btn" id="add-src" style="margin-bottom:6px">+ add source — catalog url or github search</button>
+         <div class="feed-list" id="feed-list" style="display:flex;flex-direction:column;gap:4px;margin-bottom:6px"></div>
+         <div id="add-feed-row" style="display:none;margin-bottom:6px">
+           <input id="feed-url-input" placeholder="https://…/feed.json or catalog.json" style="width:100%;box-sizing:border-box;margin-bottom:4px;padding:6px;background:var(--bg);border:1px solid var(--trim);border-radius:8px;color:var(--fg)">
+           <div style="display:flex;gap:6px;align-items:center">
+             <button class="rd-pill-btn" id="feed-url-add" style="margin:0">add feed</button>
+             <button class="rd-pill-btn" id="feed-url-cancel" style="margin:0">cancel</button>
+             <span id="feed-url-status" style="font-size:12px;color:var(--muted)"></span>
+           </div>
+         </div>
+         <button class="rd-pill-btn" id="add-src" style="margin-bottom:6px">+ add a catalog/feed (JSON URL)</button>
+         <button class="rd-pill-btn" id="refresh-catalog" style="margin-bottom:6px;display:none" title="re-download the curated community catalog to this device">↻ refresh community catalog</button>
 
          <div class="cfg-sec" style="margin-top:20px">color theme · <span id="theme-count"></span> schemes</div>
          <div class="theme-search"><svg viewBox="0 0 32 32"><path d="M31 27l-7.6-6.4C24.4 18.9 25 16.5 25 14c0-6.6-5.4-12-12-12S1 7.4 1 14s5.4 12 12 12c2.5 0 4.9-.6 6.6-1.6L27 31c1.1 1.2 2.9 1.3 4 .2s1-2.9-.2-4zM5 14c0-4.4 3.6-8 8-8s8 3.6 8 8-3.6 8-8 8-8-3.6-8-8z"/></svg>
@@ -1332,21 +1347,19 @@ const DEP_OVERLAY=[
   v:'', tags:['nb','lib','utility'], proj:'https://github.com/sixolet/nb', srcs:['community']},
 ];
 
-/* ============ load the real community catalog (350 scripts) ============ */
-// nornslist is the live data provider: its nightly scrape commits catalog.json
-// (the full catalog — community + gh-exclusive + soft-launch) and feed.json (per-repo
-// HEAD sha for update detection). We fetch them fresh from raw main each load so the
-// device tracks the latest nightly with NO ingenue redeploy. Bundled snapshots remain
-// as an offline fallback.
-const NL_RAW='https://raw.githubusercontent.com/seajaysec/nornslist/main';
-// Map a nornslist catalog.json row (long-form headers) to an ingenue entry, deriving
-// the source CATEGORY the Available tab filters on:
-//   community  — source=community (the maiden/norns.community catalog)
-//   softlaunch — source=github + a llllllll.co Discussion URL (a lines thread but not
-//                yet on norns.community)
-//   ghx        — source=github with no discussion (github-exclusive)
+/* ============ load the catalog (source-agnostic) ============ */
+// Default source: the device's LOCAL community.json (the curated norns.community
+// list), refreshed on demand by the user (↻ in config → /api/refresh-catalog). The
+// user may also add extra feeds — any catalog/feed JSON URL — which layer on top,
+// deduped by name with enrichment merged onto the surviving card. README text +
+// screenshots load live from GitHub. No external feed is hardcoded. With ONLY the
+// local community.json (no feeds, no network) the catalog still renders fully.
+let CAT_INDEX = new Map();   // norm(name) -> entry; the single dedup/merge authority
+
+// Map a long-form catalog.json row (Name/Author/Project URL/…) to an ingenue entry.
+// (Used when a user adds a long-form feed, e.g. someone's catalog.json.)
 function nlRowToEntry(e){
-  const src=(e.source||'community').toLowerCase();
+  const src=(e.source||'github').toLowerCase();
   const discU=(e['Discussion URL']||'').trim();
   const cat = src==='community' ? 'community' : (discU ? 'softlaunch' : 'ghx');
   return {
@@ -1361,49 +1374,78 @@ function nlRowToEntry(e){
     cat, srcs:[src==='community'?'community':'github'], gh: src==='github'?1:0,
   };
 }
+// Map a community.json entry (project_name/author/…) to an ingenue entry.
+function communityRowToEntry(e){
+  return { n:e.project_name, a:e.author||'unknown', d:e.description||'',
+    tags:(e.tags||[]).slice(0,5), proj:e.project_url||'', docU:e.documentation_url||'',
+    discU:e.discussion_url||'', comm:e.community_url||'',
+    doc:e.documentation_url?1:0, disc:e.discussion_url?1:0,
+    cat:'community', srcs:['community'], gh:0 };
+}
+// Fill enrichment from `s` onto `t` only where `t` lacks it — collapses duplicates
+// (same script across sources) onto ONE card while keeping the best metadata from any.
+function mergeEnrich(t, s){
+  ['engine','readme','sha','upd','demo','proj','docU','discU','comm','d','a','status']
+    .forEach(k=>{ if(!t[k] && s[k]) t[k]=s[k]; });
+  if(s.voices && !t.voices) t.voices=s.voices;
+  if(s.facets && s.facets.length && !(t.facets&&t.facets.length)) t.facets=s.facets;
+  if(s.images && s.images.length && !(t.images&&t.images.length)) t.images=s.images;
+  if(s.stars && !t.stars) t.stars=s.stars;
+  if(s.tags && s.tags.length) t.tags=Array.from(new Set((t.tags||[]).concat(s.tags))).slice(0,8);
+  if(s.srcs) s.srcs.forEach(x=>{ if(!t.srcs.includes(x)) t.srcs.push(x); });
+}
+// Add to the merge index, or merge onto an existing same-named entry (case-insensitive).
+function indexAdd(entries, e){
+  if(!e || !e.n) return;
+  const k=norm(e.n), cur=CAT_INDEX.get(k);
+  if(cur){ mergeEnrich(cur, e); } else { CAT_INDEX.set(k, e); entries.push(e); }
+}
+// Parse an added feed's JSON into {entries, enrich}. Supports community ({entries:[…]}),
+// long-form catalog ({scripts:[…]}), and enrichment-map ({scripts:{name:{…}}} / bare map).
+function parseFeedJson(j){
+  if(j && Array.isArray(j.entries)) return {entries:j.entries.map(communityRowToEntry), enrich:null};
+  if(j && Array.isArray(j.scripts)) return {entries:j.scripts.map(nlRowToEntry), enrich:null};
+  const map = (j && j.scripts && typeof j.scripts==='object') ? j.scripts
+            : (j && typeof j==='object' && !Array.isArray(j)) ? j : null;
+  return {entries:[], enrich:map};
+}
+// Fetch + parse every user-added feed (localStorage 'customFeeds'). Per-feed best-effort:
+// a dead/malformed feed is flagged (_err) and skipped, never blanking the catalog.
+async function loadCustomFeeds(){
+  const feeds = LS.get('customFeeds', []) || []; const out=[];
+  for(const f of feeds){
+    try{ const r=await fetch(f.url,{cache:'no-store'}); if(!r.ok) throw new Error(r.status);
+      out.push(parseFeedJson(await r.json())); f._err=0; }
+    catch(_){ f._err=1; }
+  }
+  LS.set('customFeeds', feeds);
+  return out;
+}
 async function loadCatalog(){
   try{
-    // Primary: nornslist's full live catalog. Fallback: the bundled community snapshot.
-    let entries=null;
-    try{
-      const r=await fetch(`${NL_RAW}/catalog.json`,{cache:'no-store'});
-      if(r.ok){ const j=await r.json(); if(Array.isArray(j.scripts)) entries=j.scripts.map(nlRowToEntry); }
-    }catch(_){}
-    if(!entries){
-      const r=await fetch('community.json',{cache:'no-store'}); if(!r.ok) throw new Error(r.status);
-      const j=await r.json();
-      entries=(j.entries||[]).map(e=>({
-        n:e.project_name, a:e.author||'unknown', d:e.description||'',
-        tags:(e.tags||[]).slice(0,5), proj:e.project_url, docU:e.documentation_url, discU:e.discussion_url,
-        doc:e.documentation_url?1:0, disc:e.discussion_url?1:0, cat:'community', srcs:['community'], gh:0
-      }));
+    CAT_INDEX = new Map();
+    let entries=[];
+    // Base (default) source: the device's local community.json.
+    const r=await fetch('community.json',{cache:'no-store'}); if(!r.ok) throw new Error(r.status);
+    const j=await r.json();
+    (j.entries||[]).forEach(e=> indexAdd(entries, communityRowToEntry(e)));
+    // Layer user-added feeds (add order): merge enrichment onto existing names,
+    // append new ones as the 'custom' source.
+    for(const {entries:fe, enrich} of await loadCustomFeeds()){
+      fe.forEach(e=>{ if(e&&e.n){ e.cat='custom'; e.srcs=['custom'];
+        if(e.gh==null) e.gh = e.proj&&/github\.com/.test(e.proj)?1:0; indexAdd(entries, e); } });
+      if(enrich) Object.keys(enrich).forEach(k=>{ const cur=CAT_INDEX.get(norm(k)); if(cur) mergeEnrich(cur, enrich[k]); });
     }
-    // feed.json (raw main, bundled fallback): community SHAs + engine/nb/readme/images.
-    // catalog.json already carries these for discovered repos; feed fills community rows.
-    try{
-      let feed=null;
-      try{ const fr=await fetch(`${NL_RAW}/feed.json`,{cache:'no-store'}); if(fr.ok) feed=await fr.json(); }catch(_){}
-      if(!feed){ feed=await (await fetch('feed.json',{cache:'no-store'})).json(); }
-      const fm=feed.scripts||feed;
-      entries.forEach(e=>{ const x=fm[(e.n||'').toLowerCase()]; if(!x) return;
-        if(x.engine&&!e.engine) e.engine=x.engine; if(x.voices) e.voices=x.voices;
-        if(x.facets&&!(e.facets&&e.facets.length)) e.facets=x.facets;
-        if(x.readme&&!e.readme) e.readme=x.readme;
-        if(x.images&&!(e.images&&e.images.length)) e.images=x.images;
-        if(x.sha&&!e.sha) e.sha=x.sha; if(x.upd&&!e.upd) e.upd=x.upd;
-        if(x.tags) e.tags=Array.from(new Set((e.tags||[]).concat(x.tags))).slice(0,8); });
-    }catch(_){}
     // merge known un-catalogued lib-deps (nb, …) so they're visible/installable
-    // and resolve when a script requires them (traceDeps/runHeal look them up here)
-    DEP_OVERLAY.forEach(o=>{ if(!entries.some(e=>norm(e.n)===norm(o.n))) entries.push({doc:0,disc:0,cat:'community',...o}); });
+    DEP_OVERLAY.forEach(o=>{ if(!CAT_INDEX.has(norm(o.n))){ const e={doc:0,disc:0,cat:'community',srcs:['community'],...o}; CAT_INDEX.set(norm(o.n),e); entries.push(e); } });
     // ingenue is infra running ON the device (it self-updates) — never an install target
+    CAT_INDEX.delete(norm('ingenue'));
     REPO.available = entries.filter(e=>norm(e.n||'')!=='ingenue');
-    await loadMyRepos();                              // token-gated: fold in the user's own (public+private) repos
+    await loadMyRepos();                              // token-gated: fold in the user's own repos (deduped via CAT_INDEX)
     scriptsState.catalog='ready';
     // The installed list loads first and INDEPENDENTLY (loadScripts → probeInstalled),
-    // so a catalog hiccup can never blank it. Re-mark it here only to enrich the
-    // on-device cards with catalog metadata now that entries are available.
-    if(INSTALLED_NAMES.length) applyRealInstalled(INSTALLED_NAMES, entries);
+    // so a catalog hiccup can never blank it. Re-mark here to enrich the on-device cards.
+    if(INSTALLED_NAMES.length) applyRealInstalled(INSTALLED_NAMES, REPO.available);
     renderRepoIfOpen();
     return true;
   }catch(err){
@@ -1413,29 +1455,35 @@ async function loadCatalog(){
     return false;
   }
 }
-// Token-gated: fold the connected user's own repos (public + private) into the
-// catalog as the 'mine' source category. No-ops without a token. This is the only
-// thing a GitHub token is used for now (plus authenticating the manual GitHub
-// update check). Best-effort: any failure leaves the catalog untouched.
+// Token-gated: fold the connected user's own repos (public + private) into the catalog
+// as the 'mine' source. No-ops without a token. Deduped+merged via the shared CAT_INDEX,
+// so a script that's already in the catalog stays ONE card (enriched with the repo sha).
 async function loadMyRepos(){
   if(!ghConnected) return;
   let me=null; try{ me=await ghWhoami(); }catch(_){}
   if(!me) return;
   try{
-    // /user/repos reliably includes the user's OWN private repos (with `repo` scope);
-    // the search API frequently omits private repos and lags on indexing.
-    const r=await fetch('https://api.github.com/user/repos?per_page=100&affiliation=owner&sort=pushed',{headers:ghHeaders()});
-    if(!r.ok) return;
-    const items=(await r.json())||[];
-    const have=new Set(REPO.available.map(e=>norm(e.n)));
+    // /user/repos reliably includes the user's OWN private repos (with `repo` scope).
+    // Paginate past 100 so users with many Lua repos aren't truncated.
+    let page=1, items=[];
+    for(;;){
+      const r=await fetch(`https://api.github.com/user/repos?per_page=100&page=${page}&affiliation=owner&sort=pushed`,{headers:ghHeaders()});
+      if(!r.ok) break;
+      const batch=(await r.json())||[];
+      items=items.concat(batch);
+      if(batch.length<100 || page>=10) break;   // <full page = last; 10-page cap = 1000 repos
+      page++;
+    }
     items.forEach(it=>{
-      if((it.language||'')!=='Lua') return;   // norns scripts are Lua (parity with the old `user:<me> language:lua` search)
-      const nm=it.name||''; if(!nm || norm(nm)==='ingenue' || have.has(norm(nm))) return;   // skip ingenue + dups already in the catalog
-      have.add(norm(nm));
-      REPO.available.push({ n:nm, a:(it.owner||{}).login||me, d:it.description||'',
+      if((it.language||'')!=='Lua') return;   // norns scripts are Lua
+      const nm=it.name||''; if(!nm || norm(nm)==='ingenue') return;
+      const repoEntry={ n:nm, a:(it.owner||{}).login||me, d:it.description||'',
         tags:[], proj:it.html_url||'', upd:(it.pushed_at||'').slice(0,10),
         stars:it.stargazers_count||0, facets:['script'], readme:'', images:[], demo:'',
-        sha:'', cat:'mine', srcs:['mine'], gh:1, priv:it.private?1:0 });
+        sha:'', cat:'mine', srcs:['mine'], gh:1, priv:it.private?1:0 };
+      const cur=CAT_INDEX.get(norm(nm));
+      if(cur){ mergeEnrich(cur, repoEntry); }     // already catalogued → one card, enriched
+      else { CAT_INDEX.set(norm(nm), repoEntry); REPO.available.push(repoEntry); }
     });
   }catch(_){}
 }
@@ -2234,12 +2282,12 @@ function knownNames(){ const s=new Set(); REPO.installed.forEach(p=>s.add(p.n.to
   REPO.available.forEach(p=>{ if(p.srcs.includes('community')) s.add(p.n.toLowerCase()); }); return s; }
 /* ===== B6: tag filter facet + dynamic "additional voice" (nb) tag ===== */
 let tagFilter=new Set(), filtersOpen=false, hideInstalled=true;   // default: hide already-installed scripts
-// Available-tab source CATEGORIES (from nornslist): the maiden/community catalog,
+// Available-tab source CATEGORIES: the local community catalog,
 // soft launch (on github + a lines thread, not yet on norns.community), and
 // github-exclusive (found only on github). All on by default.
-const CAT_META={community:['◉','norns.community','#DEB887'],softlaunch:['◐','soft launch','#c9a0ff'],ghx:['◯','gh exclusive','#7ee787'],mine:['★','my repos','#7fbfff']};
-const CAT_ORDER=['community','softlaunch','ghx'];   // 'mine' appended only when a token is connected
-let catFilter=new Set(['community']);   // default: only the curated norns.community source engaged
+const CAT_META={community:['◉','community','#DEB887'],softlaunch:['◐','soft launch','#c9a0ff'],ghx:['◯','gh exclusive','#7ee787'],mine:['★','my repos','#7fbfff'],custom:['◆','custom feed','#ffb86c']};
+const CAT_ORDER=['community','softlaunch','ghx'];   // 'mine'/'custom' appended dynamically
+let catFilter=new Set(['community','custom']);   // default: the local community catalog + any added feeds
 // Maintainer-only visibility. Soft-launch / gh-exclusive scripts are harvested
 // but shown ONLY to the maintainer — GH_LOGIN==='seajaysec', proven by the GitHub
 // /user whoami (a valid seajaysec token). Every other user, and every anonymous
@@ -2249,11 +2297,15 @@ function ownerView(){ return GH_LOGIN==='seajaysec'; }
 function visibleAvailable(){
   const owner=ownerView();
   return (REPO.available||[]).filter(p=>{ const c=p.cat||'community';
-    return owner || c==='community' || c==='mine'; });
+    return owner || c==='community' || c==='mine' || c==='custom'; });   // custom = user's own added feeds
 }
-function visibleCats(){ return ownerView()?CAT_ORDER.slice():['community']; }
+function visibleCats(){
+  const base = ownerView()?CAT_ORDER.slice():['community'];
+  if((REPO.available||[]).some(p=>p.cat==='custom')) base.push('custom');   // show the chip only when feeds are added
+  return base;
+}
 function catBar(){
-  const counts={community:0,softlaunch:0,ghx:0};
+  const counts={community:0,softlaunch:0,ghx:0,custom:0};
   visibleAvailable().forEach(p=>{ const c=p.cat||'community'; if(c in counts) counts[c]++; });
   const chips=visibleCats().map(id=>{ const m=CAT_META[id], on=catFilter.has(id);
     return `<span class="srcchip ${on?'on':'off'}" data-cat="${id}" style="--c:${m[2]}" title="${m[1]}"><i></i>${m[1]} <b style="opacity:.6">${counts[id]}</b></span>`;
@@ -2261,7 +2313,7 @@ function catBar(){
   const hideInst=`<span class="srcchip ${hideInstalled?'on':''}" data-hideinst="1" style="--c:var(--ok,#6c6)"><i></i>${hideInstalled?'hiding installed':'hide installed'}</span>`;
   return `<div class="srcbar"><span class="lbl">sources</span>${chips}${hideInst}</div>`;
 }
-// Structural TYPE facet (from nornslist): script / mod / library / engine.
+// Structural TYPE facet: script / mod / library / engine.
 const TYPE_ORDER=['script','mod','library','engine'];
 let typeFilter=new Set(TYPE_ORDER);
 // Generic multiselect dropdown. key -> the live filter Set (looked up fresh so a
@@ -2349,7 +2401,7 @@ function wireControls(v){
   const hib=document.getElementById('dd-hideinst'); if(hib) hib.addEventListener('change',()=>{ hideInstalled=hib.checked; updateGrid(); });
   const ss=document.getElementById('rd-sort'); if(ss) ss.addEventListener('change',e=>{ const [f,d]=e.target.value.split(':'); sortMode=f; sortDir=d||'desc'; updateGrid(); });
 }
-// per-script update detection (installed tab). Default: fast diff vs nornslist's
+// per-script update detection (installed tab). Default: fast diff vs the catalog's
 // published sha (no GitHub call). Secondary: live GitHub check for bleeding edge.
 let updChecking=false, updCheckedAt=0, updFilter=false, updProgress={done:0,total:0}, updSource='';
 const NB_TAG='additional voice';
@@ -2369,7 +2421,7 @@ function tagBar(tab){
 }
 function repoList(tab){
   // Mode-routed base list. Manage modes (installed/updates) are the device's own
-  // scripts; browse ('available') is the nornslist catalog (source + hide-installed).
+  // scripts; browse ('available') is the catalog (source + hide-installed).
   let list;
   if(tab==='installed')      list=(REPO.installed||[]).slice();
   else if(tab==='updates')   list=(REPO.installed||[]).filter(p=>p.upd_avail);
@@ -2895,18 +2947,6 @@ async function showRequirements(p){
 }
 /* demo embed helpers */
 function isUrl(u){ return typeof u==='string' && /^https?:\/\//i.test(u.trim()); }
-// Demos are auto-discovered (nornslist searches YouTube/Vimeo), so some link the
-// wrong video. Opens a pre-filled issue on nornslist (the demo's source) asking
-// the flagger what they expected and for a better/official link.
-function demoFlagURL(p){
-  const body='Script: '+(p.n||'')
-    +'\nDemo currently shown: '+((p.demo||'').trim())
-    +'\n\nnornslist auto-discovers demos by searching YouTube/Vimeo, so it sometimes'
-    +' links the wrong video.\n\nHow is this demo irrelevant — what did you expect instead?\n\n'
-    +'If you have a more official or correct demo link, please paste it here:\n';
-  return 'https://github.com/seajaysec/nornslist/issues/new?labels=demo-mismatch&title='
-    +encodeURIComponent('demo mismatch: '+(p.n||''))+'&body='+encodeURIComponent(body);
-}
 function ytId(u){ if(!u)return''; const m=u.match(/(?:youtu\.be\/|youtube\.com\/(?:watch\?v=|embed\/|v\/|shorts\/))([\w-]{11})/); return m?m[1]:''; }
 function vimeoId(u){ if(!u)return''; const m=u.match(/vimeo\.com\/(?:video\/)?(\d+)/); return m?m[1]:''; }
 function scEmbedSrc(u){ // returns a SoundCloud player src for embeddable URLs, else ''
@@ -3184,8 +3224,8 @@ function updStripHTML(){
     return `<div class="upd-strip checking"><span class="ispin"></span><span>checking for updates… ${updProgress.done}/${updProgress.total}</span>`
       +`<span class="upd-bar"><span class="upd-fill" style="width:${pct}%"></span></span></div>`;
   }
-  const ghBtn=`<button class="upd-recheck gh" data-updcheck-gh="1" title="query GitHub directly for commits newer than nornslist's last nightly — slower, needs a token for speed, catches bleeding-edge">⎇ GitHub</button>`;
-  const recheck=`<button class="upd-recheck" data-updcheck="1" title="re-check against nornslist">↻ re-check</button>`;
+  const ghBtn=`<button class="upd-recheck gh" data-updcheck-gh="1" title="query GitHub directly for commits newer than the catalog's last update — slower, needs a token for speed, catches bleeding-edge">⎇ GitHub</button>`;
+  const recheck=`<button class="upd-recheck" data-updcheck="1" title="re-check against the catalog">↻ re-check</button>`;
   if(updCheckedAt){
     if(N){
       // "updates" is its own mode now (no in-strip filter chip); the strip just
@@ -3195,7 +3235,7 @@ function updStripHTML(){
         +`<button class="upd-all" data-updall="1">⬆ update all (${N})</button>`
         +`${toUpd}${recheck}${ghBtn}</div>`;
     }
-    return `<div class="upd-strip"><span class="upd-none" style="margin-right:auto">✓ all up to date <span style="color:var(--faint)">· vs ${updSource==='github'?'GitHub':'nornslist'}</span></span>${recheck}${ghBtn}</div>`;
+    return `<div class="upd-strip"><span class="upd-none" style="margin-right:auto">✓ all up to date <span style="color:var(--faint)">· vs ${updSource==='github'?'GitHub':'catalog'}</span></span>${recheck}${ghBtn}</div>`;
   }
   // no check run yet this session
   return `<div class="upd-strip"><span style="margin-right:auto">check installed scripts for updates</span>${recheck}${ghBtn}</div>`;
@@ -3238,13 +3278,13 @@ function applyUpdResults(res){
 async function checkUpdates(force){
   if(!HAS_BACKEND || updChecking) return;
   if(!force && updCheckedAt) return;          // cached this session — manual ↻ re-check overrides
-  updChecking=true; updFilter=false; updSource='nornslist'; updProgress={done:0,total:REPO.installed.length};
+  updChecking=true; updFilter=false; updSource='catalog'; updProgress={done:0,total:REPO.installed.length};
   refreshUpdStrip();
   // Update detection without any GitHub call: ask the device for each installed
   // script's LOCAL HEAD sha + commit date (one local-git call, no network), and
-  // diff against the sha nornslist already published (carried on each installed
+  // diff against the sha the catalog already published (carried on each installed
   // entry from catalog/feed via applyRealInstalled). A differing sha is only an
-  // UPDATE when nornslist's last-update is newer than the local commit — otherwise
+  // UPDATE when the catalog's last-update is newer than the local commit — otherwise
   // the user is ahead / on a fork, so we don't nag.
   let shas={};
   try{ shas=await (await fetch('api/installed/shas',{cache:'no-store'})).json(); }
@@ -3253,7 +3293,7 @@ async function checkUpdates(force){
     p.upd_avail=0; p.upd_err='';
     const local=shas[p.dir||p.n]; const remoteSha=(p.sha||'').trim();
     if(!local || !local.sha){ p.upd_err='local sha unknown'; return; }   // not a git clone
-    if(!remoteSha) return;                       // nornslist has no sha for this script → can't tell, don't nag
+    if(!remoteSha) return;                       // the catalog has no sha for this script → can't tell, don't nag
     if(local.sha===remoteSha) return;            // up to date
     const ld=(local.date||''), rd=(p.upd||'');   // ISO YYYY-MM-DD, string-comparable
     if(rd && ld && rd<=ld) return;               // local same-day-or-newer → diverged/ahead, not behind
@@ -3264,7 +3304,7 @@ async function checkUpdates(force){
   refreshUpdStrip(); updateGrid();              // flip flagged cards Reinstall→Update, drop badges
 }
 // Bleeding-edge variant: query GitHub directly (git ls-remote per installed repo,
-// server-side job) for commits newer than nornslist's last nightly. Slower, but
+// server-side job) for commits newer than the catalog's last update. Slower, but
 // catches the absolute latest. Faster/reliable with a token (5000 vs 60 req/hr).
 async function checkUpdatesGithub(force){
   if(!HAS_BACKEND || updChecking) return;
@@ -3472,7 +3512,7 @@ function repoCard(p,tab){
       <div class="more-meta">${p.upd?`updated ${p.upd}`:'last-updated unknown'} · via ${srcNames(p)}${p.inst?` · <button class="reqs-btn" data-reqs="1">⚙ requirements</button>`:''}</div>
       ${verRow}
       ${hasLinks?`<div class="more-links">${L(p.proj,'code')}${L(p.docU,'docs')}${L(p.discU,'discuss')}${L(p.comm,'norns.community')}</div>`:''}
-      <div class="more-demo">${demoSlot}${dk?`<a class="more-link" href="${demoFlagURL(p)}" target="_blank" rel="noopener" title="this demo doesn't match the script? open an issue" style="opacity:.72">⚑ wrong demo?</a>`:''}</div>
+      <div class="more-demo">${demoSlot}</div>
       <div class="more-readme" data-readme>${isUrl(p.proj)?'<button class="readme-btn">📖 load README</button>':''}</div>
     </div>`;
   return `<div class="card open${p.gh?' gh':''}" data-pn="${esc(p.dir||p.n)}" ${p.gh?`style="--srcc:${SRC[(p.srcs||[])[0]]?SRC[(p.srcs||[])[0]].color:'var(--trim)'}"`:''}>
@@ -3500,7 +3540,7 @@ function srcBar(tab){
 }
 function renderRepo(){
   const v=document.getElementById('repoview');
-  if(repoTab==='discover') repoTab='available';   // discover tab retired — nornslist provides the full catalog
+  if(repoTab==='discover') repoTab='available';   // discover tab retired — the catalog provides the full list
   const tab=repoTab;
   v.classList.remove('collapsed');
   const _cnt=(st,n)=>(st==='ready'||st==='demo')?n:'…';   // show '…' while a source is still loading/errored, not a misleading 0
@@ -3551,11 +3591,11 @@ function renderRepo(){
   }
 
   const list=repoList(tab);
-  const _where=tab==='available'?'<span>via nornslist</span>':tab==='updates'?'<span>behind upstream</span>':'<span>on your norns</span>';
+  const _where=tab==='available'?'<span>browse</span>':tab==='updates'?'<span>behind upstream</span>':'<span>on your norns</span>';
   const _empty=tab==='installed'?'<p>no scripts installed on the device yet — switch to <b>browse</b> to install some.</p>'
               :tab==='updates'?'<p>everything on your norns is up to date. ✓</p>'
               :'<p>nothing matches your filters.</p>';
-  const head = `<div class="rd-cathead"><span class="nm rd-count">${list.length} scripts</span>${_where}<span class="line"></span><button class="cathead-ic" data-act="refresh" title="reload the catalog from nornslist"><svg viewBox="0 0 32 32"><path d="${I.refresh}"/></svg></button><button class="selall-btn" data-selall>select all</button></div>`;
+  const head = `<div class="rd-cathead"><span class="nm rd-count">${list.length} scripts</span>${_where}<span class="line"></span><button class="cathead-ic" data-act="refresh" title="reload the catalog"><svg viewBox="0 0 32 32"><path d="${I.refresh}"/></svg></button><button class="selall-btn" data-selall>select all</button></div>`;
   v.innerHTML=`<div class="rd-top">${tabs}
       <div class="rd-toolbar">
         <label class="rd-search"><svg viewBox="0 0 32 32"><path d="${I.search}"/></svg><input id="rd-q" placeholder="search scripts, authors, tags…"></label>
@@ -4037,7 +4077,58 @@ function renderSrc(){
     renderSrc();renderRepo();
   });
 }
-function openCfg(){ buildThemeGrid(document.getElementById('theme-filter').value); renderGh(); renderSrc();
+// ---- custom catalog/feed management (source-agnostic; nothing hardcoded) ----
+function renderFeeds(){
+  const el=document.getElementById('feed-list'); if(!el) return;
+  const feeds=LS.get('customFeeds',[])||[];
+  el.innerHTML=feeds.map((f,i)=>`<div class="src-item" style="font-size:12px">
+    <span>${esc(f.label||f.url)}${f._err?' <span style="color:var(--err)">· unreachable</span>':''}</span>
+    <button class="rd-pill-btn" data-delfeed="${i}" style="margin:0;padding:2px 8px" title="remove this feed">✕</button></div>`).join('');
+  el.querySelectorAll('[data-delfeed]').forEach(b=>b.onclick=async()=>{
+    const arr=LS.get('customFeeds',[])||[]; arr.splice(+b.dataset.delfeed,1); LS.set('customFeeds',arr);
+    renderFeeds(); await loadCatalog(); renderRepoIfOpen();
+  });
+}
+async function addFeedFromInput(){
+  const inp=document.getElementById('feed-url-input'), st=document.getElementById('feed-url-status');
+  const url=(inp.value||'').trim();
+  if(!/^https:\/\//i.test(url)){ st.textContent='enter an https:// URL'; st.style.color='var(--err)'; return; }
+  st.textContent='checking…'; st.style.color='var(--muted)';
+  try{
+    const r=await fetch(url,{cache:'no-store'}); if(!r.ok) throw new Error('HTTP '+r.status);
+    const parsed=parseFeedJson(await r.json());
+    if(!parsed.entries.length && !parsed.enrich){ st.textContent='no catalog/feed data at that URL'; st.style.color='var(--err)'; return; }
+    const arr=LS.get('customFeeds',[])||[];
+    if(arr.some(f=>f.url===url)){ st.textContent='already added'; st.style.color='var(--err)'; return; }
+    let label=url; try{ label=new URL(url).hostname; }catch(_){}
+    arr.push({url, label, addedAt:Date.now()}); LS.set('customFeeds',arr);
+    inp.value=''; document.getElementById('add-feed-row').style.display='none'; st.textContent='';
+    renderFeeds(); await loadCatalog(); renderRepoIfOpen();
+  }catch(e){ st.textContent='could not load ('+(e.message||e)+')'; st.style.color='var(--err)'; }
+}
+function wireFeeds(){
+  const addBtn=document.getElementById('add-src'); if(addBtn) addBtn.onclick=()=>{
+    const row=document.getElementById('add-feed-row');
+    row.style.display = row.style.display==='none' ? 'block' : 'none';
+    if(row.style.display==='block') document.getElementById('feed-url-input').focus();
+  };
+  const a=document.getElementById('feed-url-add'); if(a) a.onclick=addFeedFromInput;
+  const c=document.getElementById('feed-url-cancel'); if(c) c.onclick=()=>{
+    document.getElementById('add-feed-row').style.display='none';
+    document.getElementById('feed-url-status').textContent='';
+  };
+  const inp=document.getElementById('feed-url-input'); if(inp) inp.addEventListener('keydown',e=>{ if(e.key==='Enter'){e.preventDefault();addFeedFromInput();} });
+  const rc=document.getElementById('refresh-catalog'); if(rc) rc.onclick=async()=>{
+    rc.disabled=true; const orig=rc.textContent; rc.textContent='↻ refreshing…';
+    try{ const r=await fetch('api/refresh-catalog',{method:'POST'}); const j=await r.json();
+      if(j.ok){ rc.textContent='✓ '+j.entries+' scripts'; await loadCatalog(); renderRepoIfOpen(); }
+      else { rc.textContent='✕ '+(j.error||'failed'); } }
+    catch(_){ rc.textContent='✕ failed'; }
+    setTimeout(()=>{ rc.textContent=orig; rc.disabled=false; }, 2500);
+  };
+}
+function openCfg(){ buildThemeGrid(document.getElementById('theme-filter').value); renderGh(); renderSrc(); renderFeeds();
+  const rcb=document.getElementById('refresh-catalog'); if(rcb) rcb.style.display = HAS_BACKEND ? '' : 'none';
   initSysInfo(); initAudioHealth(); initHealth();            // device-info section (no-op off-device)
   document.getElementById('overlay').classList.add('on'); }
 function closeCfg(){ document.getElementById('overlay').classList.remove('on'); }
@@ -4115,6 +4206,7 @@ function boot(){
   // config
   document.getElementById('cfg-close').onclick=closeCfg;
   document.getElementById('overlay').addEventListener('click',e=>{if(e.target.id==='overlay')closeCfg();});
+  wireFeeds();   // add-feed + refresh-community-catalog controls
   document.getElementById('theme-filter').addEventListener('input',e=>buildThemeGrid(e.target.value));
   document.getElementById('fontsize').addEventListener('input',e=>{
     const s=+e.target.value; document.getElementById('fontsize-v').textContent=s+'px';
