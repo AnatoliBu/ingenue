@@ -79,6 +79,14 @@ device on your network.
     author to see everything they've made for norns.
   - your token stays in your browser's localStorage and is only sent to
     api.github.com over HTTPS (never to ingenue or any server)
+  - **create it safely:** treat the token like a password. prefer a
+    [fine-grained token](https://github.com/settings/tokens?type=beta) scoped to
+    only the repos you need (read-only **Contents** + **Metadata**), or a classic
+    token with the minimum scope — `public_repo` + `read:user` for public repos,
+    or `repo` only if you need private ones. set a short expiration, and
+    [revoke it](https://github.com/settings/tokens) any time. because it lives in
+    your browser, a narrow, expiring token keeps the blast radius small if it
+    ever leaks.
 - dependency healing on script install: when a script needs samples or other
   scripts, ingenue traces the whole chain and runs the installers in a
   port-tolerant way. if a setup step fails, it can retry on its own without

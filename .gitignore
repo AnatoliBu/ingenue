@@ -7,3 +7,6 @@ screenshots/
 .claude/
 .venv
 .vscode/
+
+# internal notes (not published)
+CONSIDER-LATER.md

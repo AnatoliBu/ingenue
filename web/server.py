@@ -1636,7 +1636,7 @@ def run_install(full, emit=None):
                 out = om.group(1) if om else os.path.basename(url.split("?")[0])
                 dest = os.path.join(cwd, out)
                 emit(f"↓ downloading {out} …")
-                urllib.request.urlretrieve(url, dest)
+                urllib.request.urlretrieve(url, dest)  # nosemgrep: dynamic-urllib-use-detected -- url is the script's own wget/curl install line (norns install-trust model)
                 fixown(dest)
                 add(f"downloaded {out} ({os.path.getsize(dest)} bytes)")
             elif line.startswith("tar "):
@@ -2227,7 +2227,7 @@ def scplugins_online_version():
         req = urllib.request.Request(
             "https://api.github.com/repos/seajaysec/sc-plugins-arm64/releases/latest",
             headers={"User-Agent": "ingenue"})
-        with urllib.request.urlopen(req, timeout=5) as r:
+        with urllib.request.urlopen(req, timeout=5) as r:  # nosemgrep: dynamic-urllib-use-detected -- hardcoded api.github.com URL
             j = json.loads(r.read())
         tag = j.get("tag_name")
         asset = next((a["browser_download_url"] for a in j.get("assets", [])
@@ -2260,10 +2260,17 @@ def scplugins_heal(source="bundled", url=""):
     log = []
     try:
         if source == "online":
-            if not url.startswith("https://"):
-                return {"ok": False, "error": "online heal needs a release url"}
+            # SSRF / arbitrary-download guard: only fetch from GitHub release
+            # hosts, never an arbitrary caller-supplied URL. The :7777 service is
+            # unauthenticated and the downloaded archive is extracted as native
+            # .so plugins, so an open download here would be a download->RCE path.
+            # Trailing slashes prevent the "github.com.evil.com" prefix bypass.
+            if not url.startswith(("https://github.com/",
+                                   "https://objects.githubusercontent.com/",
+                                   "https://release-assets.githubusercontent.com/")):
+                return {"ok": False, "error": "online heal only downloads from github release hosts"}
             tgz = os.path.join(tmp, "pack.tar.gz")
-            urllib.request.urlretrieve(url, tgz)
+            urllib.request.urlretrieve(url, tgz)  # nosemgrep: dynamic-urllib-use-detected -- host-allowlisted directly above
             log.append(f"downloaded {url}")
         else:
             tgz = bundle_path()
@@ -2754,7 +2761,9 @@ def audio_restart():
     for cmd in ("systemctl restart norns", "systemctl restart norns-jack",
                 "sv restart norns"):
         try:
-            r = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=20)
+            # Fixed list of literal commands (no shell, no user input) — pass argv
+            # directly so there's no shell to inject into.
+            r = subprocess.run(cmd.split(), capture_output=True, text=True, timeout=20)
             if r.returncode == 0:
                 return {"ok": True, "method": cmd, "reboot_required": False,
                         "log": f"ran: {cmd}"}
@@ -2829,7 +2838,7 @@ def _gh_default_branch(owner, repo):
     try:
         req = urllib.request.Request(f"https://api.github.com/repos/{owner}/{repo}",
                                      headers={"User-Agent": "ingenue"})
-        with urllib.request.urlopen(req, timeout=6) as r:
+        with urllib.request.urlopen(req, timeout=6) as r:  # nosemgrep: dynamic-urllib-use-detected -- host pinned to api.github.com (owner/repo are path-segment-only)
             return json.loads(r.read()).get("default_branch") or "main"
     except Exception:  # noqa: BLE001
         return "main"
@@ -2843,7 +2852,7 @@ def fetch_readme(url):
         req = urllib.request.Request(
             f"https://api.github.com/repos/{owner}/{repo}/readme",
             headers={"User-Agent": "ingenue", "Accept": "application/vnd.github.raw"})
-        with urllib.request.urlopen(req, timeout=8) as r:
+        with urllib.request.urlopen(req, timeout=8) as r:  # nosemgrep: dynamic-urllib-use-detected -- host pinned to api.github.com (owner/repo are path-segment-only)
             md = r.read().decode("utf-8", "replace")
     except Exception as e:  # noqa: BLE001
         return {"error": f"no README ({e.__class__.__name__})", "images": [], "text": "", "has_images": False}

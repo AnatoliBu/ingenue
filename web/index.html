@@ -1422,12 +1422,14 @@ async function loadMyRepos(){
   let me=null; try{ me=await ghWhoami(); }catch(_){}
   if(!me) return;
   try{
-    const r=await fetch('https://api.github.com/search/repositories?per_page=100&q='
-      +encodeURIComponent('user:'+me+' language:lua'),{headers:ghHeaders()});
+    // /user/repos reliably includes the user's OWN private repos (with `repo` scope);
+    // the search API frequently omits private repos and lags on indexing.
+    const r=await fetch('https://api.github.com/user/repos?per_page=100&affiliation=owner&sort=pushed',{headers:ghHeaders()});
     if(!r.ok) return;
-    const items=(await r.json()).items||[];
+    const items=(await r.json())||[];
     const have=new Set(REPO.available.map(e=>norm(e.n)));
     items.forEach(it=>{
+      if((it.language||'')!=='Lua') return;   // norns scripts are Lua (parity with the old `user:<me> language:lua` search)
       const nm=it.name||''; if(!nm || norm(nm)==='ingenue' || have.has(norm(nm))) return;   // skip ingenue + dups already in the catalog
       have.add(norm(nm));
       REPO.available.push({ n:nm, a:(it.owner||{}).login||me, d:it.description||'',
@@ -2133,7 +2135,8 @@ async function replInstallFromUrl(url){
     await new Promise(r=>setTimeout(r,500));
   }
 }
-function esc(s){return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
+const ESC_MAP={'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'};
+function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,c=>ESC_MAP[c]);}
 
 /* autocomplete */
 // ;-cmd completions — kept in sync with replSlashCmd's switch above.
@@ -2384,7 +2387,7 @@ function repoList(tab){
 function updateGrid(){
   const v=document.getElementById('repoview'); const grid=v.querySelector('.rd-grid'); if(!grid) return;
   const tab=repoTab, list=repoList(tab);
-  grid.innerHTML=list.map(p=>repoCard(p,tab)).join('')||`<div class="gh-empty"><p>nothing matches “${repoQuery}”.</p></div>`;
+  grid.innerHTML=list.map(p=>repoCard(p,tab)).join('')||`<div class="gh-empty"><p>nothing matches “${esc(repoQuery)}”.</p></div>`;
   const cnt=v.querySelector('.rd-count'); if(cnt) cnt.textContent=list.length+' scripts';
   const tc=v.querySelector('.js-tabcount'); if(tc) tc.textContent=list.length;   // tab count tracks the filtered list too
   wireCards(v,list,tab); updateBulkBar();
@@ -2512,7 +2515,7 @@ function markRemoved(nm){ const k=norm(nm);
 }
 function removeScript(p,btn){
   const nm=p.dir||p.n;
-  confirmDialog('remove script?', `Remove <b>${p.n}</b>? This permanently deletes <b>dust/code/${nm}</b> from the device.`, ()=>{
+  confirmDialog('remove script?', `Remove <b>${esc(p.n)}</b>? This permanently deletes <b>dust/code/${esc(nm)}</b> from the device.`, ()=>{
     if(!HAS_BACKEND){ if(btn){const t=btn.textContent;btn.textContent='removed';setTimeout(()=>btn.textContent=t,900);} return; }
     const job=mkJob(p.n,'removing'); job.querySelector('.ilog').textContent=`deleting dust/code/${nm}…`;
     fetch('api/remove',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:nm})})
@@ -2882,7 +2885,7 @@ function setupFailed(job,name,why){
 }
 async function showRequirements(p){
   document.getElementById('dep-title').textContent='requirements';
-  document.getElementById('dep-intro').innerHTML=`<b>${p.n}</b> — tracing dependencies…`;
+  document.getElementById('dep-intro').innerHTML=`<b>${esc(p.n)}</b> — tracing dependencies…`;
   document.getElementById('dep-plan').innerHTML='<div class="dep-row"><span class="dep-ic">⏳</span><div><div class="k">analyzing the dependency graph…</div><div class="d">cloning required scripts to inspect them — a moment.</div></div></div>';
   document.getElementById('dep-warn').style.display='none';
   document.getElementById('dep-go').style.display='none';
@@ -2913,7 +2916,7 @@ function scEmbedSrc(u){ // returns a SoundCloud player src for embeddable URLs, 
   return '';                                                                // malformed (e.g. soundcloud.com/track/<id>) → link out
 }
 function demoKind(u){ // null = not playable; embed kinds use an iframe, link kinds open out
-  if(!isUrl(u)) return null;
+  if(!isUrl(u) || isForumMedia(u)) return null;   // never embed or link forum uploads (lines ToS)
   if(ytId(u)) return 'youtube';
   if(vimeoId(u)) return 'vimeo';
   if(/soundcloud\.com/i.test(u)) return scEmbedSrc(u)?'soundcloud':'link';
@@ -3041,7 +3044,7 @@ async function ghSearch(query,page){
         proj:it.html_url, priv:!!it.private, srcs, gh:1, facets:c.facets||[], voices:c.voices||{provides:[],uses:[],systems:[]} };
     });
     _discLoaded=true; if(repoTab==='discover') renderRepo();
-  }catch(err){ if(grid) grid.innerHTML=`<div class="gh-empty"><p>GitHub search failed: ${err.message}</p></div>`; }
+  }catch(err){ if(grid) grid.innerHTML=`<div class="gh-empty"><p>GitHub search failed: ${esc(err.message)}</p></div>`; }
 }
 /* clicking an author anywhere → that user's norns repos. With a token we list their public
    (and visible private) repos live, gate-classified; without one we show what the catalog/installed
@@ -3081,7 +3084,7 @@ function requestInstall(p,btn,tab){
   else {
     trustPending={p,btn};
     const src=(p.srcs||[]).map(s=>SRC[s]?SRC[s].name:s).join(', ')||'an external source';
-    document.getElementById('trust-msg').innerHTML=`<b>${p.n}</b> by ${p.a} comes from <b>${src}</b> — not the built-in community catalog.`;
+    document.getElementById('trust-msg').innerHTML=`<b>${esc(p.n)}</b> by ${esc(p.a)} comes from <b>${esc(src)}</b> — not the built-in community catalog.`;
     document.getElementById('trust-remember').checked=false;
     document.getElementById('trust-overlay').classList.add('on');
   }
@@ -3096,7 +3099,7 @@ function proceedInstall(p,btn,renamed,linkExisting){ const e=shipEngine(p);
 function openEngineModal(p,c,btn){
   enginePending={p,btn};
   const suggest=availableEngineName(c.engine);
-  document.getElementById('eng-msg').innerHTML=`<b>${p.n}</b> registers a SuperCollider engine named <b>${c.engine}</b>, already provided by <b>${c.owner}</b>. Two engines can't share a class name — installing as-is can break one of them.`;
+  document.getElementById('eng-msg').innerHTML=`<b>${esc(p.n)}</b> registers a SuperCollider engine named <b>${esc(c.engine)}</b>, already provided by <b>${esc(c.owner)}</b>. Two engines can't share a class name — installing as-is can break one of them.`;
   document.getElementById('eng-rename').value=suggest;
   document.getElementById('eng-overlay').classList.add('on');
 }
@@ -3303,30 +3306,25 @@ async function updateAllBehind(){              // "Update all" on installed = up
 /* ===== B5: README + image carousel (norns.community / GitHub), lazy ===== */
 async function loadReadme(card,p){
   const slot=card.querySelector('[data-readme]'); if(!slot) return;
-  if(p.readme||p.images){                                   // B7: precomputed by the nornslist feed → no fetch
-    let h=''; if(p.readme) h+=`<div class="readme-text" style="font-size:12px;color:var(--muted);line-height:1.5;margin:6px 0">${esc(p.readme)}</div>`;
-    if(p.images&&p.images.length) h+=carouselHTML(p.images);
-    slot.innerHTML=h; wireCarousel(slot); return;
-  }
-  slot.innerHTML='<span class="more-nodemo">loading README…</span>';
+  const RT='font-size:12px;color:var(--muted);line-height:1.5;margin:6px 0;max-height:62vh;overflow:auto';
+  const render=(j)=>{ let html=''; if(j.text) html+=`<div class="readme-text" style="${RT}">${mdToHtml(j.text)}</div>`;
+    if(j.images&&j.images.length) html+=carouselHTML(j.images);
+    slot.innerHTML=html||'<span class="more-nodemo">no README details</span>'; wireCarousel(slot); };
+  // Instant: render the feed's precomputed prefix so something shows immediately,
+  // then replace it with the FULL README below.
+  if(p.readme||(p.images&&p.images.length)) render({text:p.readme||'', images:p.images||[]});
+  else slot.innerHTML='<span class="more-nodemo">loading README…</span>';
+  // Whole README: prefer the full GitHub README (rendered as Markdown, images inline,
+  // forum uploads shown as code). Fall back to the norns.community description
+  // (server-fetched, no token) for entries without a usable GitHub README.
   let j=null;
-  // Community scripts: source description + images from norns.community via the server — it's a
-  // static GitHub Pages site (no API rate limit, no token needed), and the same data the catalog
-  // is built from. The browser can't fetch it (no CORS), so the server does.
-  if((p.srcs||[]).includes('community')){
+  if(/github\.com/.test(p.proj||'')) j=await ghReadme(p.proj);
+  if((!j||j.error||!j.text) && (p.srcs||[]).includes('community')){
     try{ const c=await (await fetch('api/community?comm='+encodeURIComponent(p.comm||p.n),{cache:'no-store'})).json();
       if(c && !c.error && ((c.text&&c.text.length) || (c.images&&c.images.length))) j=c; }catch(_){}
   }
-  // Otherwise (GitHub discovery), or if norns.community had nothing, fetch from GitHub in the
-  // BROWSER with the user's token (5000/hr) — never via the server, whose shared unauthenticated
-  // budget is only 60/hr and exhausts fast.
-  if(!j) j=await ghReadme(p.proj);
-  if(j.error){ slot.innerHTML='<span class="more-nodemo">no README found ('+esc(j.error)+')</span>'; return; }
-  let html='';
-  if(j.text) html+=`<div class="readme-text" style="font-size:12px;color:var(--muted);line-height:1.5;margin:6px 0">${esc(j.text)}</div>`;
-  if(j.images&&j.images.length) html+=carouselHTML(j.images);
-  slot.innerHTML=html||'<span class="more-nodemo">no README details</span>';
-  wireCarousel(slot);
+  if(j && !j.error && (j.text||(j.images&&j.images.length))) render(j);
+  else if(!(p.readme||(p.images&&p.images.length))) slot.innerHTML='<span class="more-nodemo">no README found</span>';
 }
 // Read a repo's README straight from the GitHub API in the browser. /readme auto-resolves the
 // file wherever/however it's named; raw images are resolved relative to its download_url.
@@ -3352,19 +3350,61 @@ async function ghReadme(proj){
     if(/\.(png|jpe?g|gif|webp)(\?|$)/i.test(u)){ seen.add(u); imgs.push(u); } };
   (md.match(/!\[[^\]]*\]\(([^)\s]+)/g)||[]).forEach(s=>push(s.replace(/^!\[[^\]]*\]\(/,'')));
   (md.match(/<img[^>]+src=["']([^"']+)/gi)||[]).forEach(s=>push(s.replace(/.*src=["']/i,'')));
-  let text='';
-  for(const para of md.split(/\n\s*\n/)){ const s=para.replace(/`{1,3}/g,'').trim();
-    if(s && !/^[#!<|*-]/.test(s) && !s.startsWith('[![') && s.length>30){ text=s.replace(/\s+/g,' ').slice(0,600); break; } }
-  return {text, images:imgs.slice(0,12)};
+  // Resolve relative / github-blob image URLs to absolute raw so the FULL README
+  // renders with its images inline (mdToHtml does the Markdown). Images live inline,
+  // so there's no separate gallery for the GitHub path.
+  const resolve=u=>{ u=(u||'').trim();
+    if(/^https?:/i.test(u)) return u.replace(/https?:\/\/github\.com\/([^/]+\/[^/]+)\/(?:blob|raw)\//i,'https://raw.githubusercontent.com/$1/');
+    if(u.startsWith('data:')||u.startsWith('#')) return u;
+    return base+u.replace(/^\.?\//,''); };
+  const full=md.replace(/(!\[[^\]]*\]\(\s*)([^)\s]+)/g,(m,pre,u)=>pre+resolve(u));
+  return {text:full, images:[]};
 }
+// Non-HTML forum content (uploads/avatars). The lines ToS forbids BOTH embedding
+// and hyperlinking to these, so we neither <img> nor <a> them — GitHub README
+// images stand in. Forum thread (/t/) and profile (/u/) links are HTML, so allowed.
+function isForumMedia(u){ return /:\/\/(?:[^/]*\.)?llllllll\.co\/(?:uploads|user_avatar)\//i.test(u||''); }
 function carouselHTML(imgs){
-  const multi=imgs.length>1;
+  const pics=(imgs||[]).filter(u=>!isForumMedia(u));
+  const fmedia=(imgs||[]).filter(isForumMedia);   // forum uploads: show URL as code, never embed/link, never drop
+  const codeHTML=fmedia.length?`<div style="margin:6px 0;display:flex;flex-wrap:wrap;gap:4px">`+fmedia.map(u=>`<code style="${MD_CS}">${esc(u)}</code>`).join('')+`</div>`:'';
+  if(!pics.length) return codeHTML;
+  const multi=pics.length>1;
   return `<div class="carousel" data-idx="0" style="position:relative;margin:8px 0">
-    <img class="cimg" src="${imgs[0]}" data-imgs='${JSON.stringify(imgs).replace(/'/g,'&#39;')}' loading="lazy" style="width:100%;border-radius:8px;display:block;max-height:240px;object-fit:contain;background:#0003">
+    <img class="cimg" src="${esc(pics[0])}" data-imgs='${esc(JSON.stringify(pics))}' loading="lazy" style="width:100%;border-radius:8px;display:block;max-height:240px;object-fit:contain;background:#0003">
     ${multi?`<button class="cprev" style="position:absolute;left:6px;top:50%;transform:translateY(-50%);border:0;background:#000a;color:#fff;border-radius:50%;width:28px;height:28px;cursor:pointer;font-size:16px">‹</button>
     <button class="cnext" style="position:absolute;right:6px;top:50%;transform:translateY(-50%);border:0;background:#000a;color:#fff;border-radius:50%;width:28px;height:28px;cursor:pointer;font-size:16px">›</button>
-    <span class="cdot" style="position:absolute;bottom:6px;left:50%;transform:translateX(-50%);font-size:10px;color:#fff;background:#000a;padding:1px 7px;border-radius:8px">1 / ${imgs.length}</span>`:''}
-  </div>`;
+    <span class="cdot" style="position:absolute;bottom:6px;left:50%;transform:translateX(-50%);font-size:10px;color:#fff;background:#000a;padding:1px 7px;border-radius:8px">1 / ${pics.length}</span>`:''}
+  </div>`+codeHTML;
+}
+// ---- XSS-safe Markdown -> HTML for README rendering ------------------------
+// Strategy: escape the ENTIRE source first (so no raw HTML from a README can ever
+// execute), then only INSERT known-safe tags, validating every URL. lines-forum
+// uploads/avatars render as inline <code> (never <img>/<a> — the lines ToS forbids
+// embedding AND hyperlinking to forum non-HTML), so nothing is hidden; forum
+// thread/profile links (HTML pages) render as normal links.
+const MD_CS='background:#0003;padding:1px 4px;border-radius:4px;font-size:.92em;word-break:break-word';
+function mdSafeUrl(u){ u=(u||'').trim(); return /^(?:https?:\/\/|\/|#|mailto:)/i.test(u)?u:''; }
+function mdImg(a,u){ if(isForumMedia(u)) return '<code style="'+MD_CS+'">'+u+'</code>'; const s=mdSafeUrl(u); return s?'<img src="'+s+'" alt="'+a+'" loading="lazy" style="max-width:100%;border-radius:6px;display:block;margin:6px 0">':'<code style="'+MD_CS+'">'+u+'</code>'; }
+function mdA(t,u){ if(isForumMedia(u)) return t+' <code style="'+MD_CS+'">'+u+'</code>'; const s=mdSafeUrl(u); return s?'<a href="'+s+'" target="_blank" rel="noopener" style="color:var(--accent,#8af)">'+t+'</a>':t+' <code style="'+MD_CS+'">'+u+'</code>'; }
+function mdToHtml(src){
+  if(!src) return '';
+  let s=esc(String(src));                                   // 1. neutralize all raw HTML
+  const B=[],C=[];
+  s=s.replace(/```+[^\n]*\n?([\s\S]*?)```+/g,(m,c)=>(B.push('<pre style="background:#0003;padding:8px;border-radius:6px;overflow:auto;font-size:11px;margin:6px 0"><code>'+c.replace(/\n+$/,'')+'</code></pre>'),''+(B.length-1)+''));
+  s=s.replace(/`([^`\n]+?)`/g,(m,c)=>(C.push('<code style="'+MD_CS+'">'+c+'</code>'),''+(C.length-1)+''));
+  s=s.replace(/!\[([^\]]*)\]\(\s*([^)\s]+)[^)]*\)/g,(m,a,u)=>mdImg(a,u));     // images (forum -> code)
+  s=s.replace(/\[([^\]]+)\]\(\s*([^)\s]+)[^)]*\)/g,(m,t,u)=>mdA(t,u));        // links  (forum upload -> code)
+  s=s.replace(/^\s{0,3}(#{1,6})\s+(.+?)\s*#*$/gm,(m,h,t)=>'<div style="font-weight:700;font-size:'+(h.length<=2?'1.1em':'1em')+';margin:8px 0 3px">'+t+'</div>');
+  s=s.replace(/^\s{0,3}&gt;\s?(.*)$/gm,'<blockquote style="border-left:3px solid var(--trim,#444);margin:4px 0;padding-left:8px;opacity:.85">$1</blockquote>');
+  s=s.replace(/^\s{0,3}(?:---|\*\*\*|___)\s*$/gm,'<hr style="border:0;border-top:1px solid var(--trim,#333);margin:8px 0">');
+  s=s.replace(/^\s{0,3}[-*+]\s+(.+)$/gm,'<div style="padding-left:10px">• $1</div>');
+  s=s.replace(/^\s{0,3}\d+\.\s+(.+)$/gm,'<div style="padding-left:10px">$1</div>');
+  s=s.replace(/\*\*([^*\n]+?)\*\*/g,'<strong>$1</strong>');
+  s=s.replace(/(^|[^*\w])\*([^*\n]+?)\*(?=[^*\w]|$)/g,'$1<em>$2</em>');
+  s=s.replace(/\n{2,}/g,'<br><br>').replace(/\n/g,'<br>');
+  s=s.replace(/(\d+)/g,(m,i)=>C[+i]).replace(/(\d+)/g,(m,i)=>B[+i]);   // restore code
+  return s;
 }
 function wireCarousel(root){
   const car=root.querySelector('.carousel'); if(!car) return;
@@ -3397,7 +3437,7 @@ function facetHTML(p){
   if(p.voices){ const pr=(p.voices.provides||[]),us=(p.voices.uses||[]);
     if(pr.includes('nb')) out+=`<span class="facet" style="--fc:var(--ok,#6c6)">🎹 nb voices</span>`;
     else if(us.includes('nb')) out+=`<span class="facet" style="--fc:var(--ok,#6c6)">🎹 nb-ready</span>`;
-    pr.filter(s=>s!=='nb').forEach(s=>out+=`<span class="facet">🎚 ${s}</span>`);
+    pr.filter(s=>s!=='nb').forEach(s=>out+=`<span class="facet">🎚 ${esc(s)}</span>`);
   }
   return out?`<div class="facets">${out}</div>`:'';
 }
@@ -3412,17 +3452,18 @@ function repoCard(p,tab){
     : p.inst
     ? `<button class="btn btn-remove">Remove</button>`
     : `<button class="btn btn-install">Install</button>`;
-  const pills=(p.tags||[]).map(t=>`<span class="pill" data-tag="${t}">${t}</span>`).join('');
+  const pills=(p.tags||[]).map(t=>`<span class="pill" data-tag="${esc(t)}">${esc(t)}</span>`).join('');
   const doc=(p.doc||p.docU)?`<span class="lnk" title="documentation"><svg viewBox="0 0 32 32"><path d="${I.book}"/></svg></span>`:'';
   const disc=(p.disc||p.discU)?`<span class="lnk" title="discussion"><svg viewBox="0 0 32 32"><path d="${I.chat}"/></svg></span>`:'';
   const stars=(p.stars!=null && p.gh)?`<span class="stars" title="github stars">★ ${p.stars}</span>`:'';
-  const ver=p.v?`<span class="ver">v${p.v}</span>`:'';
-  const L=(u,t)=> isUrl(u)?`<a class="more-link" href="${u}" target="_blank" rel="noopener">${t} ↗</a>`:'';
+  const ver=p.v?`<span class="ver">v${esc(p.v)}</span>`:'';
+  const L=(u,t)=> isUrl(u)?`<a class="more-link" href="${esc(u)}" target="_blank" rel="noopener">${t} ↗</a>`:'';
   const hasLinks=isUrl(p.proj)||isUrl(p.docU)||isUrl(p.discU)||isUrl(p.comm);
   const dk=demoKind(p.demo);
-  const demoSlot = !dk ? '<span class="more-nodemo">no playable demo</span>'
+  const demoSlot = isForumMedia(p.demo) ? `<code style="${MD_CS}">${esc(p.demo.trim())}</code>`   // forum upload: show as code, don't drop
+    : !dk ? '<span class="more-nodemo">no playable demo</span>'
     : (dk==='instagram'||dk==='link')
-      ? `<a class="demo-ext" href="${p.demo.trim()}" target="_blank" rel="noopener">▶ ${dk==='instagram'?'watch on Instagram':'open demo'} ↗</a>`
+      ? `<a class="demo-ext" href="${esc(p.demo.trim())}" target="_blank" rel="noopener">▶ ${dk==='instagram'?'watch on Instagram':'open demo'} ↗</a>`
       : `<button class="demo-btn">▶ load ${dk} demo</button>`;
   // Installed scripts get a version row (commit SHA + Update/Rollback) below
   // no per-card version row anymore — update status comes from the manual scan
@@ -3436,9 +3477,9 @@ function repoCard(p,tab){
     </div>`;
   return `<div class="card open${p.gh?' gh':''}" data-pn="${esc(p.dir||p.n)}" ${p.gh?`style="--srcc:${SRC[(p.srcs||[])[0]]?SRC[(p.srcs||[])[0]].color:'var(--trim)'}"`:''}>
     <div class="head"><label class="csel" title="select for bulk install"><input type="checkbox" data-sel ${selection.has(p.n)?'checked':''}></label><div class="id">
-      <div class="nm">${p.n} ${badge}${lock}</div><div class="by">by <a href="#" data-author="${esc(ghOwner(p)||p.a||'')}" title="see this author's norns repos">${esc(p.a)}</a></div></div>
+      <div class="nm">${esc(p.n)} ${badge}${lock}</div><div class="by">by <a href="#" data-author="${esc(ghOwner(p)||p.a||'')}" title="see this author's norns repos">${esc(p.a)}</a></div></div>
       <div class="act-row">${actions}</div></div>
-    <div class="desc">${p.d}</div>
+    <div class="desc">${esc(p.d)}</div>
     ${(p.facets&&p.facets.length)?facetHTML(p):''}
     <div class="foot">${srcTagsHTML(p)}${pills}<span class="grow"></span>${stars}${doc}${disc}${ver}</div>
     ${more}</div>`;
@@ -3959,14 +4000,15 @@ function renderGh(){
   if(ghConnected){
     b.innerHTML=`<div class="gh-connected"><span class="ok">✓</span> connected as <b>@${GHUSER}</b>
       <button id="gh-disc">disconnect</button></div>
-      <div class="gh-hint">your public &amp; private repos and github-wide search are now available as sources below and in the <b>discover</b> tab.</div>`;
+      <div class="gh-hint">your public &amp; private repos are now available as a source (<b>★ my repos</b>) in the browse list below.</div>`;
     b.querySelector('#gh-disc').onclick=()=>{ghConnected=false;GH_LOGIN=null;LS.set('gh',{c:false});renderGh();renderSrc();renderRepo();};
   } else {
     b.innerHTML=`<div class="gh-row">
         <label class="theme-search"><svg viewBox="0 0 32 32"><path d="${I.search}"/></svg>
           <input id="gh-token" type="password" placeholder="github personal access token (repo, read:user)"></label>
         <button class="btn btn-install" id="gh-connect">Connect</button></div>
-      <div class="gh-hint">connect to pull your own public &amp; private repos, add custom catalogs, and search all of GitHub for norns scripts. matching scripts are tagged by source. <b>your token is stored only in this browser's localStorage</b> and sent only to GitHub (api.github.com, over HTTPS) to authorize search — never to ingenue or any other server.</div>`;
+      <div class="gh-hint">connect to pull your own public &amp; private repos, add custom catalogs, and search all of GitHub for norns scripts. matching scripts are tagged by source. <b>your token is stored only in this browser's localStorage</b> and sent only to GitHub (api.github.com, over HTTPS) to authorize search — never to ingenue or any other server.
+        <br><br><b>create it safely:</b> treat it like a password. prefer a <a href="https://github.com/settings/tokens?type=beta" target="_blank" rel="noopener">fine-grained token</a> limited to only the repos you need (read-only <b>Contents</b> + <b>Metadata</b>), or a classic token with the minimum scope — <b>public_repo</b> + <b>read:user</b> for public only, or <b>repo</b> only if you need private repos. set a short expiration, and <a href="https://github.com/settings/tokens" target="_blank" rel="noopener">revoke it</a> anytime. a narrow, expiring token keeps the blast radius small if it ever leaks.</div>`;
     b.querySelector('#gh-connect').onclick=()=>{
       const t=b.querySelector('#gh-token').value.trim();
       if(!t){ const f=b.querySelector('#gh-token'); f.focus(); f.style.borderColor='var(--err)'; return; }   // a real token is required (5000/hr; empty = rate-limited)
