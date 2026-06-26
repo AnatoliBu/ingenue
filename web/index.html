@@ -2194,9 +2194,13 @@ function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,c=>ESC_MAP[c]);}
 // _SAN keeps <iframe> (YouTube/Vimeo/SoundCloud embeds, host-locked src) and target
 // (DOMPurify 3.x drops it by default; download links use it). esc()'d text renders
 // verbatim through DOMPurify (entities are idempotent), so no <letter mangling.
+// If DOMPurify didn't load (offline device, blocked CDN), degrade to the escape-first
+// html instead of throwing — esc() still neutralizes dynamic values, so the UI never
+// breaks; we just lose the second layer until DOMPurify is reachable again.
 const _SAN={ADD_TAGS:['iframe'],ADD_ATTR:['target','allow','allowfullscreen','frameborder','loading','scrolling']};
-function setHTML(el,html){ el.innerHTML=DOMPurify.sanitize(html,_SAN); }
-function appendHTML(el,html){ el.innerHTML+=DOMPurify.sanitize(html,_SAN); }
+const _hasDP=()=>typeof DOMPurify!=='undefined' && DOMPurify.sanitize;
+function setHTML(el,html){ el.innerHTML = _hasDP() ? DOMPurify.sanitize(html,_SAN) : html; }
+function appendHTML(el,html){ el.innerHTML += _hasDP() ? DOMPurify.sanitize(html,_SAN) : html; }
 
 /* autocomplete */
 // ;-cmd completions — kept in sync with replSlashCmd's switch above.
