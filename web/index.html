@@ -153,7 +153,18 @@ button{font-family:inherit}
   border-radius:8px;padding:0 10px}
 .repl-inwrap .pr{color:var(--accent2);font-family:ui-monospace,monospace;font-weight:700}
 .repl-in{flex:1;border:0;background:transparent;outline:none;color:var(--fg);font-family:ui-monospace,Menlo,monospace;
-  font-size:13px;padding:9px 0}
+  font-size:13px;padding:9px 0;position:relative;z-index:1}
+/* sc-target live highlight: a native <input> can't color its own text, so we make
+   the input text transparent (caret stays visible) and mirror it in #replin-hl. */
+.repl-in-stack{flex:1;position:relative;display:flex;min-width:0}
+.repl-in.sc-live{color:transparent;caret-color:var(--fg)}
+.repl-in-hl{position:absolute;inset:0;z-index:0;display:none;overflow:hidden;white-space:pre;pointer-events:none;
+  font-family:ui-monospace,Menlo,monospace;font-size:13px;padding:9px 0;line-height:normal;color:var(--fg)}
+.repl-in-hl.on{display:block}
+/* SuperCollider token colors (Tomorrow Night — harmonizes with the REPL's :root theme).
+   Shared by the echoed history in .repl-out and the live overlay in .repl-in-hl. */
+.sc-com{color:#969896;font-style:italic}.sc-kw{color:#b294bb}.sc-cls{color:#f0c674}
+.sc-str,.sc-sym{color:#b5bd68}.sc-num,.sc-chr{color:#de935f}.sc-var{color:#cc6666}.sc-op{color:#8abeb7}
 .repl-send{appearance:none;border:0;background:var(--accent);color:#241a0d;font-weight:700;border-radius:8px;
   padding:0 14px;cursor:pointer;flex:0 0 auto;font-size:13px}
 
@@ -768,7 +779,7 @@ button{font-family:inherit}
            <div class="ac" id="ac"></div>
            <div class="repl-row">
              <div class="repl-inwrap"><span class="pr">&gt;&gt;</span>
-               <input class="repl-in" id="replin" placeholder="type a command…  (try “params”, “clock”, “screen”)" autocomplete="off" spellcheck="false"></div>
+               <div class="repl-in-stack"><div class="repl-in-hl" id="replin-hl" aria-hidden="true"></div><input class="repl-in" id="replin" placeholder="type a command…  (try “params”, “clock”, “screen”)" autocomplete="off" spellcheck="false"></div></div>
              <div class="repl-target"><span class="lbl">send&nbsp;to</span>
                <span class="tgt" id="tgt"><button class="on" data-t="matron">matron</button><button data-t="sc">sc</button></span></div>
              <button class="repl-send" id="replsend">send</button>
@@ -836,7 +847,7 @@ button{font-family:inherit}
          <div class="src-list" id="src-list"></div>
          <div class="feed-list" id="feed-list" style="display:flex;flex-direction:column;gap:4px;margin-bottom:6px"></div>
          <div id="add-feed-row" style="display:none;margin-bottom:6px">
-           <input id="feed-url-input" placeholder="https://…/feed.json or catalog.json" style="width:100%;box-sizing:border-box;margin-bottom:4px;padding:6px;background:var(--bg);border:1px solid var(--trim);border-radius:8px;color:var(--fg)">
+           <input id="feed-url-input" placeholder="https://…/catalog.json" style="width:100%;box-sizing:border-box;margin-bottom:4px;padding:6px;background:var(--bg);border:1px solid var(--trim);border-radius:8px;color:var(--fg)">
            <div style="display:flex;gap:6px;align-items:center">
              <button class="rd-pill-btn" id="feed-url-add" style="margin:0">add feed</button>
              <button class="rd-pill-btn" id="feed-url-cancel" style="margin:0">cancel</button>
@@ -1358,22 +1369,27 @@ const DEP_OVERLAY=[
 // local community.json (no feeds, no network) the catalog still renders fully.
 let CAT_INDEX = new Map();   // norm(name) -> entry; the single dedup/merge authority
 
-// Map a long-form catalog.json row (Name/Author/Project URL/…) to an ingenue entry.
-// (Used when a user adds a long-form feed, e.g. someone's catalog.json.)
+// Map a nornslist catalog row to an ingenue entry. Tolerant of BOTH the long-form
+// catalog.json schema (Name/Author/'Project URL'/…) AND the short-form data.json
+// the site serves (name/author/proj/…), so a user can add either URL and it works.
 function nlRowToEntry(e){
-  const src=(e.source||'github').toLowerCase();
-  const discU=(e['Discussion URL']||'').trim();
+  const g=(...ks)=>{ for(const k of ks){ const v=e[k]; if(v!=null && v!=='') return v; } return ''; };
+  const src=String(g('source','Source')||'github').toLowerCase();
+  const discU=String(g('discU','disc','Discussion URL')||'').trim();
+  const docU =String(g('docU','doc','Documentation URL')||'').trim();
+  const proj =String(g('proj','Project URL')||'');
   const cat = src==='community' ? 'community' : (discU ? 'softlaunch' : 'ghx');
   return {
-    n:e.Name, a:e.Author||'unknown', d:e.Description||'',
-    tags:(Array.isArray(e.Tags)?e.Tags:[]).slice(0,8),
-    proj:e['Project URL']||'', docU:e['Documentation URL']||'', discU,
-    comm:e['Community URL']||'', doc:e['Documentation URL']?1:0, disc:discU?1:0,
-    demo:e.Demo||'', upd:e['Last Updated']||'', stars:e.stars||0,
-    facets:Array.isArray(e.facets)?e.facets:[], readme:e.readme||'',
-    images:Array.isArray(e.images)?e.images:[], engine:e.engine||'',
-    sha:e.sha||'', status:e.status||'active',
-    cat, srcs:[src==='community'?'community':'github'], gh: src==='github'?1:0,
+    n:g('n','name','Name'), a:g('a','author','Author')||'unknown', d:g('d','desc','Description'),
+    tags:(Array.isArray(e.tags)?e.tags:Array.isArray(e.Tags)?e.Tags:[]).slice(0,8),
+    proj, docU, discU, comm:String(g('comm','Community URL')||''),
+    doc:docU?1:0, disc:discU?1:0,
+    demo:g('demo','Demo'), upd:g('upd','Last Updated'), stars:e.stars||0,
+    facets:Array.isArray(e.facets)?e.facets:[], readme:g('readme'),
+    images:Array.isArray(e.images)?e.images:[], engine:g('engine'),
+    sha:g('sha'), status:g('status')||'active', voices:e.voices||null,
+    cat, srcs:[src==='community'?'community':'github'],
+    gh: src==='github'?1:(/github\.com/i.test(proj)?1:0),
   };
 }
 // Map a community.json entry (project_name/author/…) to an ingenue entry.
@@ -1427,10 +1443,17 @@ async function loadCatalog(){
   try{
     CAT_INDEX = new Map();
     let entries=[];
-    // Base (default) source: the device's local community.json.
-    const r=await fetch('community.json',{cache:'no-store'}); if(!r.ok) throw new Error(r.status);
-    const j=await r.json();
-    (j.entries||[]).forEach(e=> indexAdd(entries, communityRowToEntry(e)));
+    if(window.__INGENUE_DEMO__){
+      // Public web demo: never fetch or republish the real norns.community catalog.
+      // Seed from the small local illustrative list so the UI is explorable, then
+      // still layer any feed the visitor adds themselves.
+      DEMO_SEED.available.forEach(e=> indexAdd(entries, {...e}));
+    } else {
+      // Base (default) source: the device's local community.json.
+      const r=await fetch('community.json',{cache:'no-store'}); if(!r.ok) throw new Error(r.status);
+      const j=await r.json();
+      (j.entries||[]).forEach(e=> indexAdd(entries, communityRowToEntry(e)));
+    }
     // Layer user-added feeds (add order): merge enrichment onto existing names,
     // append new ones as the 'custom' source.
     for(const {entries:fe, enrich} of await loadCustomFeeds()){
@@ -2000,9 +2023,16 @@ function wireTree(el){
 let openTabs=[]; let activeFile=null;
 function fileName(p){return p.split('/').pop();}
 function setEditorText(t){ if(editor) editor.setValue(t,-1); else { const fb=document.getElementById('fallback'); if(fb) fb.value=t; } }
+function modeForPath(p){                                     // pick the Ace highlight mode by extension
+  const e=(p.split('.').pop()||'').toLowerCase();
+  if(e==='sc'||e==='scd') return 'ace/mode/supercollider';   // norns engine source (custom inline mode)
+  if(e==='lua') return 'ace/mode/lua';
+  return 'ace/mode/text';                                    // .md/.txt/.pset → plain, no false Lua coloring
+}
 function openFile(path){
   if(!openTabs.includes(path)) openTabs.push(path);
   activeFile=path;
+  if(editor) editor.session.setMode(modeForPath(path));      // .sc → SuperCollider, .lua → Lua, else plain
   setEditorText(FILES[path]||'');                            // instant: mock / placeholder
   if(HAS_BACKEND){                                           // REAL: read the file off the device (scripts live under code/)
     fetch('api/read?path='+encodeURIComponent('code/'+path),{cache:'no-store'})
@@ -2040,6 +2070,30 @@ function setEditView(m){ document.getElementById('maiden').dataset.edit=m; LS.se
 /* ============ repl ============ */
 const out=()=>document.getElementById('replout');
 function replPrint(html){ const o=out(); appendHTML(o, html+'\n'); o.scrollTop=o.scrollHeight; }
+/* SuperCollider highlighter — shared by the sc-target command echo and the live
+   input overlay. Standalone (no Ace dependency), so it works even in the offline
+   textarea fallback. Same token vocabulary as the inline Ace mode; every slice is
+   esc()'d before wrapping, so the colored HTML is XSS-safe (and routes through the
+   DOMPurify sink anyway via setHTML/appendHTML). */
+function scHL(src){
+  const s=String(src||'');
+  const RE=/(\/\/[^\n]*)|(\/\*[\s\S]*?\*\/)|("(?:\\.|[^"\\])*")|('(?:\\.|[^'\\])*')|(\\[A-Za-z_]\w*)|(\$\\?.)|(~[A-Za-z_]\w*)|(\b\d+r[0-9a-zA-Z]+(?:\.[0-9a-zA-Z]+)?)|(\b\d+(?:\.\d+)?(?:[eE][-+]?\d+)?\b)|(\b(?:var|arg|classvar|const|this|super|nil|true|false|inf|pi|thisProcess|thisThread|thisFunction|thisFunctionDef|thisMethod)\b)|(\b[A-Z]\w*\b)|([-+*\/%<>=!&|@]+)/g;
+  let res='',last=0,m;
+  while((m=RE.exec(s))){
+    if(m.index>last) res+=esc(s.slice(last,m.index));
+    const c=(m[1]||m[2])?'sc-com':m[3]?'sc-str':(m[4]||m[5])?'sc-sym':m[6]?'sc-chr':m[7]?'sc-var':(m[8]||m[9])?'sc-num':m[10]?'sc-kw':m[11]?'sc-cls':m[12]?'sc-op':'';
+    res+= c?'<span class="'+c+'">'+esc(m[0])+'</span>':esc(m[0]);
+    last=RE.lastIndex; if(m.index===RE.lastIndex) RE.lastIndex++;   // guard zero-width matches
+  }
+  return res+esc(s.slice(last));
+}
+/* Mirror the live input with SC coloring while the sc target is active. */
+function updateReplHL(){
+  const inp=document.getElementById('replin'), hl=document.getElementById('replin-hl'); if(!inp||!hl) return;
+  const on=(typeof target==='string' && target==='sc');
+  inp.classList.toggle('sc-live',on); hl.classList.toggle('on',on);
+  if(on){ setHTML(hl, scHL(inp.value)); hl.scrollLeft=inp.scrollLeft; }
+}
 let target='matron';
 
 /* ===== live matron link (real REPL + params channel over ws://<host>:5555) ===== */
@@ -2085,8 +2139,9 @@ function matronSend(lua){ if(matronReady){ try{ matronWS.send(new TextEncoder().
 
 function replSubmit(){
   const inp=document.getElementById('replin'); const v=inp.value.trim(); if(!v) return;
-  replPrint(`&gt;&gt; <span class="cmd">${esc(v)}</span>`);
-  inp.value=''; hideAC();
+  const echo=(typeof target==='string'&&target==='sc') ? scHL(v) : esc(v);   // sc → highlight the echoed command
+  replPrint(`&gt;&gt; <span class="cmd">${echo}</span>`);
+  inp.value=''; hideAC(); updateReplHL();
   // ';'-prefixed shortcuts (maiden parity). Intercepted client-side so matron
   // never sees them as Lua — typing ;install <url> would otherwise raise
   // "attempt to call a string value" and the user's muscle memory breaks.
@@ -4078,7 +4133,10 @@ function renderGh(){
 }
 function renderSrc(){
   const el=document.getElementById('src-list');
-  setHTML(el, SRC_ORDER.map(id=>{
+  // 'github' (live search) is no longer a main-catalog source you toggle — it only
+  // backs the click-an-author repo view, which auto-enables with a token. So it's
+  // not shown as a config switch (it was a vestigial slider that did nothing here).
+  setHTML(el, SRC_ORDER.filter(id=>id!=='github').map(id=>{
     const s=SRC[id]; const locked=s.auth&&!ghConnected;
     const on=!!SRC_ON[id]&&!locked;
     return `<div class="src-item ${locked?'locked':''}">
@@ -4097,9 +4155,19 @@ function renderSrc(){
 function renderFeeds(){
   const el=document.getElementById('feed-list'); if(!el) return;
   const feeds=LS.get('customFeeds',[])||[];
-  setHTML(el, feeds.map((f,i)=>`<div class="src-item" style="font-size:12px">
-    <span>${esc(f.label||f.url)}${f._err?' <span style="color:var(--err)">· unreachable</span>':''}</span>
+  // Show each feed's FULL url in an editable field (not just the hostname), so it
+  // can be inspected and corrected in place; changing it re-validates and reloads.
+  setHTML(el, feeds.map((f,i)=>`<div class="src-item" style="font-size:12px;gap:6px;align-items:center">
+    <input class="feed-url-edit" data-feed="${i}" value="${esc(f.url)}" title="${esc(f.url)}" spellcheck="false"
+      style="flex:1;min-width:0;background:var(--bg);border:1px solid var(--trim);border-radius:6px;color:var(--fg);padding:3px 6px;font-size:11px;font-family:ui-monospace,Menlo,monospace">
+    ${f._err?'<span style="color:var(--err);white-space:nowrap">· unreachable</span>':''}
     <button class="rd-pill-btn" data-delfeed="${i}" style="margin:0;padding:2px 8px" title="remove this feed">✕</button></div>`).join(''));
+  el.querySelectorAll('.feed-url-edit').forEach(inp=>inp.onchange=async()=>{
+    const arr=LS.get('customFeeds',[])||[]; const i=+inp.dataset.feed; const u=(inp.value||'').trim();
+    if(!/^https:\/\//i.test(u)){ inp.style.borderColor='var(--err)'; return; }
+    arr[i].url=u; try{ arr[i].label=new URL(u).hostname; }catch(_){}
+    LS.set('customFeeds',arr); renderFeeds(); await loadCatalog(); renderRepoIfOpen();
+  });
   el.querySelectorAll('[data-delfeed]').forEach(b=>b.onclick=async()=>{
     const arr=LS.get('customFeeds',[])||[]; arr.splice(+b.dataset.delfeed,1); LS.set('customFeeds',arr);
     renderFeeds(); await loadCatalog(); renderRepoIfOpen();
@@ -4149,11 +4217,78 @@ function openCfg(){ buildThemeGrid(document.getElementById('theme-filter').value
   document.getElementById('overlay').classList.add('on'); }
 function closeCfg(){ document.getElementById('overlay').classList.remove('on'); }
 
+/* ============ SuperCollider editor mode ============ */
+// Ace ships no SuperCollider mode (mode-supercollider.js 404s on the CDN), so we
+// register a compact one inline. Lives in index.html → available whenever Ace
+// loaded (offline-safe, same envelope as the Lua editor). It only emits token
+// *types*; the existing editor theme colors them, so .sc files match the look of
+// the Lua editor automatically. The win over Lua mode: SC class names (UGens like
+// SinOsc/Out), arg/var/classvar, \symbols and ~envvars tokenize correctly.
+function registerSCMode(){
+  if(!window.ace || ace.__scMode) return; ace.__scMode=1;
+  ace.define('ace/mode/supercollider_highlight_rules',
+    ['require','exports','module','ace/lib/oop','ace/mode/text_highlight_rules'],
+    function(require,exports,module){
+      const oop=require('../lib/oop');
+      const TextHighlightRules=require('./text_highlight_rules').TextHighlightRules;
+      const keywords='var|arg|classvar|const|this|super|nil|true|false|inf|pi|'+
+        'thisProcess|thisThread|thisFunction|thisFunctionDef|thisMethod';
+      const SCRules=function(){
+        this.$rules={
+          start:[
+            {token:'comment.line',  regex:'\\/\\/.*$'},
+            {token:'comment.block', regex:'\\/\\*', next:'comment'},
+            {token:'string',        regex:'"', next:'string'},
+            {token:'string',        regex:"\\\\[A-Za-z_][A-Za-z0-9_]*"},   // \symbol
+            {token:'string',        regex:"'", next:'symbol'},             // 'symbol'
+            {token:'constant.character', regex:"\\$\\\\?."},               // $c char literal
+            {token:'variable',      regex:"~[A-Za-z_][A-Za-z0-9_]*"},      // ~envvar
+            {token:'constant.numeric', regex:"\\b\\d+r[0-9a-zA-Z]+(?:\\.[0-9a-zA-Z]+)?\\b"}, // radix 16rFF
+            {token:'constant.numeric', regex:"\\b\\d+(?:\\.\\d+)?(?:[eE][-+]?\\d+)?\\b"},
+            {token:'keyword',       regex:'\\b(?:'+keywords+')\\b'},
+            {token:'support.class', regex:"\\b[A-Z][A-Za-z0-9_]*\\b"},     // UGens / classes
+            {token:'keyword.operator', regex:"\\.\\.|<>|<-|->|\\?\\?|[-+*/%<>=!&|@]"},
+            {token:'paren.lparen',  regex:"[\\[({]"},
+            {token:'paren.rparen',  regex:"[\\])}]"}
+          ],
+          comment:[
+            {token:'comment.block', regex:'\\*\\/', next:'start'},
+            {defaultToken:'comment.block'}
+          ],
+          string:[
+            {token:'string', regex:'\\\\.'},
+            {token:'string', regex:'"', next:'start'},
+            {defaultToken:'string'}
+          ],
+          symbol:[
+            {token:'string', regex:'\\\\.'},
+            {token:'string', regex:"'", next:'start'},
+            {defaultToken:'string'}
+          ]
+        };
+      };
+      oop.inherits(SCRules,TextHighlightRules);
+      exports.SuperColliderHighlightRules=SCRules;
+    });
+  ace.define('ace/mode/supercollider',
+    ['require','exports','module','ace/lib/oop','ace/mode/text','ace/mode/supercollider_highlight_rules'],
+    function(require,exports,module){
+      const oop=require('../lib/oop');
+      const TextMode=require('./text').Mode;
+      const SCRules=require('./supercollider_highlight_rules').SuperColliderHighlightRules;
+      const Mode=function(){ this.HighlightRules=SCRules; this.$id='ace/mode/supercollider';
+        this.lineCommentStart='//'; this.blockComment={start:'/*',end:'*/'}; };
+      oop.inherits(Mode,TextMode);
+      exports.Mode=Mode;
+    });
+}
+
 /* ============ boot ============ */
 function boot(){
   // editor
   if(window.ace){
     ace.config.set('basePath','https://cdn.jsdelivr.net/npm/ace-builds@1.32.6/src-min-noconflict');
+    registerSCMode();                                        // make ace/mode/supercollider available
     editor=ace.edit('editor');
     editor.setOptions({showPrintMargin:false,useWorker:false,highlightActiveLine:true});
     editor.session.setMode('ace/mode/lua');
@@ -4171,6 +4306,8 @@ function boot(){
   // repl wiring
   const inp=document.getElementById('replin');
   inp.addEventListener('input',updateAC);
+  inp.addEventListener('input',updateReplHL);                                   // sc live-highlight overlay
+  inp.addEventListener('scroll',()=>{ const hl=document.getElementById('replin-hl'); if(hl) hl.scrollLeft=inp.scrollLeft; });
   inp.addEventListener('keydown',e=>{
     const ac=document.getElementById('ac');
     if(ac.classList.contains('show')){
@@ -4184,8 +4321,10 @@ function boot(){
   document.getElementById('replsend').onclick=replSubmit;
   document.querySelectorAll('#tgt button').forEach(b=>b.onclick=()=>{
     document.querySelectorAll('#tgt button').forEach(x=>x.classList.remove('on'));b.classList.add('on');target=b.dataset.t;
+    updateReplHL();                                                             // toggle sc overlay on matron↔sc switch
     document.getElementById('replin').focus();
   });
+  updateReplHL();                                                              // initial state (matron → overlay off)
   // activity bar
   document.getElementById('a-files').onclick=()=>{   // first-class Files view
     document.getElementById('filesview').classList.contains('on') ? showMain() : showFiles();
