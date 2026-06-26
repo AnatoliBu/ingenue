@@ -36,6 +36,8 @@
 <!-- Ace editor (maiden's real editor component) -->
 <script src="https://cdn.jsdelivr.net/npm/ace-builds@1.32.6/src-min-noconflict/ace.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/ace-builds@1.32.6/src-min-noconflict/mode-lua.js"></script>
+<!-- DOMPurify: sanitize every innerHTML at the sink (loaded from jsDelivr CDN like Ace). -->
+<script src="https://cdn.jsdelivr.net/npm/dompurify@3.2.3/dist/purify.min.js"></script>
 
 <style>
 :root{
@@ -1035,7 +1037,7 @@ async function checkForUpdate(manual){
 function updEl(){ let t=document.getElementById('update-toast');
   if(!t){ t=document.createElement('div'); t.id='update-toast'; document.body.appendChild(t); } return t; }
 function updateToastMsg(html){ const t=updEl();
-  t.innerHTML=`<div class="ut-row"><span class="ut-title">${html}</span><button class="ut-x" title="dismiss">✕</button></div>`;
+  setHTML(t, `<div class="ut-row"><span class="ut-title">${html}</span><button class="ut-x" title="dismiss">✕</button></div>`);
   t.querySelector('.ut-x').onclick=()=>t.classList.remove('show'); t.classList.add('show');
   clearTimeout(t._h); t._h=setTimeout(()=>t.classList.remove('show'),5000); }
 function showUpdateToast(cmp, head){
@@ -1043,7 +1045,7 @@ function showUpdateToast(cmp, head){
   const lines=(cmp.commits||[]).slice(-15).reverse()
     .map(c=>`<li>${esc(((c.commit&&c.commit.message)||'').split('\n')[0])}</li>`).join('');
   const t=updEl(); clearTimeout(t._h);
-  t.innerHTML=`
+  setHTML(t, `
     <div class="ut-row">
       <span class="ut-title">⬆ ingenue update available <b>· ${n} change${n!==1?'s':''}</b></span>
       <button class="ut-x" id="ut-later" title="not now">✕</button>
@@ -1052,7 +1054,7 @@ function showUpdateToast(cmp, head){
     <div class="ut-actions">
       <button class="ut-go" id="ut-go">Update now</button>
       <a class="ut-link" href="https://github.com/${UPD_REPO}/commits/${UPD_BRANCH}" target="_blank" rel="noopener">on GitHub ↗</a>
-    </div>`;
+    </div>`);
   t.classList.add('show');
   document.getElementById('ut-later').onclick=()=>{ if(head) localStorage.setItem('ingenue_skip_update',head); t.classList.remove('show'); };
   document.getElementById('ut-go').onclick=()=>runUpdate(t);
@@ -1065,16 +1067,16 @@ async function runUpdate(t){
     const r=await fetch('api/self-update',{method:'POST'}); const j=await r.json().catch(()=>({}));
     if(!r.ok || j.error) throw new Error(j.error||('HTTP '+r.status));
   }catch(e){ if(go){ go.disabled=false; go.textContent='Update now'; }
-    title.innerHTML='⚠ update couldn’t start — '+esc(e.message); return; }
-  title.innerHTML='⏳ pulling latest & restarting ingenue…';
+    setHTML(title, '⚠ update couldn’t start — '+esc(e.message)); return; }
+  setHTML(title, '⏳ pulling latest & restarting ingenue…');
   let tries=0;
   const iv=setInterval(async()=>{
     tries++;
     let v=null; try{ v=await fetch('api/version',{cache:'no-store'}).then(r=>r.ok?r.json():null); }catch(_){ }
     if(v && /^[0-9a-f]{7,40}$/.test(v.sha||'') && v.sha!==before){
-      clearInterval(iv); title.innerHTML='✓ updated — reloading…'; setTimeout(()=>location.reload(),900);
+      clearInterval(iv); setHTML(title, '✓ updated — reloading…'); setTimeout(()=>location.reload(),900);
     } else if(tries>75){   // ~150s
-      clearInterval(iv); title.innerHTML='↻ taking longer than expected — reload when ready';
+      clearInterval(iv); setHTML(title, '↻ taking longer than expected — reload when ready');
       if(go){ go.disabled=false; go.textContent='Reload now'; go.onclick=()=>location.reload(); }
     }
   },2000);
@@ -1558,9 +1560,9 @@ async function checkScPlugins(){
   const b=document.getElementById('scp-banner'); if(!b) return;
   if(SCP.status!=='needs_install' || LS.get('scpDismiss',0)>Date.now()){ b.style.display='none'; return; }
   const n=SCP.ugen_so_wrong_arch||0;
-  document.getElementById('scp-banner-msg').innerHTML = SCP.half_implemented
+  setHTML(document.getElementById('scp-banner-msg'), SCP.half_implemented
     ? `This 64-bit norns ships SuperCollider engine <b>classes but no matching binaries</b> — affected scripts load but stay silent.`
-    : `This 64-bit norns is missing its SuperCollider plugin binaries${n?` (${n} are the wrong architecture)`:''} — some scripts' engines stay silent.`;
+    : `This 64-bit norns is missing its SuperCollider plugin binaries${n?` (${n} are the wrong architecture)`:''} — some scripts' engines stay silent.`);
   b.style.display='flex';
 }
 function scpDetailHTML(){
@@ -1574,14 +1576,14 @@ function scpDetailHTML(){
   return rows.join('');
 }
 function openScp(){
-  document.getElementById('scp-intro').innerHTML = `Install the correct 64-bit SuperCollider UGen plugins for this device. ingenue carries its own copy, so this works offline.`;
-  document.getElementById('scp-detail').innerHTML = scpDetailHTML();
+  setHTML(document.getElementById('scp-intro'), `Install the correct 64-bit SuperCollider UGen plugins for this device. ingenue carries its own copy, so this works offline.`);
+  setHTML(document.getElementById('scp-detail'), scpDetailHTML());
   document.getElementById('scp-reboot').style.display='block';
   document.getElementById('scp-go').disabled=false;
   document.getElementById('scp-go').textContent='Install plugins';
   document.getElementById('scp-overlay').classList.add('on');
   // best-effort: see if a newer build is online, refresh detail when it lands
-  fetch('api/scplugins?online=1',{cache:'no-store'}).then(r=>r.ok&&r.json()).then(j=>{ if(j){ SCP=j; if(document.getElementById('scp-overlay').classList.contains('on')) document.getElementById('scp-detail').innerHTML=scpDetailHTML(); }}).catch(()=>{});
+  fetch('api/scplugins?online=1',{cache:'no-store'}).then(r=>r.ok&&r.json()).then(j=>{ if(j){ SCP=j; if(document.getElementById('scp-overlay').classList.contains('on')) setHTML(document.getElementById('scp-detail'), scpDetailHTML()); }}).catch(()=>{});
 }
 async function runScpHeal(){
   const go=document.getElementById('scp-go'); go.disabled=true; go.textContent='Installing…';
@@ -1620,12 +1622,12 @@ function renderAudio(a){
   document.getElementById('dev-sec').style.display='';
   document.getElementById('audio-row').style.display='';
   const st=document.getElementById('audio-state'), btn=document.getElementById('audio-restart');
-  if(a.core_up){ st.innerHTML='<span style="color:#5c5">● healthy</span> — jackd · scsynth · crone up'+(a.recent_device_race?' <span style="color:var(--warn,#c80)">(saw a recent hw:0 handoff race)</span>':''); btn.style.display='none'; }
-  else { st.innerHTML='<span style="color:var(--err)">● down</span> — '+(a.hint||'audio server not running'); btn.style.display=''; }
+  if(a.core_up){ setHTML(st, '<span style="color:#5c5">● healthy</span> — jackd · scsynth · crone up'+(a.recent_device_race?' <span style="color:var(--warn,#c80)">(saw a recent hw:0 handoff race)</span>':'')); btn.style.display='none'; }
+  else { setHTML(st, '<span style="color:var(--err)">● down</span> — '+(a.hint||'audio server not running')); btn.style.display=''; }
   btn.onclick=async()=>{ btn.disabled=true; btn.textContent='restarting…';
     try{ const j=await (await fetch('api/audio/restart',{method:'POST'})).json();
-      st.innerHTML = j.ok ? '<span style="color:#5c5">restart requested</span> — '+j.method
-        : '<span style="color:var(--err)">couldn\'t auto-restart</span> — '+(j.hint||'power-cycle the device'); }
+      setHTML(st, j.ok ? '<span style="color:#5c5">restart requested</span> — '+j.method
+        : '<span style="color:var(--err)">couldn\'t auto-restart</span> — '+(j.hint||'power-cycle the device')); }
     catch(e){ st.textContent=e.message; } btn.disabled=false; btn.textContent='restart audio'; };
 }
 
@@ -1684,7 +1686,7 @@ function renderHealth(h){
       ${heal}
     </div>`;
   }).join('');
-  sec.innerHTML = header + rowsHtml;
+  setHTML(sec, header + rowsHtml);
   document.getElementById('health-recheck').onclick = () => {
     const b = document.getElementById('health-recheck');
     b.disabled = true; b.textContent = '…';
@@ -1733,13 +1735,13 @@ async function renderModsView(){
   // catalog scripts that are mods but aren't installed → installable
   const avail=REPO.available.filter(p=>isModEntry(p)&&!p.inst&&!seen.has(norm(p.n)))
                             .sort((a,b)=>a.n.localeCompare(b.n));
-  view.innerHTML=`<div class="pv-scroll">
+  setHTML(view, `<div class="pv-scroll">
       <div class="pv-head" style="position:sticky"><span>installed mods</span><span class="pv-ct">${installed.length}</span>
         <button class="rd-pill-btn" id="mods-refresh" style="margin:0 0 0 auto;padding:3px 10px" title="refresh">↻</button></div>
       <div class="rd-grid" id="mods-inst">${installed.map(p=>repoCard(p,'installed')).join('')||'<div class="pv-empty">no mods installed yet — add some below</div>'}</div>
       <div class="pv-head" style="position:sticky"><span>available community mods</span><span class="pv-ct">${avail.length}</span></div>
       <div class="rd-grid" id="mods-avail">${avail.map(p=>repoCard(p,'available')).join('')||'<div class="pv-empty">none found in the catalog</div>'}</div>
-    </div>`;
+    </div>`);
   wireCards(view, installed.concat(avail), 'available');     // wires install/remove/demo/readme per card
   // inject an enable/disable toggle into each installed-mod card
   view.querySelectorAll('#mods-inst > .card').forEach((card,idx)=>{
@@ -1802,10 +1804,10 @@ function renderPresets(){
       +`<button class="rd-pill-btn ps-save" data-slot="${i}" title="save current params here">save</button>`
       +(p?`<button class="rd-pill-btn ps-load" data-slot="${i}">load</button><button class="rd-pill-btn ps-del" data-slot="${i}" title="delete">✕</button>`:'')+`</div>`;
   }
-  el.innerHTML=`<div class="pv-presets-hd">browser presets for <b>${esc(paramScript||'— no script —')}</b> · stored in this browser</div>`
+  setHTML(el, `<div class="pv-presets-hd">browser presets for <b>${esc(paramScript||'— no script —')}</b> · stored in this browser</div>`
     +`<div class="pv-slots">${slots}</div>`
     +`<div class="pv-presets-io"><button class="rd-pill-btn" id="ps-export">⤓ export .json</button><button class="rd-pill-btn" id="ps-import">⤒ import .json</button>`
-    +`<span class="v" style="color:var(--faint);font-family:inherit">share a preset as a file — it only loads back onto the same script</span></div>`;
+    +`<span class="v" style="color:var(--faint);font-family:inherit">share a preset as a file — it only loads back onto the same script</span></div>`);
   el.querySelectorAll('.ps-save').forEach(b=>b.onclick=()=>savePreset(+b.dataset.slot));
   el.querySelectorAll('.ps-load').forEach(b=>b.onclick=()=>loadPreset(+b.dataset.slot));
   el.querySelectorAll('.ps-del').forEach(b=>b.onclick=()=>deletePreset(+b.dataset.slot));
@@ -1826,7 +1828,7 @@ function fetchLabelMaps(){
 }
 function refreshParams(){
   const status=document.getElementById('params-status');
-  if(!matronReady){ status.textContent='no live link to matron — open ingenue on the device to use this'; document.getElementById('params-list').innerHTML=''; return; }
+  if(!matronReady){ status.textContent='no live link to matron — open ingenue on the device to use this'; setHTML(document.getElementById('params-list'), ''); return; }
   status.textContent='reading params from device…'; PARAMS=[]; paramBuf=''; matronOnData=onParamData;
   // dump per param: i, type, name, min, max, raw value, display string, options(\31), default, group child-count, id
   matronSend("do print('@@ING_SCRIPT@@'..tostring((norns.state and (norns.state.name or norns.state.shortname)) or '')) print('@@ING_P_BEGIN@@') for i=1,params.count do local p=params:lookup_param(i) local t=p.t or -1 local nm=p.name or p.id or '?' local mn='' local mx='' local opts='' local nn='' local df='' if t==7 then nn=tostring(p.n or '') end if t==2 and p.options then opts=table.concat(p.options,'\\31') end if p.controlspec then mn=tostring(p.controlspec.minval) mx=tostring(p.controlspec.maxval) elseif p.min~=nil then mn=tostring(p.min) mx=tostring(p.max) end local d=p.default if d==nil and p.controlspec then d=p.controlspec.default end if d~=nil then df=tostring(d) end local val='' local str='' pcall(function() val=params:get(i) end) pcall(function() str=params:string(i) end) print('@@ING_P@@'..i..'\\9'..t..'\\9'..tostring(nm)..'\\9'..mn..'\\9'..mx..'\\9'..tostring(val)..'\\9'..tostring(str)..'\\9'..opts..'\\9'..df..'\\9'..nn..'\\9'..tostring(p.id or '')) end print('@@ING_P_END@@') end");
@@ -1879,7 +1881,7 @@ function renderNodes(children,depth){
 }
 function paintParams(){
   const list=document.getElementById('params-list'), st=document.getElementById('params-status');
-  if(!PARAMS.length){ st.textContent='no params'; list.innerHTML='<div class="pv-empty">no params — load a script on the device, then ↻</div>'; return; }
+  if(!PARAMS.length){ st.textContent='no params'; setHTML(list, '<div class="pv-empty">no params — load a script on the device, then ↻</div>'); return; }
   // build a real tree using each group's child-count (n) — true nesting, like the on-device menu
   const root={children:[]}, stack=[{node:root,rem:Infinity}]; let gi=0, shown=0;
   PARAMS.forEach(p=>{ const top=stack[stack.length-1];
@@ -1890,7 +1892,7 @@ function paintParams(){
     while(stack.length>1 && stack[stack.length-1].rem<=0) stack.pop();
   });
   st.textContent=shown+' parameters'+(pDeclutter?' · decluttered':'');
-  list.innerHTML=renderNodes(root.children,0);
+  setHTML(list, renderNodes(root.children,0));
   list.querySelectorAll('.pv-head.collap').forEach(h=>h.onclick=()=>{ const b=h.nextElementSibling, show=b.style.display==='none';
     b.style.display=show?'':'none'; h.classList.toggle('open',show); pCollapsed[h.dataset.gkey]=!show; });
   wireParamControls(list);
@@ -1976,7 +1978,7 @@ function treeHTML(nodes,depth){
   }).join('');
 }
 function wireTree(el){
-  el.innerHTML=treeHTML(TREE,0);
+  setHTML(el, treeHTML(TREE,0));
   el.querySelectorAll('.row').forEach(row=>{
     row.onclick=e=>{
       e.stopPropagation();
@@ -2024,7 +2026,7 @@ function renderTabs(){
   const treeBtn=`<button class="tab-tree" id="tab-tree" title="quick-open file tree"><svg viewBox="0 0 32 32"><path d="${I.dir}"/></svg></button>`;
   const viewseg=`<span class="viewseg">
     <button data-ev="editor">editor</button><button data-ev="combo">split</button><button data-ev="console">console</button></span>`;
-  document.getElementById('tabs').innerHTML=tabsHTML+treeBtn+viewseg;
+  setHTML(document.getElementById('tabs'), tabsHTML+treeBtn+viewseg);
   document.querySelectorAll('#tabs .tab').forEach(t=>t.onclick=()=>openFile(t.dataset.tab));
   document.querySelectorAll('#tabs .viewseg button').forEach(b=>b.onclick=()=>setEditView(b.dataset.ev));
   const tb=document.getElementById('tab-tree'); if(tb) tb.onclick=()=>document.getElementById('maiden').classList.toggle('drawer-open');
@@ -2037,7 +2039,7 @@ function setEditView(m){ document.getElementById('maiden').dataset.edit=m; LS.se
 
 /* ============ repl ============ */
 const out=()=>document.getElementById('replout');
-function replPrint(html){ const o=out(); o.innerHTML+=html+'\n'; o.scrollTop=o.scrollHeight; }
+function replPrint(html){ const o=out(); appendHTML(o, html+'\n'); o.scrollTop=o.scrollHeight; }
 let target='matron';
 
 /* ===== live matron link (real REPL + params channel over ws://<host>:5555) ===== */
@@ -2185,6 +2187,16 @@ async function replInstallFromUrl(url){
 }
 const ESC_MAP={'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'};
 function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,c=>ESC_MAP[c]);}
+// Defense-in-depth: esc() encodes each field, and every innerHTML also routes through
+// setHTML/appendHTML, which run DOMPurify.sanitize at the sink. DOMPurify is the backstop
+// that neutralizes on*/<script>/javascript: regardless of provenance or a missed esc(),
+// and validates URL schemes (esc() can't — it leaves colons/parens intact in href/src).
+// _SAN keeps <iframe> (YouTube/Vimeo/SoundCloud embeds, host-locked src) and target
+// (DOMPurify 3.x drops it by default; download links use it). esc()'d text renders
+// verbatim through DOMPurify (entities are idempotent), so no <letter mangling.
+const _SAN={ADD_TAGS:['iframe'],ADD_ATTR:['target','allow','allowfullscreen','frameborder','loading','scrolling']};
+function setHTML(el,html){ el.innerHTML=DOMPurify.sanitize(html,_SAN); }
+function appendHTML(el,html){ el.innerHTML+=DOMPurify.sanitize(html,_SAN); }
 
 /* autocomplete */
 // ;-cmd completions — kept in sync with replSlashCmd's switch above.
@@ -2216,8 +2228,8 @@ function updateAC(){
   acItems=source.filter(f=>f[0].toLowerCase().includes(tok.toLowerCase())).slice(0,8);
   if(!acItems.length){ hideAC(); return; }
   acIdx=0;
-  ac.innerHTML=acItems.map((f,i)=>
-    `<div class="ac-item ${i===0?'hl':''}" data-i="${i}"><span class="fn">${f[0]}</span><span class="sig">${f[1]}</span><span class="doc">${f[2]}</span></div>`).join('');
+  setHTML(ac, acItems.map((f,i)=>
+    `<div class="ac-item ${i===0?'hl':''}" data-i="${i}"><span class="fn">${f[0]}</span><span class="sig">${f[1]}</span><span class="doc">${f[2]}</span></div>`).join(''));
   ac.classList.add('show');
   ac.querySelectorAll('.ac-item').forEach(it=>{ it.onclick=()=>acceptAC(+it.dataset.i); });
 }
@@ -2240,9 +2252,9 @@ const selection=new Set();   // selected script names for bulk install/update
 function updateBulkBar(){
   const bar=document.getElementById('bulkbar'); if(!bar) return;
   const n=selection.size;
-  if(!n){ bar.classList.remove('show'); bar.innerHTML=''; return; }
+  if(!n){ bar.classList.remove('show'); setHTML(bar, ''); return; }
   const verb=repoTab==='installed'?'Update':'Install';
-  bar.innerHTML=`<span class="bcount">${n} selected</span><button class="btn btn-remove" data-bclear>Clear</button><button class="btn btn-install" data-bgo>${verb} ${n} selected</button>`;
+  setHTML(bar, `<span class="bcount">${n} selected</span><button class="btn btn-remove" data-bclear>Clear</button><button class="btn btn-install" data-bgo>${verb} ${n} selected</button>`);
   bar.classList.add('show');
   bar.querySelector('[data-bclear]').onclick=()=>{selection.clear();updateGrid();updateBulkBar();};
   bar.querySelector('[data-bgo]').onclick=bulkInstall;
@@ -2254,7 +2266,7 @@ function bulkInstall(){
   const go=()=>{ items.forEach(p=>enqueueInstall(p,null)); selection.clear(); updateGrid(); updateBulkBar(); };
   if(untrusted.length && !snoozeActive()){
     trustPending={bulk:go};
-    document.getElementById('trust-msg').innerHTML=`<b>${untrusted.length}</b> of ${items.length} selected script${items.length>1?'s':''} come from sources outside the built-in community catalog.`;
+    setHTML(document.getElementById('trust-msg'), `<b>${untrusted.length}</b> of ${items.length} selected script${items.length>1?'s':''} come from sources outside the built-in community catalog.`);
     document.getElementById('trust-remember').checked=false;
     document.getElementById('trust-overlay').classList.add('on');
   } else go();
@@ -2379,7 +2391,7 @@ function controlsHTML(){ return filterDropdownsHTML()+sortSelHTML(); }
 function paintControls(openKey){
   const v=document.getElementById('repoview'); if(!v) return;
   const wrap=v.querySelector('.rd-controls'); if(!wrap) return;
-  wrap.innerHTML=controlsHTML();
+  setHTML(wrap, controlsHTML());
   if(openKey){ const dd=wrap.querySelector('.dd[data-dd="'+openKey+'"]'); if(dd) dd.classList.add('open'); }
   wireControls(v);
 }
@@ -2439,7 +2451,7 @@ function repoList(tab){
 function updateGrid(){
   const v=document.getElementById('repoview'); const grid=v.querySelector('.rd-grid'); if(!grid) return;
   const tab=repoTab, list=repoList(tab);
-  grid.innerHTML=list.map(p=>repoCard(p,tab)).join('')||`<div class="gh-empty"><p>nothing matches “${esc(repoQuery)}”.</p></div>`;
+  setHTML(grid, list.map(p=>repoCard(p,tab)).join('')||`<div class="gh-empty"><p>nothing matches “${esc(repoQuery)}”.</p></div>`);
   const cnt=v.querySelector('.rd-count'); if(cnt) cnt.textContent=list.length+' scripts';
   const tc=v.querySelector('.js-tabcount'); if(tc) tc.textContent=list.length;   // tab count tracks the filtered list too
   wireCards(v,list,tab); updateBulkBar();
@@ -2452,7 +2464,7 @@ function doInstall(p,btn,note,opts){ if(btn){btn.textContent='queued…';btn.dis
 function mkJob(name,verb){
   const dock=document.getElementById('install-dock');
   const job=document.createElement('div'); job.className='ijob';
-  job.innerHTML=`<div class="ihead"><span class="ispin"></span><span>${name}</span><span class="istatus">${verb}</span><button class="iclose" title="dismiss">✕</button></div><div class="ilog"></div>`;
+  setHTML(job, `<div class="ihead"><span class="ispin"></span><span>${name}</span><span class="istatus">${verb}</span><button class="iclose" title="dismiss">✕</button></div><div class="ilog"></div>`);
   dock.appendChild(job); job.querySelector('.iclose').onclick=()=>job.remove(); return job;
 }
 function jobDone(job,btn,ok,finalLog,doneLabel){
@@ -2806,8 +2818,8 @@ function openDepPlan(rep,p){
     intro = `<b>${rep.name}</b> requirements:`;
   }
   document.getElementById('dep-title').textContent = title;
-  document.getElementById('dep-intro').innerHTML = intro;
-  document.getElementById('dep-plan').innerHTML=depPlanHTML(rep);
+  setHTML(document.getElementById('dep-intro'), intro);
+  setHTML(document.getElementById('dep-plan'), depPlanHTML(rep));
   document.querySelectorAll('#dep-plan .dep-url-go').forEach(b=>{   // user supplies a url for an un-resolved dep
     b.onclick=()=>{
       const name=b.getAttribute('data-dep');
@@ -2937,8 +2949,8 @@ function setupFailed(job,name,why){
 }
 async function showRequirements(p){
   document.getElementById('dep-title').textContent='requirements';
-  document.getElementById('dep-intro').innerHTML=`<b>${esc(p.n)}</b> — tracing dependencies…`;
-  document.getElementById('dep-plan').innerHTML='<div class="dep-row"><span class="dep-ic">⏳</span><div><div class="k">analyzing the dependency graph…</div><div class="d">cloning required scripts to inspect them — a moment.</div></div></div>';
+  setHTML(document.getElementById('dep-intro'), `<b>${esc(p.n)}</b> — tracing dependencies…`);
+  setHTML(document.getElementById('dep-plan'), '<div class="dep-row"><span class="dep-ic">⏳</span><div><div class="k">analyzing the dependency graph…</div><div class="d">cloning required scripts to inspect them — a moment.</div></div></div>');
   document.getElementById('dep-warn').style.display='none';
   document.getElementById('dep-go').style.display='none';
   document.getElementById('dep-overlay').classList.add('on');
@@ -2966,10 +2978,10 @@ function demoKind(u){ // null = not playable; embed kinds use an iframe, link ki
 function loadDemo(card,p){
   const slot=card.querySelector('.more-demo'); if(!slot||slot.dataset.loaded) return;
   const u=(p.demo||'').trim(), k=demoKind(u); slot.dataset.loaded=1;
-  if(k==='youtube') slot.innerHTML=`<iframe src="https://www.youtube.com/embed/${ytId(u)}" allowfullscreen loading="lazy"></iframe>`;
-  else if(k==='vimeo') slot.innerHTML=`<iframe src="https://player.vimeo.com/video/${vimeoId(u)}" allowfullscreen loading="lazy"></iframe>`;
-  else if(k==='soundcloud') slot.innerHTML=`<iframe class="sc" src="${scEmbedSrc(u)}" allow="autoplay" loading="lazy"></iframe>`;
-  else slot.innerHTML='<span class="more-nodemo">no playable demo</span>';
+  if(k==='youtube') setHTML(slot, `<iframe src="https://www.youtube.com/embed/${ytId(u)}" allowfullscreen loading="lazy"></iframe>`);
+  else if(k==='vimeo') setHTML(slot, `<iframe src="https://player.vimeo.com/video/${vimeoId(u)}" allowfullscreen loading="lazy"></iframe>`);
+  else if(k==='soundcloud') setHTML(slot, `<iframe class="sc" src="${scEmbedSrc(u)}" allow="autoplay" loading="lazy"></iframe>`);
+  else setHTML(slot, '<span class="more-nodemo">no playable demo</span>');
 }
 /* live GitHub search for the discover tab (paged, search on Enter/button only) */
 let _discLoaded=false, _discQuery='', _discPage=1, _discTotal=0, discHideKnown=true, discMineOnly=false;
@@ -3052,7 +3064,7 @@ async function ghSearch(query,page){
   const setLoad=(msg,pct)=>{ const m=document.getElementById('gh-load-msg'), bar=document.getElementById('gh-bar'), f=document.getElementById('gh-bar-fill');
     if(m&&msg!=null) m.textContent=msg;
     if(bar){ if(pct==null) bar.classList.add('indet'); else { bar.classList.remove('indet'); if(f) f.style.width=Math.round(pct)+'%'; } } };
-  if(grid) grid.innerHTML=`<div class="gh-empty"><div class="gh-load"><div class="gh-load-msg" id="gh-load-msg">finding ${label}${_discPage>1?` · page ${_discPage}`:''}…</div><div class="gh-bar indet" id="gh-bar"><div class="gh-bar-fill" id="gh-bar-fill"></div></div></div></div>`;
+  if(grid) setHTML(grid, `<div class="gh-empty"><div class="gh-load"><div class="gh-load-msg" id="gh-load-msg">finding ${label}${_discPage>1?` · page ${_discPage}`:''}…</div><div class="gh-bar indet" id="gh-bar"><div class="gh-bar-fill" id="gh-bar-fill"></div></div></div></div>`);
   try{
     let qstr;
     if(_discUser){ qstr='user:'+_discUser+' language:lua'; }                 // a specific author — gate-classified to norns
@@ -3084,7 +3096,7 @@ async function ghSearch(query,page){
         proj:it.html_url, priv:!!it.private, srcs, gh:1, facets:c.facets||[], voices:c.voices||{provides:[],uses:[],systems:[]} };
     });
     _discLoaded=true; if(repoTab==='discover') renderRepo();
-  }catch(err){ if(grid) grid.innerHTML=`<div class="gh-empty"><p>GitHub search failed: ${esc(err.message)}</p></div>`; }
+  }catch(err){ if(grid) setHTML(grid, `<div class="gh-empty"><p>GitHub search failed: ${esc(err.message)}</p></div>`); }
 }
 /* clicking an author anywhere → that user's norns repos. With a token we list their public
    (and visible private) repos live, gate-classified; without one we show what the catalog/installed
@@ -3124,7 +3136,7 @@ function requestInstall(p,btn,tab){
   else {
     trustPending={p,btn};
     const src=(p.srcs||[]).map(s=>SRC[s]?SRC[s].name:s).join(', ')||'an external source';
-    document.getElementById('trust-msg').innerHTML=`<b>${esc(p.n)}</b> by ${esc(p.a)} comes from <b>${esc(src)}</b> — not the built-in community catalog.`;
+    setHTML(document.getElementById('trust-msg'), `<b>${esc(p.n)}</b> by ${esc(p.a)} comes from <b>${esc(src)}</b> — not the built-in community catalog.`);
     document.getElementById('trust-remember').checked=false;
     document.getElementById('trust-overlay').classList.add('on');
   }
@@ -3139,7 +3151,7 @@ function proceedInstall(p,btn,renamed,linkExisting){ const e=shipEngine(p);
 function openEngineModal(p,c,btn){
   enginePending={p,btn};
   const suggest=availableEngineName(c.engine);
-  document.getElementById('eng-msg').innerHTML=`<b>${esc(p.n)}</b> registers a SuperCollider engine named <b>${esc(c.engine)}</b>, already provided by <b>${esc(c.owner)}</b>. Two engines can't share a class name — installing as-is can break one of them.`;
+  setHTML(document.getElementById('eng-msg'), `<b>${esc(p.n)}</b> registers a SuperCollider engine named <b>${esc(c.engine)}</b>, already provided by <b>${esc(c.owner)}</b>. Two engines can't share a class name — installing as-is can break one of them.`);
   document.getElementById('eng-rename').value=suggest;
   document.getElementById('eng-overlay').classList.add('on');
 }
@@ -3249,7 +3261,7 @@ function wireUpdStrip(root){
 function refreshUpdStrip(){    // in-place refresh of strip + badges only — NO updateGrid (would refire
   const v=document.getElementById('repoview'); if(!v) return;  // every card's giturl)
   const html=updStripHTML(); const cur=v.querySelector('.upd-strip');
-  const tmp=document.createElement('div'); tmp.innerHTML=html; const nu=tmp.firstElementChild;
+  const tmp=document.createElement('div'); setHTML(tmp, html); const nu=tmp.firstElementChild;
   if(cur){ if(nu) cur.replaceWith(nu); else cur.remove(); }
   else if(nu){ const head=v.querySelector('.rd-cathead'); if(head) head.after(nu); }
   wireUpdStrip(v); applyUpdBadges();
@@ -3263,7 +3275,7 @@ function applyUpdBadges(){     // toggle ↻update badges on already-rendered in
     const have=nm.querySelector('.okb.upd');
     if(p.upd_avail && !have){
       const s=document.createElement('span'); s.className='okb upd';
-      s.innerHTML=`<svg viewBox="0 0 32 32"><path d="${I.refresh}"/></svg>update`;
+      setHTML(s, `<svg viewBox="0 0 32 32"><path d="${I.refresh}"/></svg>update`);
       nm.appendChild(document.createTextNode(' ')); nm.appendChild(s);
     } else if(!p.upd_avail && have){ have.remove(); }
   });
@@ -3349,11 +3361,11 @@ async function loadReadme(card,p){
   const RT='font-size:12px;color:var(--muted);line-height:1.5;margin:6px 0;max-height:62vh;overflow:auto';
   const render=(j)=>{ let html=''; if(j.text) html+=`<div class="readme-text" style="${RT}">${mdToHtml(j.text)}</div>`;
     if(j.images&&j.images.length) html+=carouselHTML(j.images);
-    slot.innerHTML=html||'<span class="more-nodemo">no README details</span>'; wireCarousel(slot); };
+    setHTML(slot, html||'<span class="more-nodemo">no README details</span>'); wireCarousel(slot); };
   // Instant: render the feed's precomputed prefix so something shows immediately,
   // then replace it with the FULL README below.
   if(p.readme||(p.images&&p.images.length)) render({text:p.readme||'', images:p.images||[]});
-  else slot.innerHTML='<span class="more-nodemo">loading README…</span>';
+  else setHTML(slot, '<span class="more-nodemo">loading README…</span>');
   // Whole README: prefer the full GitHub README (rendered as Markdown, images inline,
   // forum uploads shown as code). Fall back to the norns.community description
   // (server-fetched, no token) for entries without a usable GitHub README.
@@ -3364,7 +3376,7 @@ async function loadReadme(card,p){
       if(c && !c.error && ((c.text&&c.text.length) || (c.images&&c.images.length))) j=c; }catch(_){}
   }
   if(j && !j.error && (j.text||(j.images&&j.images.length))) render(j);
-  else if(!(p.readme||(p.images&&p.images.length))) slot.innerHTML='<span class="more-nodemo">no README found</span>';
+  else if(!(p.readme||(p.images&&p.images.length))) setHTML(slot, '<span class="more-nodemo">no README found</span>');
 }
 // Read a repo's README straight from the GitHub API in the browser. /readme auto-resolves the
 // file wherever/however it's named; raw images are resolved relative to its download_url.
@@ -3557,13 +3569,13 @@ function renderRepo(){
 
   // discover gated on github connection — except an author view, which can list known repos offline
   if(tab==='discover' && !ghConnected && !_discUser){
-    v.innerHTML=`<div class="rd-top">${tabs}</div>
+    setHTML(v, `<div class="rd-top">${tabs}</div>
       <div class="rd-scroll"><div class="gh-empty">
         <div class="big"><svg viewBox="0 0 24 24"><path d="M12 .5C5.7.5.5 5.7.5 12c0 5.1 3.3 9.4 7.9 10.9.6.1.8-.2.8-.5v-1.7c-3.2.7-3.9-1.5-3.9-1.5-.5-1.3-1.3-1.7-1.3-1.7-1.1-.7.1-.7.1-.7 1.2.1 1.8 1.2 1.8 1.2 1 1.8 2.8 1.3 3.5 1 .1-.8.4-1.3.7-1.6-2.6-.3-5.3-1.3-5.3-5.7 0-1.3.5-2.3 1.2-3.1-.1-.3-.5-1.5.1-3.1 0 0 1-.3 3.3 1.2a11.5 11.5 0 0 1 6 0c2.3-1.5 3.3-1.2 3.3-1.2.6 1.6.2 2.8.1 3.1.8.8 1.2 1.8 1.2 3.1 0 4.4-2.7 5.4-5.3 5.7.4.3.8 1 .8 2.1v3.1c0 .3.2.6.8.5 4.6-1.5 7.9-5.8 7.9-10.9C23.5 5.7 18.3.5 12 .5z"/></svg></div>
         <h3>discover scripts across GitHub</h3>
         <p>connect a GitHub token to search every norns repo on GitHub, pull in your own public &amp; private repos, and add custom catalogs — all tagged by source.</p>
         <button class="btn btn-install" id="gh-empty-connect">Connect GitHub in settings</button>
-      </div></div>`;
+      </div></div>`);
     v.querySelectorAll('[data-rt]').forEach(b=>b.onclick=()=>{repoTab=b.dataset.rt;renderRepo();});
     document.getElementById('gh-empty-connect').onclick=openCfg;
     return;
@@ -3572,10 +3584,10 @@ function renderRepo(){
   // Manage modes (installed/updates) need the device — show a nudge in web-preview
   // or before the device API connects, rather than a confusing empty list.
   if((tab==='installed'||tab==='updates') && !HAS_BACKEND){
-    v.innerHTML=`<div class="rd-top">${tabs}</div><div class="rd-scroll"><div class="gh-empty">
+    setHTML(v, `<div class="rd-top">${tabs}</div><div class="rd-scroll"><div class="gh-empty">
         <h3>${tab==='updates'?'updates':'installed scripts'}</h3>
         <p>connect to your norns to see and manage what's installed on the device.</p>
-        <button class="btn btn-install" data-rt="available">browse the catalog →</button></div></div>`;
+        <button class="btn btn-install" data-rt="available">browse the catalog →</button></div></div>`);
     v.querySelectorAll('[data-rt]').forEach(b=>b.onclick=()=>{_repoScroll=0;repoTab=b.dataset.rt;renderRepo();});
     return;
   }
@@ -3585,7 +3597,7 @@ function renderRepo(){
     const strip = tabState==='loading'
       ? `<div class="upd-strip"><span class="ispin"></span><span>loading catalog…</span><span class="upd-bar"><span class="upd-fill indet"></span></span></div>`
       : `<div class="upd-strip err"><span>⚠ catalog failed to load</span><button class="upd-recheck" data-reload="1">↻ retry</button></div>`;
-    v.innerHTML=`<div class="rd-top">${tabs}</div><div class="rd-scroll"><div>${strip}</div></div>`;
+    setHTML(v, `<div class="rd-top">${tabs}</div><div class="rd-scroll"><div>${strip}</div></div>`);
     v.querySelectorAll('[data-reload]').forEach(b=>b.onclick=()=>loadScripts());
     return;
   }
@@ -3596,13 +3608,13 @@ function renderRepo(){
               :tab==='updates'?'<p>everything on your norns is up to date. ✓</p>'
               :'<p>nothing matches your filters.</p>';
   const head = `<div class="rd-cathead"><span class="nm rd-count">${list.length} scripts</span>${_where}<span class="line"></span><button class="cathead-ic" data-act="refresh" title="reload the catalog"><svg viewBox="0 0 32 32"><path d="${I.refresh}"/></svg></button><button class="selall-btn" data-selall>select all</button></div>`;
-  v.innerHTML=`<div class="rd-top">${tabs}
+  setHTML(v, `<div class="rd-top">${tabs}
       <div class="rd-toolbar">
         <label class="rd-search"><svg viewBox="0 0 32 32"><path d="${I.search}"/></svg><input id="rd-q" placeholder="search scripts, authors, tags…"></label>
         <div class="rd-controls">${tab==='available'?controlsHTML():sortSelHTML()}</div>
       </div></div>
     <div class="rd-scroll"><div>${head}${(tab==='installed'||tab==='updates')?updStripHTML():''}<div class="rd-grid">${list.map(p=>repoCard(p,tab)).join('')||`<div class="gh-empty">${_empty}</div>`}</div></div></div>
-    <div class="bulkbar" id="bulkbar"></div>`;
+    <div class="bulkbar" id="bulkbar"></div>`);
   v.querySelectorAll('[data-rt]').forEach(b=>b.onclick=()=>{_repoScroll=0;repoTab=b.dataset.rt;repoQuery='';_discUser=null;selection.clear();renderRepo();});
   v.querySelectorAll('[data-selall]').forEach(b=>b.onclick=()=>{
     const cur=repoList(repoTab); const allSel=cur.length&&cur.every(p=>selection.has(p.n));
@@ -3639,13 +3651,13 @@ const EYE_OPEN='<svg viewBox="0 0 32 32"><path d="M16 6C8.5 6 2.5 12.6 1 16c1.5 
 const EYE_SHUT='<svg viewBox="0 0 32 32"><path d="M16 6C8.5 6 2.5 12.6 1 16c1.5 3.4 7.5 10 15 10s13.5-6.6 15-10c-1.5-3.4-7.5-10-15-10zm0 16a6 6 0 110-12 6 6 0 010 12zm0-3.2a2.8 2.8 0 100-5.6 2.8 2.8 0 000 5.6z"/><line x1="5" y1="4" x2="27" y2="28" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"/></svg>';
 async function renderFav(){
   const v=document.getElementById('favview');
-  if(!HAS_BACKEND){ v.innerHTML='<div class="fv-top"><span class="pv-title">FAVORITES</span></div><div class="fav-scroll"><div class="fav-empty">favorites need the on-device backend.</div></div>'; return; }
-  if(!v.querySelector('.fav-scroll')) v.innerHTML='<div class="fv-top"><span class="pv-title">FAVORITES</span></div><div class="fav-scroll"><div class="fav-empty">loading…</div></div>';   // first open only — a refresh keeps the list up so scroll/position don't flash
+  if(!HAS_BACKEND){ setHTML(v, '<div class="fv-top"><span class="pv-title">FAVORITES</span></div><div class="fav-scroll"><div class="fav-empty">favorites need the on-device backend.</div></div>'); return; }
+  if(!v.querySelector('.fav-scroll')) setHTML(v, '<div class="fv-top"><span class="pv-title">FAVORITES</span></div><div class="fav-scroll"><div class="fav-empty">loading…</div></div>');   // first open only — a refresh keeps the list up so scroll/position don't flash
   try{
     const r=await fetch('api/favorites',{cache:'no-store'});
     if(!r.ok) throw new Error('http '+r.status);
     _favData=await r.json();
-  }catch(e){ v.innerHTML='<div class="fv-top"><span class="pv-title">FAVORITES</span></div><div class="fav-scroll"><div class="fav-empty">couldn’t load favorites — '+esc(e.message)+'</div></div>'; return; }
+  }catch(e){ setHTML(v, '<div class="fv-top"><span class="pv-title">FAVORITES</span></div><div class="fav-scroll"><div class="fav-empty">couldn’t load favorites — '+esc(e.message)+'</div></div>'); return; }
   _favOrder=(_favData.favorites||[]).map(f=>f.file);
   paintFav();
 }
@@ -3669,7 +3681,7 @@ function paintFav(){
   const hiddenRow=e=>`<div class="fav-row missing" data-file="${esc(e.file)}">
       <span class="fav-name" title="${esc(e.file)}">${esc(e.name)}</span>${e.stash_ok===false?'<span class="miss-tag">stash gone</span>':''}
       <button class="eye restore" title="restore to norns SELECT menu" data-unhide ${e.stash_ok===false?'disabled':''}>${EYE_SHUT}</button></div>`;
-  v.innerHTML=`<div class="fv-top"><span class="pv-title">FAVORITES</span><span class="fav-saving" id="fav-saving"></span></div>
+  setHTML(v, `<div class="fv-top"><span class="pv-title">FAVORITES</span><span class="fav-saving" id="fav-saving"></span></div>
     <div class="fav-scroll">
       <div class="fav-sec"><div class="fav-sec-h">on device <span class="ct">${favs.length}</span><span class="hint">drag to reorder — top-left is first in the SELECT menu</span></div>
         <div class="fav-grid">${favs.length?favs.map(favRow).join(''):'<div class="fav-empty">no favorites yet — add some from below ↓</div>'}</div></div>
@@ -3677,7 +3689,7 @@ function paintFav(){
         <div class="fav-grid">${unfav.length?unfav.map(unfavRow).join(''):'<div class="fav-empty">every installed script is a favorite</div>'}</div></div>
       ${hidden.length?`<div class="fav-sec"><div class="fav-sec-h">hidden from SELECT <span class="ct">${hidden.length}</span><span class="hint">click the eye to restore</span></div>
         <div class="fav-grid">${hidden.map(hiddenRow).join('')}</div></div>`:''}
-    </div>`;
+    </div>`);
   const sc=v.querySelector('.fav-scroll');
   if(sc){ sc.scrollTop=_favScroll; sc.addEventListener('scroll',()=>{ _favScroll=sc.scrollTop; },{passive:true}); }
   wireFav(v);
@@ -3860,7 +3872,7 @@ function renderFiles(){
       <span class="fract-wrap"><button class="fract rn" data-rn title="rename">✎</button><button class="fract del" data-del title="delete">🗑</button></span></div>`;}).join('')
     : `<div class="fv-empty">empty — drag files or folders here, or use ⬆ upload</div>`;
   const atRoot=fvPath.length<=1, nsel=fvSel.size;
-  v.innerHTML=`<div class="fv-bar">
+  setHTML(v, `<div class="fv-bar">
       <button class="fv-btn" data-up ${atRoot?'disabled':''}>↑ up</button>
       <div class="fv-crumbs">${crumbs}</div>
       <button class="fv-btn" data-newdir>+ folder</button>
@@ -3872,7 +3884,7 @@ function renderFiles(){
     </div>
     <div class="fv-list">${rows}</div>
     <div class="fv-drop"><span class="msg">drop files or folders to upload to /${fvPath.join('/')}</span></div>
-    <div class="fv-prog" id="fv-prog"></div>`;
+    <div class="fv-prog" id="fv-prog"></div>`);
   v.querySelectorAll('[data-cd]').forEach(b=>b.onclick=()=>{fvPath=fvPath.slice(0,+b.dataset.cd+1);fvSel.clear();renderFiles();});
   v.querySelector('[data-up]').onclick=()=>{ if(fvPath.length>1){fvPath.pop();fvSel.clear();renderFiles();} };
   v.querySelector('[data-upload]').onclick=()=>document.getElementById('file-input').click();   // files; folders via drag (one path)
@@ -3927,7 +3939,7 @@ function deleteSelected(){
 function uploadToast(html,done){
   let t=document.getElementById('upload-toast');
   if(!t){ t=document.createElement('div'); t.id='upload-toast'; (document.getElementById('device')||document.body).appendChild(t); }
-  t.innerHTML=html; t.classList.add('show');
+  setHTML(t, html); t.classList.add('show');
   if(done){ clearTimeout(t._h); t._h=setTimeout(()=>t.classList.remove('show'),2400); }
 }
 async function realUpload(fileList){
@@ -3953,7 +3965,7 @@ function doUpload(items){
   const tops=new Set(items.map(it=>{const p=(it.rel||it.name).split('/');return p.length>1?p[0]:null;}).filter(Boolean));
   const prog=document.getElementById('fv-prog'); if(!prog) return; prog.classList.add('show');
   const dest=`/${fvPath.join('/')}`, fnote=tops.size?` across ${tops.size} folder${tops.size>1?'s':''}`:'';
-  const setP=(pct,t,s)=>{ prog.innerHTML=`<div class="pt">${pct<100?'<span class="ispin"></span>':'✓'} ${t}</div><div class="psub">${s}</div><div class="pbar"><div class="pfill" style="width:${pct}%"></div></div>`; };
+  const setP=(pct,t,s)=>{ setHTML(prog, `<div class="pt">${pct<100?'<span class="ispin"></span>':'✓'} ${t}</div><div class="psub">${s}</div><div class="pbar"><div class="pfill" style="width:${pct}%"></div></div>`); };
   const batched=n>20;
   const phases=batched
     ? [[12,`packing ${n.toLocaleString()} files…`,`bundling ${n.toLocaleString()} files${fnote} into one archive (${fmtSize(total)}) — a single transfer, not ${n.toLocaleString()} round-trips`],
@@ -3982,7 +3994,7 @@ async function gatherDrop(dt){
 let _confirmYes=null;
 function confirmDialog(title,msg,onYes,danger,okLabel){
   document.getElementById('confirm-title').textContent=title;
-  document.getElementById('confirm-msg').innerHTML=msg;
+  setHTML(document.getElementById('confirm-msg'), msg);
   const ok=document.getElementById('confirm-ok'); ok.textContent=okLabel||(danger?'Delete':'OK'); ok.className='btn '+(danger?'btn-danger':'btn-install');
   _confirmYes=onYes; document.getElementById('confirm-overlay').classList.add('on');
 }
@@ -3994,16 +4006,16 @@ function openFromFiles(nm){ const known=Object.keys(FILES).find(k=>k.endsWith('/
 function fvDownload(){ const names=[...fvSel]; if(!names.length) return; const prog=document.getElementById('fv-prog'); if(!prog) return;
   const multi=names.length>1; prog.classList.add('show');
   if(!HAS_BACKEND){   // viewing the static demo off-device — no real files to serve
-    prog.innerHTML=`<div class="pt">connect to your norns to download</div><div class="psub">files live on the device</div><div class="pbar"><div class="pfill" style="width:100%"></div></div>`;
+    setHTML(prog, `<div class="pt">connect to your norns to download</div><div class="psub">files live on the device</div><div class="pbar"><div class="pfill" style="width:100%"></div></div>`);
     setTimeout(()=>prog.classList.remove('show'),1900); return; }
   // Real native browser download: build the endpoint URL and let the browser fetch it.
   // The server replies with Content-Disposition: attachment (single file) or a zip,
   // so this hands off to the browser's own download tray — no JS progress to track.
   const base=fvPath.slice(1).join('/');
   const url='api/download?path='+encodeURIComponent(base)+names.map(n=>'&name='+encodeURIComponent(n)).join('');
-  prog.innerHTML=`<div class="pt"><span class="ispin"></span> ${multi?`zipping ${names.length} files…`:`downloading ${names[0]}…`}</div><div class="psub">from /${fvPath.join('/')}</div><div class="pbar"><div class="pfill" style="width:35%"></div></div>`;
+  setHTML(prog, `<div class="pt"><span class="ispin"></span> ${multi?`zipping ${names.length} files…`:`downloading ${names[0]}…`}</div><div class="psub">from /${fvPath.join('/')}</div><div class="pbar"><div class="pfill" style="width:35%"></div></div>`);
   const a=document.createElement('a'); a.href=url; a.download=''; document.body.appendChild(a); a.click(); a.remove();
-  setTimeout(()=>{ prog.innerHTML=`<div class="pt">↓ download started</div><div class="psub">${multi?`${names.length} files — norns-files.zip`:names[0]} · check your browser's downloads</div><div class="pbar"><div class="pfill" style="width:100%"></div></div>`;
+  setTimeout(()=>{ setHTML(prog, `<div class="pt">↓ download started</div><div class="psub">${multi?`${names.length} files — norns-files.zip`:names[0]} · check your browser's downloads</div><div class="pbar"><div class="pfill" style="width:100%"></div></div>`);
     setTimeout(()=>prog.classList.remove('show'),2200); },650); }
 /* combo-view resizable console (desktop / iPad) with sensible min sizes */
 function initSplit(){
@@ -4025,30 +4037,30 @@ function initSplit(){
 function buildThemeGrid(filter=''){
   const g=document.getElementById('theme-grid');
   document.getElementById('theme-count').textContent=THEMES.length;
-  g.innerHTML=THEMES.map((t,i)=>{
+  setHTML(g, THEMES.map((t,i)=>{
     if(filter && !t.n.toLowerCase().includes(filter.toLowerCase())) return '';
     return `<div class="tch ${i===curTheme?'on':''}" data-i="${i}">
       <div class="prev" style="background:${t.bg}">
         <div class="dots"><i style="background:${t.a1}"></i><i style="background:${t.a2}"></i><i style="background:${t.ok}"></i></div>
         <div class="line" style="background:${t.fg}"></div></div>
       <div class="nm" style="background:${t.p};color:${t.fg};border-color:${t.tr}">${t.n}</div></div>`;
-  }).join('');
+  }).join(''));
   g.querySelectorAll('.tch').forEach(c=>c.onclick=()=>{userPickedTheme=true;applyTheme(+c.dataset.i);});
 }
 function renderGh(){
   const b=document.getElementById('gh-box');
   if(ghConnected){
-    b.innerHTML=`<div class="gh-connected"><span class="ok">✓</span> connected as <b>@${GHUSER}</b>
+    setHTML(b, `<div class="gh-connected"><span class="ok">✓</span> connected as <b>@${GHUSER}</b>
       <button id="gh-disc">disconnect</button></div>
-      <div class="gh-hint">your public &amp; private repos are now available as a source (<b>★ my repos</b>) in the browse list below.</div>`;
+      <div class="gh-hint">your public &amp; private repos are now available as a source (<b>★ my repos</b>) in the browse list below.</div>`);
     b.querySelector('#gh-disc').onclick=()=>{ghConnected=false;GH_LOGIN=null;LS.set('gh',{c:false});renderGh();renderSrc();renderRepo();};
   } else {
-    b.innerHTML=`<div class="gh-row">
+    setHTML(b, `<div class="gh-row">
         <label class="theme-search"><svg viewBox="0 0 32 32"><path d="${I.search}"/></svg>
           <input id="gh-token" type="password" placeholder="github personal access token (repo, read:user)"></label>
         <button class="btn btn-install" id="gh-connect">Connect</button></div>
       <div class="gh-hint">connect to pull your own public &amp; private repos, add custom catalogs, and search all of GitHub for norns scripts. matching scripts are tagged by source. <b>your token is stored only in this browser's localStorage</b> and sent only to GitHub (api.github.com, over HTTPS) to authorize search — never to ingenue or any other server.
-        <br><br><b>create it safely:</b> treat it like a password. prefer a <a href="https://github.com/settings/tokens?type=beta" target="_blank" rel="noopener">fine-grained token</a> limited to only the repos you need (read-only <b>Contents</b> + <b>Metadata</b>), or a classic token with the minimum scope — <b>public_repo</b> + <b>read:user</b> for public only, or <b>repo</b> only if you need private repos. set a short expiration, and <a href="https://github.com/settings/tokens" target="_blank" rel="noopener">revoke it</a> anytime. a narrow, expiring token keeps the blast radius small if it ever leaks.</div>`;
+        <br><br><b>create it safely:</b> treat it like a password. prefer a <a href="https://github.com/settings/tokens?type=beta" target="_blank" rel="noopener">fine-grained token</a> limited to only the repos you need (read-only <b>Contents</b> + <b>Metadata</b>), or a classic token with the minimum scope — <b>public_repo</b> + <b>read:user</b> for public only, or <b>repo</b> only if you need private repos. set a short expiration, and <a href="https://github.com/settings/tokens" target="_blank" rel="noopener">revoke it</a> anytime. a narrow, expiring token keeps the blast radius small if it ever leaks.</div>`);
     b.querySelector('#gh-connect').onclick=()=>{
       const t=b.querySelector('#gh-token').value.trim();
       if(!t){ const f=b.querySelector('#gh-token'); f.focus(); f.style.borderColor='var(--err)'; return; }   // a real token is required (5000/hr; empty = rate-limited)
@@ -4062,14 +4074,14 @@ function renderGh(){
 }
 function renderSrc(){
   const el=document.getElementById('src-list');
-  el.innerHTML=SRC_ORDER.map(id=>{
+  setHTML(el, SRC_ORDER.map(id=>{
     const s=SRC[id]; const locked=s.auth&&!ghConnected;
     const on=!!SRC_ON[id]&&!locked;
     return `<div class="src-item ${locked?'locked':''}">
       <span class="sw" style="background:${s.color}"></span>
       <span><span class="nm">${s.name}</span> <span class="ty">${s.type}</span></span>
       <span class="tog ${on?'on':''}" data-tsrc="${id}" ${locked?'style="opacity:.4;pointer-events:none"':''}></span></div>`;
-  }).join('');
+  }).join(''));
   el.querySelectorAll('[data-tsrc]').forEach(t=>t.onclick=()=>{
     const id=t.dataset.tsrc; SRC_ON[id]=SRC_ON[id]?0:1;
     if(SRC_ON[id]) srcFilter.add(id); else srcFilter.delete(id);
@@ -4081,9 +4093,9 @@ function renderSrc(){
 function renderFeeds(){
   const el=document.getElementById('feed-list'); if(!el) return;
   const feeds=LS.get('customFeeds',[])||[];
-  el.innerHTML=feeds.map((f,i)=>`<div class="src-item" style="font-size:12px">
+  setHTML(el, feeds.map((f,i)=>`<div class="src-item" style="font-size:12px">
     <span>${esc(f.label||f.url)}${f._err?' <span style="color:var(--err)">· unreachable</span>':''}</span>
-    <button class="rd-pill-btn" data-delfeed="${i}" style="margin:0;padding:2px 8px" title="remove this feed">✕</button></div>`).join('');
+    <button class="rd-pill-btn" data-delfeed="${i}" style="margin:0;padding:2px 8px" title="remove this feed">✕</button></div>`).join(''));
   el.querySelectorAll('[data-delfeed]').forEach(b=>b.onclick=async()=>{
     const arr=LS.get('customFeeds',[])||[]; arr.splice(+b.dataset.delfeed,1); LS.set('customFeeds',arr);
     renderFeeds(); await loadCatalog(); renderRepoIfOpen();
