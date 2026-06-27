@@ -1444,8 +1444,8 @@ async function loadCatalog(){
     CAT_INDEX = new Map();
     let entries=[];
     if(window.__INGENUE_DEMO__){
-      // Public web demo: never fetch or republish the real norns.community catalog.
-      // Seed from the small local illustrative list so the UI is explorable, then
+      // Public web demo uses sample data (DEMO_SEED) — the device catalog is not
+      // available in the static build. Seed from the small local illustrative list, then
       // still layer any feed the visitor adds themselves.
       DEMO_SEED.available.forEach(e=> indexAdd(entries, {...e}));
     } else {
