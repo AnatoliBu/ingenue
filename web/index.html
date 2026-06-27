@@ -8,7 +8,7 @@
      'unsafe-inline' is required by this single-file inline-script SPA (no nonce mechanism);
      every other directive is tightly scoped. As a <meta> it travels with the file, so it
      applies both on-device and on a static host. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:; connect-src 'self' https://api.github.com https://raw.githubusercontent.com https://*.githubusercontent.com https://norns.community ws://*:5555 ws:; frame-src https://www.youtube.com https://player.vimeo.com https://w.soundcloud.com; base-uri 'self'; object-src 'none'; form-action 'self'" />
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:; connect-src 'self' https://github.com https://api.github.com https://raw.githubusercontent.com https://*.githubusercontent.com https://norns.community ws://*:5555 ws:; frame-src https://www.youtube.com https://player.vimeo.com https://w.soundcloud.com; base-uri 'self'; object-src 'none'; form-action 'self'" />
 <title>ingenue · norns</title>
 <script>
 /* demo mode: load the static-site mock layer when hosted on a Pages-style
@@ -336,6 +336,11 @@ button{font-family:inherit}
 .card.gh{border-left:2px solid color-mix(in srgb,var(--srcc,var(--trim)) 55%,transparent)}
 .card .stars{font-size:11.5px;color:var(--muted);font-family:ui-monospace,monospace}
 .lock{font-size:10px;font-weight:600;color:var(--muted);border:1px solid var(--trim);border-radius:20px;padding:1px 7px;text-transform:uppercase;letter-spacing:.04em}
+.catbar{display:flex;align-items:center;gap:4px;padding:0 10px 8px;flex-wrap:wrap;min-width:0}
+.cattab{font-size:12px;padding:3px 10px;border-radius:20px;cursor:pointer;border:1px solid color-mix(in srgb,var(--tc,var(--trim)) 35%,transparent);color:color-mix(in srgb,var(--tc,var(--fg)) 70%,var(--fg));transition:background .12s,color .12s}
+.cattab:hover{background:color-mix(in srgb,var(--tc,var(--trim)) 14%,transparent)}
+.cattab.on{background:color-mix(in srgb,var(--tc,var(--accent)) 22%,transparent);color:var(--tc,var(--accent));border-color:color-mix(in srgb,var(--tc,var(--accent)) 50%,transparent);font-weight:600}
+.cattab b{font-weight:400;opacity:.55;font-size:11px}
 .srcbar{display:flex;align-items:center;gap:6px;flex-wrap:wrap;padding:0 12px 8px;min-width:0}
 .srcbar .lbl{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em}
 .srcchip{display:inline-flex;align-items:center;gap:6px;font-size:12px;border-radius:20px;padding:4px 11px;cursor:pointer;
@@ -401,9 +406,9 @@ button{font-family:inherit}
 .rd-toggle:hover{background:color-mix(in srgb,var(--fg) 10%,transparent);color:var(--fg)}
 .rd-toggle svg{width:16px;height:16px;fill:currentColor;transition:transform .2s}
 .repoview.collapsed .rd-toggle svg{transform:rotate(180deg)}
-.rd-toolbar,.srcbar{transition:max-height .22s ease,opacity .15s ease,padding .22s ease;max-height:140px}   /* overflow visible so filter dropdowns can escape; clipped only while collapsed */
+.rd-toolbar,.srcbar,.catbar{transition:max-height .22s ease,opacity .15s ease,padding .22s ease;max-height:140px}   /* overflow visible so filter dropdowns can escape; clipped only while collapsed */
 .rd-filters{transition:max-height .22s ease,opacity .15s ease;overflow:hidden;max-height:600px}   /* desktop: filters (sources + tags) collapse too, not just the search bar */
-.repoview.collapsed .rd-toolbar,.repoview.collapsed .srcbar,.repoview.collapsed .rd-filters{max-height:0;opacity:0;overflow:hidden;padding-top:0;padding-bottom:0}
+.repoview.collapsed .rd-toolbar,.repoview.collapsed .srcbar,.repoview.collapsed .catbar,.repoview.collapsed .rd-filters{max-height:0;opacity:0;overflow:hidden;padding-top:0;padding-bottom:0}
 
 /* cards are always expanded (rich view) */
 .card{cursor:default}
@@ -1421,11 +1426,12 @@ function indexAdd(entries, e){
 // Parse an added feed's JSON into {entries, enrich}. Supports community ({entries:[…]}),
 // long-form catalog ({scripts:[…]}), and enrichment-map ({scripts:{name:{…}}} / bare map).
 function parseFeedJson(j){
-  if(j && Array.isArray(j.entries)) return {entries:j.entries.map(communityRowToEntry), enrich:null};
-  if(j && Array.isArray(j.scripts)) return {entries:j.scripts.map(feedRowToEntry), enrich:null};
+  const feedInfo=(j&&j.file_info&&typeof j.file_info==='object')?j.file_info:{};
+  if(j && Array.isArray(j.entries)) return {entries:j.entries.map(communityRowToEntry), enrich:null, feedInfo};
+  if(j && Array.isArray(j.scripts)) return {entries:j.scripts.map(feedRowToEntry), enrich:null, feedInfo};
   const map = (j && j.scripts && typeof j.scripts==='object') ? j.scripts
             : (j && typeof j==='object' && !Array.isArray(j)) ? j : null;
-  return {entries:[], enrich:map};
+  return {entries:[], enrich:map, feedInfo};
 }
 // Fetch + parse every user-added feed (localStorage 'customFeeds'). Per-feed best-effort:
 // a dead/malformed feed is flagged (_err) and skipped, never blanking the catalog.
@@ -1456,8 +1462,19 @@ async function loadCatalog(){
     }
     // Layer user-added feeds (add order): merge enrichment onto existing names,
     // append new ones as the 'custom' source.
-    for(const {entries:fe, enrich} of await loadCustomFeeds()){
-      fe.forEach(e=>{ if(e&&e.n){ e.cat='custom'; e.srcs=['custom'];
+    for(const {entries:fe, enrich, feedInfo={}} of await loadCustomFeeds()){
+      // Register named feeds dynamically so they get their own tab + color
+      const rawName=(feedInfo.name||'').toLowerCase().replace(/[^a-z0-9_-]/g,'');
+      const feedName=rawName||'custom';
+      if(feedName!=='custom' && !CAT_META[feedName]){
+        const feedColors=['#c9b4ff','#ff9580','#80ffcc','#ffe680','#80d9ff'];
+        const feedColor=feedColors[Object.keys(CAT_META).filter(k=>CAT_META[k][3]==='feed').length%feedColors.length];
+        CAT_META[feedName]=['◆',feedName,feedColor,'feed'];
+        catFilter.add(feedName);
+        SRC[feedName]={name:feedName,color:feedColor,type:'external feed',feed:true,defaultSort:feedInfo.default_sort||null};
+        if(!SRC_ORDER.includes(feedName)) SRC_ORDER.splice(Math.max(SRC_ORDER.indexOf('mine'),0),0,feedName);
+      }
+      fe.forEach(e=>{ if(e&&e.n){ e.cat=feedName; e.srcs=[feedName];
         if(e.gh==null) e.gh = e.proj&&/github\.com/.test(e.proj)?1:0; indexAdd(entries, e); } });
       if(enrich) Object.keys(enrich).forEach(k=>{ const cur=CAT_INDEX.get(norm(k)); if(cur) mergeEnrich(cur, enrich[k]); });
     }
@@ -2345,6 +2362,7 @@ function sortCmp(a,b){
   if(sortMode==='name')        r=(a.n||'').localeCompare(b.n||'');
   else if(sortMode==='author') r=(a.a||'').localeCompare(b.a||'') || (a.n||'').localeCompare(b.n||'');
   else if(sortMode==='stars')  r=(a.stars||0)-(b.stars||0);
+  else if(sortMode==='score')  r=(a.score||0)-(b.score||0);
   else /* updated */           r=(a.upd||'').localeCompare(b.upd||'');
   if(r===0) r=(a.n||'').localeCompare(b.n||'');   // stable tiebreak
   return sortDir==='asc' ? r : -r;
@@ -2356,7 +2374,7 @@ let tagFilter=new Set(), filtersOpen=false, hideInstalled=true;   // default: hi
 // Available-tab source CATEGORIES: the local community catalog,
 // soft-launch (scripts cataloged from GitHub with a discussion URL), and
 // github-exclusive (found only on GitHub with no discussion URL). All on by default.
-const CAT_META={community:['◉','community','#DEB887'],softlaunch:['◐','soft launch','#c9a0ff'],ghx:['◯','gh exclusive','#7ee787'],mine:['★','my repos','#7fbfff'],custom:['◆','custom feed','#ffb86c']};
+let CAT_META={community:['◉','community','#DEB887'],softlaunch:['◐','soft launch','#c9a0ff'],ghx:['◯','gh exclusive','#7ee787'],mine:['★','my repos','#7fbfff'],custom:['◆','custom feed','#ffb86c']};
 const CAT_ORDER=['community','softlaunch','ghx'];   // 'mine'/'custom' appended dynamically
 let catFilter=new Set(['community','custom']);   // default: the local community catalog + any added feeds
 // Extended categories (softlaunch/ghx) are visible to authenticated users — they
@@ -2366,21 +2384,28 @@ function ownerView(){ return ghConnected; }
 function visibleAvailable(){
   const owner=ownerView();
   return (REPO.available||[]).filter(p=>{ const c=p.cat||'community';
-    return owner || c==='community' || c==='mine' || c==='custom'; });   // custom = user's own added feeds
+    return owner || c==='community' || c==='mine' || c==='custom' || (CAT_META[c]&&CAT_META[c][3]==='feed'); });
 }
 function visibleCats(){
   const base = ownerView()?CAT_ORDER.slice():['community'];
-  if((REPO.available||[]).some(p=>p.cat==='custom')) base.push('custom');   // show the chip only when feeds are added
+  // Named external feeds always visible when present (not gated on ownerView)
+  const feedKeys=Object.keys(CAT_META).filter(k=>CAT_META[k][3]==='feed');
+  feedKeys.forEach(k=>{ if(!base.includes(k)&&(REPO.available||[]).some(p=>p.cat===k)) base.push(k); });
+  if((REPO.available||[]).some(p=>p.cat==='custom')) base.push('custom');
   return base;
 }
 function catBar(){
-  const counts={community:0,softlaunch:0,ghx:0,custom:0};
-  visibleAvailable().forEach(p=>{ const c=p.cat||'community'; if(c in counts) counts[c]++; });
-  const chips=visibleCats().map(id=>{ const m=CAT_META[id], on=catFilter.has(id);
-    return `<span class="srcchip ${on?'on':'off'}" data-cat="${id}" style="--c:${m[2]}" title="${m[1]}"><i></i>${m[1]} <b style="opacity:.6">${counts[id]}</b></span>`;
-  }).join('');
-  const hideInst=`<span class="srcchip ${hideInstalled?'on':''}" data-hideinst="1" style="--c:var(--ok,#6c6)"><i></i>${hideInstalled?'hiding installed':'hide installed'}</span>`;
-  return `<div class="srcbar"><span class="lbl">sources</span>${chips}${hideInst}</div>`;
+  const cats=visibleCats().concat((ghConnected&&(REPO.available||[]).some(p=>p.cat==='mine'))?['mine']:[]);
+  if(cats.length<=1) return '';  // only community — no need to draw a tab strip
+  const counts={}; cats.forEach(id=>{counts[id]=0;});
+  (REPO.available||[]).forEach(p=>{ const c=p.cat||'community'; if(c in counts) counts[c]++; });
+  const allOn=cats.every(id=>catFilter.has(id));
+  const total=cats.reduce((s,id)=>s+(counts[id]||0),0);
+  const allTab=`<span class="cattab${allOn?' on':''}" data-catall="1">all <b>${total}</b></span>`;
+  const tabs=cats.map(id=>{ const m=CAT_META[id]||['◆',id,'#aaa']; const on=!allOn&&catFilter.has(id);
+    return `<span class="cattab${on?' on':''}" data-cat="${id}" style="--tc:${m[2]}">${m[1]} <b>${counts[id]||0}</b></span>`; }).join('');
+  const hideInst=`<span class="srcchip${hideInstalled?' on':''}" data-hideinst="1" style="--c:var(--ok,#6c6);margin-left:auto"><i></i>${hideInstalled?'hiding':'show all'}</span>`;
+  return `<div class="catbar">${allTab}${tabs}${hideInst}</div>`;
 }
 // Structural TYPE facet: script / mod / library / engine.
 const TYPE_ORDER=['script','mod','library','engine'];
@@ -2414,12 +2439,7 @@ function filteredExcept(except){
 // The three Available-tab filter dropdowns. Counts are faceted: each option shows how
 // many results it would yield given the OTHER active filters.
 function filterDropdownsHTML(){
-  const baseSrc=filteredExcept('src');
-  const sc={community:0,softlaunch:0,ghx:0,mine:0}; baseSrc.forEach(p=>{ const c=p.cat||'community'; if(c in sc) sc[c]++; });
-  // 'my repos' only appears once a token is connected (and there's something to show)
-  const srcOrder=visibleCats().concat((ghConnected||sc.mine||catFilter.has('mine'))?['mine']:[]);
-  const srcFooter=`<div class="dd-sep"></div><label class="dd-opt"><input type="checkbox" id="dd-hideinst" ${hideInstalled?'checked':''}>hide installed</label>`;
-  const src=ddHTML('src','source',srcOrder.map(id=>({value:id,label:CAT_META[id][1],count:sc[id]})),catFilter,srcFooter);
+  // Source filter is now the catBar tab strip — no source dropdown here.
   const baseType=filteredExcept('type');
   const tc={script:0,mod:0,library:0,engine:0}; baseType.forEach(p=>(p.facets||[]).forEach(f=>{ if(f in tc) tc[f]++; }));
   const type=ddHTML('type','type',TYPE_ORDER.map(t=>({value:t,label:t,count:tc[t]})),typeFilter);
@@ -2429,11 +2449,11 @@ function filterDropdownsHTML(){
   tagFilter.forEach(t=>{ if(!(t in tcount)) tcount[t]=0; });
   const topTags=Object.entries(tcount).sort((a,b)=>b[1]-a[1]).slice(0,24).map(([t,c])=>({value:t,label:t,count:c}));
   const tags=ddHTML('tag','tags',topTags,tagFilter);
-  return src+type+tags;
+  return type+tags;
 }
 function ddCloseAll(){ document.querySelectorAll('.dd.open').forEach(d=>d.classList.remove('open')); }
 // sort: emoji + short word, field+direction baked into the value
-const SORT_OPTS=[['updated:desc','⬇️ date'],['updated:asc','⬆️ date'],['name:asc','⬆️ A–Z'],['name:desc','⬇️ Z–A'],['stars:desc','⭐ stars'],['author:asc','🎹 user']];
+const SORT_OPTS=[['updated:desc','⬇️ date'],['updated:asc','⬆️ date'],['name:asc','⬆️ A–Z'],['name:desc','⬇️ Z–A'],['stars:desc','⭐ stars'],['score:desc','⭐ rank'],['author:asc','🎹 user']];
 function sortSelHTML(){
   const cur=sortMode+':'+sortDir;
   return `<select class="rd-sort" id="rd-sort" title="sort">${SORT_OPTS.map(o=>`<option value="${o[0]}" ${cur===o[0]?'selected':''}>${o[1]}</option>`).join('')}</select>`;
@@ -2469,6 +2489,26 @@ function wireControls(v){
   document.removeEventListener('click',ddCloseAll); document.addEventListener('click',ddCloseAll);
   const hib=document.getElementById('dd-hideinst'); if(hib) hib.addEventListener('change',()=>{ hideInstalled=hib.checked; updateGrid(); });
   const ss=document.getElementById('rd-sort'); if(ss) ss.addEventListener('change',e=>{ const [f,d]=e.target.value.split(':'); sortMode=f; sortDir=d||'desc'; updateGrid(); });
+  // catBar tab clicks: exclusive single-select; clicking active sole tab → show all
+  v.querySelectorAll('.catbar [data-cat]').forEach(tab=>tab.addEventListener('click',()=>{
+    const id=tab.dataset.cat;
+    const cats=visibleCats().concat(catFilter.has('mine')?['mine']:[]);
+    const soloActive=catFilter.size===1&&catFilter.has(id);
+    if(soloActive){ cats.forEach(c=>catFilter.add(c)); }  // tap active → show all
+    else{ catFilter.clear(); catFilter.add(id);
+      // apply feed's default sort if defined and user hasn't picked one this session
+      const srcInfo=SRC[id]; if(srcInfo&&srcInfo.defaultSort){
+        const [f,d]=srcInfo.defaultSort.split(':'); sortMode=f; sortDir=d||'desc';
+        const ss2=document.getElementById('rd-sort'); if(ss2) ss2.value=srcInfo.defaultSort; }
+    }
+    updateGrid();
+  }));
+  v.querySelectorAll('.catbar [data-catall]').forEach(btn=>btn.addEventListener('click',()=>{
+    visibleCats().concat(['mine']).forEach(c=>catFilter.add(c)); updateGrid();
+  }));
+  v.querySelectorAll('.catbar [data-hideinst]').forEach(btn=>btn.addEventListener('click',()=>{
+    hideInstalled=!hideInstalled; updateGrid();
+  }));
 }
 // per-script update detection (installed tab). Default: fast diff vs the catalog's
 // published sha (no GitHub call). Secondary: live GitHub check for bleeding edge.
@@ -3666,6 +3706,7 @@ function renderRepo(){
               :'<p>nothing matches your filters.</p>';
   const head = `<div class="rd-cathead"><span class="nm rd-count">${list.length} scripts</span>${_where}<span class="line"></span><button class="cathead-ic" data-act="refresh" title="reload the catalog"><svg viewBox="0 0 32 32"><path d="${I.refresh}"/></svg></button><button class="selall-btn" data-selall>select all</button></div>`;
   setHTML(v, `<div class="rd-top">${tabs}
+      ${tab==='available'?catBar():''}
       <div class="rd-toolbar">
         <label class="rd-search"><svg viewBox="0 0 32 32"><path d="${I.search}"/></svg><input id="rd-q" placeholder="search scripts, authors, tags…"></label>
         <div class="rd-controls">${tab==='available'?controlsHTML():sortSelHTML()}</div>
