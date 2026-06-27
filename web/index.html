@@ -1369,10 +1369,10 @@ const DEP_OVERLAY=[
 // local community.json (no feeds, no network) the catalog still renders fully.
 let CAT_INDEX = new Map();   // norm(name) -> entry; the single dedup/merge authority
 
-// Map a nornslist catalog row to an ingenue entry. Tolerant of BOTH the long-form
+// Map a catalog/feed row to an ingenue entry. Tolerant of BOTH the long-form
 // catalog.json schema (Name/Author/'Project URL'/…) AND the short-form data.json
 // the site serves (name/author/proj/…), so a user can add either URL and it works.
-function nlRowToEntry(e){
+function feedRowToEntry(e){
   const g=(...ks)=>{ for(const k of ks){ const v=e[k]; if(v!=null && v!=='') return v; } return ''; };
   const src=String(g('source','Source')||'github').toLowerCase();
   const discU=String(g('discU','disc','Discussion URL')||'').trim();
@@ -1422,7 +1422,7 @@ function indexAdd(entries, e){
 // long-form catalog ({scripts:[…]}), and enrichment-map ({scripts:{name:{…}}} / bare map).
 function parseFeedJson(j){
   if(j && Array.isArray(j.entries)) return {entries:j.entries.map(communityRowToEntry), enrich:null};
-  if(j && Array.isArray(j.scripts)) return {entries:j.scripts.map(nlRowToEntry), enrich:null};
+  if(j && Array.isArray(j.scripts)) return {entries:j.scripts.map(feedRowToEntry), enrich:null};
   const map = (j && j.scripts && typeof j.scripts==='object') ? j.scripts
             : (j && typeof j==='object' && !Array.isArray(j)) ? j : null;
   return {entries:[], enrich:map};
@@ -2354,17 +2354,15 @@ function knownNames(){ const s=new Set(); REPO.installed.forEach(p=>s.add(p.n.to
 /* ===== B6: tag filter facet + dynamic "additional voice" (nb) tag ===== */
 let tagFilter=new Set(), filtersOpen=false, hideInstalled=true;   // default: hide already-installed scripts
 // Available-tab source CATEGORIES: the local community catalog,
-// soft launch (on github + a lines thread, not yet on norns.community), and
-// github-exclusive (found only on github). All on by default.
+// soft-launch (scripts cataloged from GitHub with a discussion URL), and
+// github-exclusive (found only on GitHub with no discussion URL). All on by default.
 const CAT_META={community:['◉','community','#DEB887'],softlaunch:['◐','soft launch','#c9a0ff'],ghx:['◯','gh exclusive','#7ee787'],mine:['★','my repos','#7fbfff'],custom:['◆','custom feed','#ffb86c']};
 const CAT_ORDER=['community','softlaunch','ghx'];   // 'mine'/'custom' appended dynamically
 let catFilter=new Set(['community','custom']);   // default: the local community catalog + any added feeds
-// Maintainer-only visibility. Soft-launch / gh-exclusive scripts are harvested
-// but shown ONLY to the maintainer — GH_LOGIN==='seajaysec', proven by the GitHub
-// /user whoami (a valid seajaysec token). Every other user, and every anonymous
-// visitor, sees norns.community scripts only. 'mine' (a connected user's OWN repos)
-// is always theirs to see — it never exposes anyone else's unpublished work.
-function ownerView(){ return GH_LOGIN==='seajaysec'; }
+// Extended categories (softlaunch/ghx) are visible to authenticated users — they
+// surface when a connected token allows catalog search or a custom feed is added.
+// 'mine' (the user's OWN repos) is always personal — it never exposes others' work.
+function ownerView(){ return ghConnected; }
 function visibleAvailable(){
   const owner=ownerView();
   return (REPO.available||[]).filter(p=>{ const c=p.cat||'community';
@@ -4127,7 +4125,7 @@ function renderGh(){
       LS.set('gh',{c:true,t:t});
       GH_LOGIN=null;                                       // re-resolve identity for the new token
       renderGh();renderSrc();renderRepo();
-      ghWhoami().then(()=>{ renderSrc();renderRepo(); });  // a seajaysec token unlocks the non-community sources
+      ghWhoami().then(()=>{ renderSrc();renderRepo(); });
     };
   }
 }
@@ -4454,8 +4452,6 @@ function boot(){
   // ----- restore persisted preferences (localStorage) -----
   const savedGh=LS.get('gh',null);
   if(savedGh&&savedGh.c){ ghConnected=true;
-    // resolve identity from the saved token, then refresh once known — a seajaysec
-    // token unlocks the non-community sources; everyone else stays community-only.
     ghWhoami().then(()=>{ if(GH_LOGIN&&typeof renderRepo==='function') renderRepo(); }); }
   const savedSrc=LS.get('srcon',null);
   if(savedSrc){ SRC_ORDER.forEach(id=>{ SRC_ON[id]=savedSrc[id]?1:0; if(SRC_ON[id])srcFilter.add(id); else srcFilter.delete(id); }); }

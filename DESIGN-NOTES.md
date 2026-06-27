@@ -68,12 +68,11 @@ PanicOS ships a *half-implemented* state: PortedPlugins `.sc` **classes** presen
 ## Backlog
 
 > **Shipped b25–b26:** B5 (README + carousel), B6 (tag filter + nb "additional voice"),
-> B7 (ingenue consumes a nightly `feed.json` — scraper-side generator still TODO in nornslist),
-> B8 (mods manager), B9 (live params + presets), B10 (audio health + restart), plus live
-> REPL/files/editor-save, device info, and **live file-browser write ops** (mkdir / rename /
-> delete / upload — real `/api/mkdir`,`/api/rename`,`/api/rm`,`/api/write`). B11 (wide-range
-> param number-entry) done. Remaining: per-dep trust-gating in the recursive heal, and the
-> nornslist-side feed generator (the scraper emitting the nightly `feed.json` ingenue consumes).
+> B7 (ingenue consumes an optional external catalog feed), B8 (mods manager), B9 (live params +
+> presets), B10 (audio health + restart), plus live REPL/files/editor-save, device info, and
+> **live file-browser write ops** (mkdir / rename / delete / upload — real `/api/mkdir`,
+> `/api/rename`,`/api/rm`,`/api/write`). B11 (wide-range param number-entry) done.
+> Remaining: per-dep trust-gating in the recursive heal.
 
 - **B4 — Patches & dependency handling.** ✅ **Shipped (b20–b23).** Dependency analyzer
   (`/api/deps`, by name for installed or by url via shallow clone for un-installed) detects
@@ -87,16 +86,16 @@ PanicOS ships a *half-implemented* state: PortedPlugins `.sc` **classes** presen
   *Remaining:* per-dep trust-gating in the recursive path, optional curated port patches.
 - **B5 — Rich detail from norns.community.** Pull README description + an image gallery into
   the expanded card; hide the gallery if no/only-generic images; **album-style left/right
-  carousel** for multiples. (`nornslist` scraper can be extended to capture these.)
+  carousel** for multiples.
 - **B6 — Tag filter facet.** A real multi-select tag filter from existing catalog tags (with
   counts; today tags are only an undiscoverable click-a-pill shortcut), plus a **dynamically
   generated "additional voice" tag** for scripts that register **nb voices** — making the
   nb-rig flow (filter → select all → bulk install) one obvious path.
-- **B7 — ingenue ↔ nornslist integration.** Reduce duplicated work + local overhead by
-  designing what the [`nornslist`](../nornslist) scraper precomputes (READMEs, images,
-  last-updated, demos, nb-voice detection, engine names) and ships as a **nightly-refreshed
-  static data feed** ingenue consumes, vs. what ingenue must compute live (GitHub search,
-  device state). Goal: ingenue stays light on-device; heavy enrichment is offloaded.
+- **B7 — Optional external catalog feed.** Support adding an external catalog feed URL
+  that ingenue fetches and merges — READMEs, images, last-updated, demos, nb-voice detection,
+  engine names can be precomputed and shipped as a static feed, vs. what ingenue computes live
+  (GitHub search, device state). Goal: ingenue stays light on-device; heavy enrichment is
+  offloaded to an opt-in external source.
 - **B8 — Mods manager.** Detect the current state of norns **mods** on device (scan
   `dust/code/*/lib/mod.lua` + the enabled-mods state norns persists), expose them in ingenue for
   **enable/disable**, and **remind to restart norns** when you enable a mod that wasn't already on

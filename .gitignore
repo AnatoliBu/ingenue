@@ -10,3 +10,7 @@ screenshots/
 
 # internal notes (not published)
 CONSIDER-LATER.md
+
+# agent context files (local only)
+CLAUDE.md
+AGENTS.md

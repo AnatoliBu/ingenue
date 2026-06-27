@@ -56,9 +56,8 @@ jobs:
         run: |
           mkdir -p _site
           cp -R web/. _site/
-          # The public demo must NOT republish the real norns.community catalog
-          # (it runs on DEMO_SEED instead), and the on-device server isn't used on
-          # a static host. Strip both so neither ships to GitHub Pages.
+          # community.json and server.py are device-only; the static demo uses
+          # sample data (DEMO_SEED). Strip both before deploying to GitHub Pages.
           rm -f _site/community.json _site/server.py
 
       - uses: actions/configure-pages@v5
