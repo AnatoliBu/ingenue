@@ -3731,10 +3731,14 @@ function renderRepo(){
   // Restore scroll across full re-renders (install/remove/update reconcile) so the
   // view doesn't jump to top; mode switches reset _repoScroll to 0 beforehand. The
   // scroll listener keeps _repoScroll current and drives collapse-on-scroll.
-  const sc=v.querySelector('.rd-scroll'); let lst=_repoScroll||0;
+  // EDICT: no auto-collapse on scroll. The toolbar/catbar scroll out of sight
+  // naturally because .rd-scroll is the overflow container inside a fixed-height
+  // panel — the header stays put and only the grid scrolls, so the controls are
+  // always visible at the top of the scroll area. Auto-hide was clever but wrong;
+  // the toggle button (rd-toggle) remains for intentional manual collapse only.
+  const sc=v.querySelector('.rd-scroll');
   if(sc){ sc.scrollTop=_repoScroll||0;
-    sc.addEventListener('scroll',()=>{ const t=sc.scrollTop; _repoScroll=t;
-      if(t>lst+6 && t>60) v.classList.add('collapsed'); else if(t<lst-6) v.classList.remove('collapsed'); lst=t; }); }
+    sc.addEventListener('scroll',()=>{ _repoScroll=sc.scrollTop; },{passive:true}); }
 }
 
 /* ============ favorites manager ============ */
