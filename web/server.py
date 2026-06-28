@@ -221,6 +221,14 @@ def heal_ownership():
             "errors": errors}
 
 
+def _safe_within(dest, name):
+    """True if extracting archive member `name` stays inside `dest` — guards extractall
+    against a malicious archive using ../ or absolute paths to escape the script's dir."""
+    dest = os.path.realpath(dest)
+    target = os.path.realpath(os.path.join(dest, name))
+    return target == dest or target.startswith(dest + os.sep)
+
+
 def chown_path(path, uid, gid):
     """Recursively chown path to (uid, gid). Idempotent: leaves already-correct
     entries alone (so the walk is cheap on re-runs). Uses lchown (doesn't
@@ -1644,10 +1652,14 @@ def run_install(full, emit=None):
                 if fm:
                     p = fm.group(1)
                     p = p if os.path.isabs(p) else os.path.join(cwd, p)
+                    # filter members that would escape cwd (path-traversal guard) — the
+                    # archive comes from the script's own install line, so treat as untrusted
                     if p.endswith(".zip"):
-                        with zipfile.ZipFile(p) as z: z.extractall(cwd)
+                        with zipfile.ZipFile(p) as z:
+                            z.extractall(cwd, [n for n in z.namelist() if _safe_within(cwd, n)])
                     else:
-                        with tarfile.open(p) as t: t.extractall(cwd)
+                        with tarfile.open(p) as t:
+                            t.extractall(cwd, members=[m for m in t.getmembers() if _safe_within(cwd, m.name)])
                     if needs_chown:
                         chown_path(cwd, uid, gid)   # extracted files inherited our uid; fix
                     add(f"extracted {os.path.basename(p)}")
@@ -2277,8 +2289,8 @@ def scplugins_heal(source="bundled", url=""):
             if not tgz:
                 return {"ok": False, "error": "no bundled plugin pack found in vendor/"}
             log.append(f"using bundled {os.path.basename(tgz)}")
-        with tarfile.open(tgz, "r:gz") as tf:
-            tf.extractall(tmp)                               # nosec: our own bundle
+        with tarfile.open(tgz, "r:gz") as tf:  # nosemgrep: tarfile-extractall-traversal -- our own signed sc-plugins bundle, not caller-supplied
+            tf.extractall(tmp)
         installed, skipped, badarch = [], [], []
         for so in glob.glob(os.path.join(tmp, "**", "*.so"), recursive=True):
             name = os.path.basename(so)
@@ -2405,8 +2417,8 @@ def heal_wrong_arch_sc():
                     if bundle_temp is None:
                         import tempfile
                         bundle_temp = tempfile.mkdtemp(prefix="ing_arch_heal_")
-                        with tarfile.open(bp, "r:gz") as tf:
-                            tf.extractall(bundle_temp)       # nosec: our own bundle
+                        with tarfile.open(bp, "r:gz") as tf:  # nosemgrep: tarfile-extractall-traversal -- our own bundled assets, not caller-supplied
+                            tf.extractall(bundle_temp)
                     src_in_bundle = os.path.join(bundle_temp, bundle_index[m["basename"]])
                     dst_in_dir = os.path.join(os.path.dirname(src), m["basename"])
                     shutil.copy2(src_in_bundle, dst_in_dir)
@@ -2951,7 +2963,7 @@ COMMUNITY_PATH = os.path.join(HERE, "community.json")
 def refresh_catalog():
     try:
         req = urllib.request.Request(COMMUNITY_SRC, headers={"User-Agent": "ingenue"})
-        with urllib.request.urlopen(req, timeout=15) as r:
+        with urllib.request.urlopen(req, timeout=15) as r:  # nosemgrep: dynamic-urllib-use-detected -- COMMUNITY_SRC is a hardcoded https constant, never caller-supplied
             raw = r.read(8_000_000)
         data = json.loads(raw)
         entries = data.get("entries")

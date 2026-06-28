@@ -7,7 +7,9 @@
 <!-- Content-Security-Policy: defense-in-depth behind the output-escaping. script/style
      'unsafe-inline' is required by this single-file inline-script SPA (no nonce mechanism);
      every other directive is tightly scoped. As a <meta> it travels with the file, so it
-     applies both on-device and on a static host. -->
+     applies both on-device and on a static host. The connect-src ws: entry is required for
+     the on-device matron link (norns serves no wss); it is a same-LAN device socket. -->
+<!-- nosemgrep: detect-insecure-websocket -->
 <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:; connect-src 'self' https://github.com https://api.github.com https://raw.githubusercontent.com https://*.githubusercontent.com https://norns.community ws://*:5555 ws:; frame-src https://www.youtube.com https://player.vimeo.com https://w.soundcloud.com; base-uri 'self'; object-src 'none'; form-action 'self'" />
 <title>ingenue · norns</title>
 <script>
@@ -34,10 +36,10 @@
 <link rel="mask-icon" href="favicon.svg" color="#DEB887" />
 
 <!-- Ace editor (maiden's real editor component) -->
-<script src="https://cdn.jsdelivr.net/npm/ace-builds@1.32.6/src-min-noconflict/ace.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/ace-builds@1.32.6/src-min-noconflict/mode-lua.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/ace-builds@1.32.6/src-min-noconflict/ace.js" integrity="sha384-OQ+DmXuGvnH7Y4swub2P3D/ZvkbfhWR9druiI/uJdNoPy1SlJxaPE30p9EdK2Rul" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/ace-builds@1.32.6/src-min-noconflict/mode-lua.js" integrity="sha384-aQ0xEbV8AwJQ0wjqb7rc1bO+KTDhP05VXoHocS9xvr6RLxJ8hliz1WKSqAX04mW1" crossorigin="anonymous"></script>
 <!-- DOMPurify: sanitize every innerHTML at the sink (loaded from jsDelivr CDN like Ace). -->
-<script src="https://cdn.jsdelivr.net/npm/dompurify@3.2.3/dist/purify.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/dompurify@3.2.3/dist/purify.min.js" integrity="sha384-osZDKVu4ipZP703HmPOhWdyBajcFyjX2Psjk//TG1Rc0AdwEtuToaylrmcK3LdAl" crossorigin="anonymous"></script>
 
 <style>
 :root{
@@ -336,11 +338,17 @@ button{font-family:inherit}
 .card.gh{border-left:2px solid color-mix(in srgb,var(--srcc,var(--trim)) 55%,transparent)}
 .card .stars{font-size:11.5px;color:var(--muted);font-family:ui-monospace,monospace}
 .lock{font-size:10px;font-weight:600;color:var(--muted);border:1px solid var(--trim);border-radius:20px;padding:1px 7px;text-transform:uppercase;letter-spacing:.04em}
-.catbar{display:flex;align-items:center;gap:4px;padding:0 10px 8px;flex-wrap:wrap;min-width:0}
-.cattab{font-size:12px;padding:3px 10px;border-radius:20px;cursor:pointer;border:1px solid color-mix(in srgb,var(--tc,var(--trim)) 35%,transparent);color:color-mix(in srgb,var(--tc,var(--fg)) 70%,var(--fg));transition:background .12s,color .12s}
-.cattab:hover{background:color-mix(in srgb,var(--tc,var(--trim)) 14%,transparent)}
-.cattab.on{background:color-mix(in srgb,var(--tc,var(--accent)) 22%,transparent);color:var(--tc,var(--accent));border-color:color-mix(in srgb,var(--tc,var(--accent)) 50%,transparent);font-weight:600}
-.cattab b{font-weight:400;opacity:.55;font-size:11px}
+.catbar{display:flex;align-items:center;gap:5px;padding:0 10px 8px;flex-wrap:wrap;min-width:0}
+.catbar-sp{flex:1 1 auto}
+/* OFF (hidden) = dim outline + struck count; ON (shown) = filled in the source color.
+   Every tab toggles independently, so the on/off state must read at a glance. */
+.cattab{font:inherit;font-size:12px;padding:3px 11px;border-radius:20px;cursor:pointer;background:transparent;border:1px solid color-mix(in srgb,var(--tc,var(--trim)) 30%,transparent);color:color-mix(in srgb,var(--tc,var(--fg)) 45%,var(--fg));opacity:.6;transition:background .12s,color .12s,opacity .12s,border-color .12s}
+.cattab:hover{opacity:.85;background:color-mix(in srgb,var(--tc,var(--trim)) 12%,transparent)}
+.cattab.on{opacity:1;background:color-mix(in srgb,var(--tc,var(--accent)) 20%,transparent);color:var(--tc,var(--accent));border-color:color-mix(in srgb,var(--tc,var(--accent)) 55%,transparent);font-weight:600}
+.cattab b{font-weight:400;opacity:.6;font-size:11px}
+.cattab:not(.on) b{text-decoration:line-through}
+.cattab.master{font-weight:600;letter-spacing:.04em}
+.cattab.hidebtn{--tc:var(--ok,#6c6)}
 .srcbar{display:flex;align-items:center;gap:6px;flex-wrap:wrap;padding:0 12px 8px;min-width:0}
 .srcbar .lbl{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em}
 .srcchip{display:inline-flex;align-items:center;gap:6px;font-size:12px;border-radius:20px;padding:4px 11px;cursor:pointer;
@@ -1399,7 +1407,7 @@ function feedRowToEntry(e){
     sha:g('sha'), status:g('status')||'active', voices:e.voices||null,
     // nornslist ranking + structure signals — native fields, drive score sort and badges
     score:num('score'), rank:num('rank'),
-    has_init:!!(e.has_init), has_params:!!(e.has_params),
+    has_init:!!(e.has_init), has_params:!!(e.has_params), has_image:!!(e.has_image),
     cat, srcs:[src==='community'?'community':'github'],
     gh: src==='github'?1:(/github\.com/i.test(proj)?1:0),
   };
@@ -1427,6 +1435,7 @@ function mergeEnrich(t, s){
   if(s.rank!=null && t.rank==null) t.rank=s.rank;
   if(s.has_init && !t.has_init) t.has_init=s.has_init;
   if(s.has_params && !t.has_params) t.has_params=s.has_params;
+  if(s.has_image && !t.has_image) t.has_image=s.has_image;
   if(s.tags && s.tags.length) t.tags=Array.from(new Set((t.tags||[]).concat(s.tags))).slice(0,8);
   if(s.srcs) s.srcs.forEach(x=>{ if(!t.srcs.includes(x)) t.srcs.push(x); });
 }
@@ -2126,7 +2135,7 @@ function updateReplHL(){
 }
 let target='matron';
 
-/* ===== live matron link (real REPL + params channel over ws://<host>:5555) ===== */
+/* ===== live matron link (real REPL + params channel, local WebSocket on port 5555) ===== */
 let matronWS=null, matronReady=false, matronOnData=null, matronRetryT=null;
 let matronKeepT=null, matronLastClose=0, matronEverConnected=false;
 // matron's repl socket is nanomsg (nng) over websocket — it REQUIRES the
@@ -2134,6 +2143,7 @@ let matronKeepT=null, matronLastClose=0, matronEverConnected=false;
 // "400 Incompatible Socket Type". It's a bus socket, so we join alongside maiden.
 function matronConnect(){
   const host=location.hostname; if(!host||location.protocol==='file:') return;   // off-device demo → stay mocked
+  // nosemgrep: detect-insecure-websocket -- matron only listens on plain ws on the local norns (no TLS on-device); this is a same-LAN device link, never the internet
   try{ matronWS=new WebSocket('ws://'+host+':5555',['bus.sp.nanomsg.org']); }catch(_){ matronRetry(); return; }
   matronWS.binaryType='arraybuffer';
   matronWS.onopen=()=>{ matronReady=true; if(matronRetryT){clearTimeout(matronRetryT);matronRetryT=null;}
@@ -2384,12 +2394,24 @@ function knownNames(){ const s=new Set(); REPO.installed.forEach(p=>s.add(p.n.to
   REPO.available.forEach(p=>{ if(p.srcs.includes('community')) s.add(p.n.toLowerCase()); }); return s; }
 /* ===== B6: tag filter facet + dynamic "additional voice" (nb) tag ===== */
 let tagFilter=new Set(), filtersOpen=false, hideInstalled=true;   // default: hide already-installed scripts
+let authorFilter=new Set();   // empty = all authors; a username (or the author dropdown) narrows to one
+let mediaFilter=new Set();    // media presence filter: 'demo'/'nodemo'/'image'/'noimage' (empty = no constraint)
+function hasDemo(p){ return !!demoKind(p&&p.demo); }
+function hasImage(p){ return !!((p&&p.images&&p.images.length) || (p&&p.has_image)); }
+// Apply the media filter: a +/- pair where selecting both (or neither) imposes no constraint.
+function mediaOk(p){
+  if(mediaFilter.has('demo')&&!mediaFilter.has('nodemo')&&!hasDemo(p)) return false;
+  if(mediaFilter.has('nodemo')&&!mediaFilter.has('demo')&&hasDemo(p)) return false;
+  if(mediaFilter.has('image')&&!mediaFilter.has('noimage')&&!hasImage(p)) return false;
+  if(mediaFilter.has('noimage')&&!mediaFilter.has('image')&&hasImage(p)) return false;
+  return true;
+}
 // Available-tab source CATEGORIES: the local community catalog,
 // soft-launch (scripts cataloged from GitHub with a discussion URL), and
 // github-exclusive (found only on GitHub with no discussion URL). All on by default.
 let CAT_META={community:['◉','community','#DEB887'],github:['◯','github','#7ee787'],mine:['★','my repos','#7fbfff'],custom:['◆','custom feed','#ffb86c']};
 const CAT_ORDER=['community','github'];   // 'mine'/named-feeds/'custom' appended dynamically
-let catFilter=new Set(['community','custom']);   // default: the local community catalog + any added feeds
+let catFilter=new Set(['community','github','custom']);   // default: every standard source on; named feeds add themselves
 // 'github' (catalog-discovered scripts) is visible to authenticated users or once a feed is
 // added. 'mine' (the user's OWN repos) is always personal — it never exposes others' work.
 function ownerView(){ return ghConnected; }
@@ -2406,25 +2428,57 @@ function visibleCats(){
   if((REPO.available||[]).some(p=>p.cat==='custom')) base.push('custom');
   return base;
 }
+function catCounts(){ const c={}; (REPO.available||[]).forEach(p=>{ const k=p.cat||'community'; c[k]=(c[k]||0)+1; }); return c; }
+function catBarCats(){
+  const counts=catCounts();
+  let cats=visibleCats().concat((ghConnected&&counts.mine)?['mine']:[]);
+  // hide a category with nothing in it (e.g. the generic 'github' bucket when every script
+  // arrived via a named feed) unless it's currently toggled on
+  return [...new Set(cats)].filter(id=>(counts[id]||0)>0 || catFilter.has(id));
+}
+function installedShownCount(){ const ins=new Set((REPO.installed||[]).map(p=>(p.n||'').toLowerCase()));
+  return (REPO.available||[]).filter(p=>p.inst||ins.has((p.n||'').toLowerCase())).length; }
 function catBar(){
-  const cats=visibleCats().concat((ghConnected&&(REPO.available||[]).some(p=>p.cat==='mine'))?['mine']:[]);
-  if(cats.length<=1) return '';  // only community — no need to draw a tab strip
-  const counts={}; cats.forEach(id=>{counts[id]=0;});
-  (REPO.available||[]).forEach(p=>{ const c=p.cat||'community'; if(c in counts) counts[c]++; });
-  const allOn=cats.every(id=>catFilter.has(id));
-  const total=cats.reduce((s,id)=>s+(counts[id]||0),0);
-  const allTab=`<span class="cattab${allOn?' on':''}" data-catall="1">all <b>${total}</b></span>`;
-  const tabs=cats.map(id=>{ const m=CAT_META[id]||['◆',id,'#aaa']; const on=!allOn&&catFilter.has(id);
-    return `<span class="cattab${on?' on':''}" data-cat="${id}" style="--tc:${m[2]}">${m[1]} <b>${counts[id]||0}</b></span>`; }).join('');
-  const hideInst=`<span class="srcchip${hideInstalled?' on':''}" data-hideinst="1" style="--c:var(--ok,#6c6);margin-left:auto"><i></i>${hideInstalled?'hiding':'show all'}</span>`;
-  return `<div class="catbar">${allTab}${tabs}${hideInst}</div>`;
+  const cats=catBarCats(); const counts=catCounts();
+  if(cats.length<=1 && !(REPO.installed||[]).length) return '';
+  // Each tab is an INDEPENDENT on/off toggle for that source — .on = shown, dim = hidden.
+  const tabs=cats.map(id=>{ const m=CAT_META[id]||['◆',id,'#aaa']; const on=catFilter.has(id);
+    return `<button class="cattab${on?' on':''}" data-cat="${id}" style="--tc:${m[2]}" title="${on?'showing — click to hide':'hidden — click to show'}">${m[1]} <b>${counts[id]||0}</b></button>`; }).join('');
+  const allOn=cats.length&&cats.every(id=>catFilter.has(id));
+  const master=cats.length>1?`<button class="cattab master${allOn?' on':''}" data-catall="1" title="${allOn?'hide every source':'show every source'}">${allOn?'all':'none'}</button>`:'';
+  const nHide=installedShownCount();
+  const hide=nHide?`<button class="cattab hidebtn${hideInstalled?' on':''}" data-hideinst="1" title="${hideInstalled?'installed scripts hidden — click to show':'click to hide scripts already on your norns'}">${hideInstalled?`🙈 ${nHide} installed hidden`:`👁 hide ${nHide} installed`}</button>`:'';
+  return `<div class="catbar">${master}${tabs}<span class="catbar-sp"></span>${hide}</div>`;
+}
+function paintCatBar(v){ v=v||document.getElementById('repoview'); if(!v) return;
+  const bar=v.querySelector('.catbar'); if(!bar) return;
+  const tmp=document.createElement('div'); tmp.innerHTML=catBar(); const nb=tmp.firstElementChild;
+  if(nb){ bar.replaceWith(nb); wireCatBar(v); } else bar.remove();
+}
+function wireCatBar(v){
+  v.querySelectorAll('.catbar [data-cat]').forEach(b=>b.addEventListener('click',()=>{
+    const id=b.dataset.cat;
+    if(catFilter.has(id)) catFilter.delete(id);
+    else { catFilter.add(id);
+      const si=SRC[id]; if(si&&si.defaultSort){ const [f,d]=si.defaultSort.split(':'); sortMode=f; sortDir=d||'desc';
+        const ss=document.getElementById('rd-sort'); if(ss) ss.value=si.defaultSort; } }
+    paintCatBar(v); updateGrid();
+  }));
+  v.querySelectorAll('.catbar [data-catall]').forEach(b=>b.addEventListener('click',()=>{
+    const cats=catBarCats(); const allOn=cats.every(id=>catFilter.has(id));
+    cats.forEach(c=>allOn?catFilter.delete(c):catFilter.add(c));
+    paintCatBar(v); updateGrid();
+  }));
+  v.querySelectorAll('.catbar [data-hideinst]').forEach(b=>b.addEventListener('click',()=>{
+    hideInstalled=!hideInstalled; paintCatBar(v); updateGrid();
+  }));
 }
 // Structural TYPE facet: script / mod / library / engine.
 const TYPE_ORDER=['script','mod','library','engine'];
 let typeFilter=new Set(TYPE_ORDER);
 // Generic multiselect dropdown. key -> the live filter Set (looked up fresh so a
 // reassigned set is never stale); opts=[{value,label,count}].
-const ddSet=k=>k==='src'?catFilter:k==='type'?typeFilter:tagFilter;
+const ddSet=k=>k==='src'?catFilter:k==='type'?typeFilter:k==='author'?authorFilter:k==='media'?mediaFilter:tagFilter;
 function ddHTML(key,label,opts,sel,footer){
   const sub=opts.filter(o=>sel.has(o.value)).length;
   const partial = key==='tag' ? sel.size>0 : (sub<opts.length);   // tags: blank=all, so any selection is "active"
@@ -2445,27 +2499,43 @@ function filteredExcept(except){
   if(repoQuery){ const q=repoQuery.toLowerCase();
     list=list.filter(p=>(p.n+' '+p.a+' '+(p.tags||[]).join(' ')+' '+(p.d||'')).toLowerCase().includes(q)); }
   if(except!=='type' && typeFilter.size<TYPE_ORDER.length) list=list.filter(p=>{ const f=(p.facets||[]); return [...typeFilter].some(t=>f.includes(t)); });
+  if(except!=='author' && authorFilter.size) list=list.filter(p=>authorFilter.has(authorKey(p)));
+  if(except!=='media' && mediaFilter.size) list=list.filter(mediaOk);
   if(except!=='tag' && tagFilter.size) list=list.filter(p=>{ const t=entryTags(p); return [...tagFilter].every(f=>t.includes(f)); });
   return list;
 }
 // The three Available-tab filter dropdowns. Counts are faceted: each option shows how
 // many results it would yield given the OTHER active filters.
 function filterDropdownsHTML(){
-  // Source filter is now the catBar tab strip — no source dropdown here.
+  // Source filter is the catBar tab strip; here: type, media, author, tags.
   const baseType=filteredExcept('type');
   const tc={script:0,mod:0,library:0,engine:0}; baseType.forEach(p=>(p.facets||[]).forEach(f=>{ if(f in tc) tc[f]++; }));
   const type=ddHTML('type','type',TYPE_ORDER.map(t=>({value:t,label:t,count:tc[t]})),typeFilter);
+  // media: has / hasn't a playable demo or images (a +/- pair, faceted counts)
+  const baseMedia=filteredExcept('media');
+  const nDemo=baseMedia.filter(hasDemo).length, nImg=baseMedia.filter(hasImage).length, nTot=baseMedia.length;
+  const media=ddHTML('media','media',[
+    {value:'demo',label:'▶ has demo',count:nDemo},{value:'nodemo',label:'no demo',count:nTot-nDemo},
+    {value:'image',label:'🖼 has images',count:nImg},{value:'noimage',label:'no images',count:nTot-nImg},
+  ],mediaFilter);
+  // author: every author present, alphabetical, with faceted counts (clicking a username
+  // on a card sets this too). The dropdown body scrolls, so a long list is fine.
+  const baseAuthor=filteredExcept('author');
+  const acount={}; baseAuthor.forEach(p=>{ const a=authorKey(p); if(a) acount[a]=(acount[a]||0)+1; });
+  authorFilter.forEach(a=>{ if(!(a in acount)) acount[a]=0; });
+  const authors=Object.keys(acount).sort((a,b)=>a.localeCompare(b)).map(a=>({value:a,label:a,count:acount[a]}));
+  const author=ddHTML('author','author',authors,authorFilter);
   const baseTag=filteredExcept('tag');
   const tcount={}; baseTag.forEach(p=>entryTags(p).forEach(t=>{ tcount[t]=(tcount[t]||0)+1; }));
   // keep any selected tags visible even if their faceted count is 0 in the current set
   tagFilter.forEach(t=>{ if(!(t in tcount)) tcount[t]=0; });
   const topTags=Object.entries(tcount).sort((a,b)=>b[1]-a[1]).slice(0,24).map(([t,c])=>({value:t,label:t,count:c}));
   const tags=ddHTML('tag','tags',topTags,tagFilter);
-  return type+tags;
+  return type+media+author+tags;
 }
 function ddCloseAll(){ document.querySelectorAll('.dd.open').forEach(d=>d.classList.remove('open')); }
 // sort: emoji + short word, field+direction baked into the value
-const SORT_OPTS=[['updated:desc','⬇️ date'],['updated:asc','⬆️ date'],['name:asc','⬆️ A–Z'],['name:desc','⬇️ Z–A'],['stars:desc','⭐ stars'],['score:desc','⭐ rank'],['author:asc','🎹 user']];
+const SORT_OPTS=[['updated:desc','⬇️ date'],['updated:asc','⬆️ date'],['name:asc','⬆️ A–Z'],['name:desc','⬇️ Z–A'],['stars:desc','⭐ stars'],['score:desc','🧠 rank'],['author:asc','🎹 user']];
 function sortSelHTML(){
   const cur=sortMode+':'+sortDir;
   return `<select class="rd-sort" id="rd-sort" title="sort">${SORT_OPTS.map(o=>`<option value="${o[0]}" ${cur===o[0]?'selected':''}>${o[1]}</option>`).join('')}</select>`;
@@ -2501,26 +2571,9 @@ function wireControls(v){
   document.removeEventListener('click',ddCloseAll); document.addEventListener('click',ddCloseAll);
   const hib=document.getElementById('dd-hideinst'); if(hib) hib.addEventListener('change',()=>{ hideInstalled=hib.checked; updateGrid(); });
   const ss=document.getElementById('rd-sort'); if(ss) ss.addEventListener('change',e=>{ const [f,d]=e.target.value.split(':'); sortMode=f; sortDir=d||'desc'; updateGrid(); });
-  // catBar tab clicks: exclusive single-select; clicking active sole tab → show all
-  v.querySelectorAll('.catbar [data-cat]').forEach(tab=>tab.addEventListener('click',()=>{
-    const id=tab.dataset.cat;
-    const cats=visibleCats().concat(catFilter.has('mine')?['mine']:[]);
-    const soloActive=catFilter.size===1&&catFilter.has(id);
-    if(soloActive){ cats.forEach(c=>catFilter.add(c)); }  // tap active → show all
-    else{ catFilter.clear(); catFilter.add(id);
-      // apply feed's default sort if defined and user hasn't picked one this session
-      const srcInfo=SRC[id]; if(srcInfo&&srcInfo.defaultSort){
-        const [f,d]=srcInfo.defaultSort.split(':'); sortMode=f; sortDir=d||'desc';
-        const ss2=document.getElementById('rd-sort'); if(ss2) ss2.value=srcInfo.defaultSort; }
-    }
-    updateGrid();
-  }));
-  v.querySelectorAll('.catbar [data-catall]').forEach(btn=>btn.addEventListener('click',()=>{
-    visibleCats().concat(['mine']).forEach(c=>catFilter.add(c)); updateGrid();
-  }));
-  v.querySelectorAll('.catbar [data-hideinst]').forEach(btn=>btn.addEventListener('click',()=>{
-    hideInstalled=!hideInstalled; updateGrid();
-  }));
+  // NOTE: the catBar is wired separately (in renderRepo / paintCatBar), NOT here — wireControls
+  // is also called by paintControls on every dropdown open, which would stack duplicate
+  // listeners on the un-re-rendered bar.
 }
 // per-script update detection (installed tab). Default: fast diff vs the catalog's
 // published sha (no GitHub call). Secondary: live GitHub check for bleeding edge.
@@ -2529,7 +2582,12 @@ const NB_TAG='additional voice';
 function provGetsVoice(p){ return !!(p.voices && (p.voices.provides||[]).length); }
 function isNbVoice(p){ if(provGetsVoice(p)) return true; const t=(p.tags||[]).map(x=>String(x).toLowerCase());
   return t.includes('nb')||t.includes('n.b.')||/\bnb\b|note ?bridge|nb_|nb\//i.test(((p.d||'')+' '+(p.n||''))); }
-function entryTags(p){ const base=(p.tags||[]).map(String); return isNbVoice(p)?base.concat(NB_TAG):base; }
+// GitHub topics carry ecosystem-generic noise (every norns repo is tagged norns/monome/…);
+// strip it so a card's tags show what's DISTINCTIVE (e.g. washi → sequencer, serge — not
+// norns, monome, monome-norns, norns-script). Also drops the source name if it leaked in.
+const NOISE_TAGS=new Set(['norns','monome','monome-norns','monome-norns-script','norns-script','norns-scripts','nornsscript','nornslist','lua','music','audio','sound','synth','synthesizer','sequencer-norns']);
+function cleanTags(tags){ return (tags||[]).map(String).filter(t=>t&&!NOISE_TAGS.has(t.toLowerCase())); }
+function entryTags(p){ const base=cleanTags(p.tags); return isNbVoice(p)?base.concat(NB_TAG):base; }
 function allTags(tab){
   const counts={}; repoBaseList(tab).forEach(p=>entryTags(p).forEach(t=>{ counts[t]=(counts[t]||0)+1; }));
   return Object.entries(counts).sort((a,b)=> a[0]===NB_TAG?-1 : b[0]===NB_TAG?1 : b[1]-a[1]);
@@ -2554,6 +2612,8 @@ function repoList(tab){
   if(repoQuery){ const q=repoQuery.toLowerCase();
     list=list.filter(p=>(p.n+' '+p.a+' '+(p.tags||[]).join(' ')+' '+(p.d||'')).toLowerCase().includes(q)); }
   if(typeFilter.size<TYPE_ORDER.length){ list=list.filter(p=>{ const f=(p.facets||[]); return [...typeFilter].some(t=>f.includes(t)); }); }
+  if(authorFilter.size){ list=list.filter(p=>authorFilter.has(authorKey(p))); }
+  if(mediaFilter.size){ list=list.filter(mediaOk); }
   if(tagFilter.size){ list=list.filter(p=>{ const t=entryTags(p); return [...tagFilter].every(f=>t.includes(f)); }); }
   return list.sort(sortCmp);
 }
@@ -3090,7 +3150,7 @@ function loadDemo(card,p){
   if(k==='youtube') setHTML(slot, `<iframe src="https://www.youtube.com/embed/${ytId(u)}" allowfullscreen loading="lazy"></iframe>`);
   else if(k==='vimeo') setHTML(slot, `<iframe src="https://player.vimeo.com/video/${vimeoId(u)}" allowfullscreen loading="lazy"></iframe>`);
   else if(k==='soundcloud') setHTML(slot, `<iframe class="sc" src="${scEmbedSrc(u)}" allow="autoplay" loading="lazy"></iframe>`);
-  else setHTML(slot, '<span class="more-nodemo">no playable demo</span>');
+  else setHTML(slot, '');   // nothing playable → stay silent
 }
 /* live GitHub search for the discover tab (paged, search on Enter/button only) */
 let _discLoaded=false, _discQuery='', _discPage=1, _discTotal=0, discHideKnown=true, discMineOnly=false;
@@ -3165,6 +3225,8 @@ async function classifyRepo(owner,name,branch,pushed){
 }
 function ghOwner(p){ if(p&&p.owner) return String(p.owner).toLowerCase();
   const m=/github\.com\/([^\/]+)\//i.exec((p&&p.proj)||''); return m?m[1].toLowerCase():''; }
+// Canonical author key for filtering: the GitHub owner (lowercased) or the author name.
+function authorKey(p){ return ghOwner(p) || String((p&&p.a)||'').toLowerCase(); }
 async function ghSearch(query,page){
   _discQuery=(query!=null?query:_discQuery); _discPage=page||1;
   const v=document.getElementById('repoview'); const grid=v.querySelector('.rd-grid');
@@ -3277,7 +3339,12 @@ function wireCards(v,list,tab){
       repoQuery=tg.dataset.tag; const q=document.getElementById('rd-q'); if(q) q.value=repoQuery; updateGrid();});
     card.querySelectorAll('a,.demo-btn,.lnk,.csel').forEach(el=>el.addEventListener('click',e=>e.stopPropagation()));
     const au=card.querySelector('.by a[data-author]'); if(au) au.onclick=e=>{ e.preventDefault();e.stopPropagation();
-      const who=au.dataset.author; if(who) ghUserRepos(who); };
+      // filter the catalog to just this author (toggles off if already the sole filter)
+      const who=au.dataset.author; if(!who) return;
+      if(authorFilter.size===1 && authorFilter.has(who)) authorFilter.clear();
+      else { authorFilter.clear(); authorFilter.add(who); }
+      repoQuery=''; const q=document.getElementById('rd-q'); if(q) q.value='';
+      paintControls(); updateGrid(); };
     const cb=card.querySelector('input[data-sel]'); if(cb) cb.onclick=e=>{ e.stopPropagation();
       if(cb.checked) selection.add(p.n); else selection.delete(p.n); updateBulkBar(); };
     const db=card.querySelector('.demo-btn'); if(db) db.onclick=e=>{e.stopPropagation();loadDemo(card,p);};
@@ -3470,7 +3537,7 @@ async function loadReadme(card,p){
   const RT='font-size:12px;color:var(--muted);line-height:1.5;margin:6px 0;max-height:62vh;overflow:auto';
   const render=(j)=>{ let html=''; if(j.text) html+=`<div class="readme-text" style="${RT}">${mdToHtml(j.text)}</div>`;
     if(j.images&&j.images.length) html+=carouselHTML(j.images);
-    setHTML(slot, html||'<span class="more-nodemo">no README details</span>'); wireCarousel(slot); };
+    setHTML(slot, html); wireCarousel(slot); };   // empty result → silent
   // Instant: render the feed's precomputed prefix so something shows immediately,
   // then replace it with the FULL README below.
   if(p.readme||(p.images&&p.images.length)) render({text:p.readme||'', images:p.images||[]});
@@ -3485,7 +3552,7 @@ async function loadReadme(card,p){
       if(c && !c.error && ((c.text&&c.text.length) || (c.images&&c.images.length))) j=c; }catch(_){}
   }
   if(j && !j.error && (j.text||(j.images&&j.images.length))) render(j);
-  else if(!(p.readme||(p.images&&p.images.length))) setHTML(slot, '<span class="more-nodemo">no README found</span>');
+  else if(!(p.readme||(p.images&&p.images.length))) setHTML(slot, '');   // no README → silent
 }
 // Read a repo's README straight from the GitHub API in the browser. /readme auto-resolves the
 // file wherever/however it's named; raw images are resolved relative to its download_url.
@@ -3551,9 +3618,23 @@ function mdA(t,u){ if(isForumMedia(u)) return t+' <code style="'+MD_CS+'">'+u+'<
 function mdToHtml(src){
   if(!src) return '';
   let s=esc(String(src));                                   // 1. neutralize all raw HTML
-  const B=[],C=[];
-  s=s.replace(/```+[^\n]*\n?([\s\S]*?)```+/g,(m,c)=>(B.push('<pre style="background:#0003;padding:8px;border-radius:6px;overflow:auto;font-size:11px;margin:6px 0"><code>'+c.replace(/\n+$/,'')+'</code></pre>'),''+(B.length-1)+''));
-  s=s.replace(/`([^`\n]+?)`/g,(m,c)=>(C.push('<code style="'+MD_CS+'">'+c+'</code>'),''+(C.length-1)+''));
+  const SENT=String.fromCharCode(0);   // placeholder delimiter; never in escaped text, so
+  const store=[];                       // the restore pass can't collide with real numbers
+  const stash=html=>{ store.push(html); return SENT+(store.length-1)+SENT; };
+  s=s.replace(/```+[^\n]*\n?([\s\S]*?)```+/g,(m,c)=>stash('<pre style="background:#0003;padding:8px;border-radius:6px;overflow:auto;font-size:11px;margin:6px 0"><code>'+c.replace(/\n+$/,'')+'</code></pre>'));
+  s=s.replace(/`([^`\n]+?)`/g,(m,c)=>stash('<code style="'+MD_CS+'">'+c+'</code>'));
+  // GFM pipe tables: a header row, a |---|---| separator, then one or more body rows
+  s=s.replace(/(?:^|\n)((?:[^\n]*\|[^\n]*)\n(?:[ \t]*\|?[ \t:|-]*-[ \t:|-]*)\n(?:[^\n]*\|[^\n]*(?:\n|$))+)/g,(m,block)=>{
+    const rows=block.trim().split('\n');
+    const cells=r=>r.replace(/^[ \t]*\|?|\|?[ \t]*$/g,'').split('|').map(c=>c.trim());
+    const TD='border:1px solid var(--trim,#444);padding:3px 7px';
+    const head=cells(rows[0]);
+    let h=`<table style="border-collapse:collapse;margin:6px 0;font-size:11px;width:100%"><thead><tr>`
+        +head.map(c=>`<th style="${TD};text-align:left;background:#0002">${c}</th>`).join('')+'</tr></thead><tbody>';
+    rows.slice(2).forEach(r=>{ const c=cells(r);
+      h+='<tr>'+head.map((_,i)=>`<td style="${TD}">${c[i]||''}</td>`).join('')+'</tr>'; });
+    return '\n'+stash(h+'</tbody></table>')+'\n';
+  });
   s=s.replace(/!\[([^\]]*)\]\(\s*([^)\s]+)[^)]*\)/g,(m,a,u)=>mdImg(a,u));     // images (forum -> code)
   s=s.replace(/\[([^\]]+)\]\(\s*([^)\s]+)[^)]*\)/g,(m,t,u)=>mdA(t,u));        // links  (forum upload -> code)
   s=s.replace(/^\s{0,3}(#{1,6})\s+(.+?)\s*#*$/gm,(m,h,t)=>'<div style="font-weight:700;font-size:'+(h.length<=2?'1.1em':'1em')+';margin:8px 0 3px">'+t+'</div>');
@@ -3564,7 +3645,8 @@ function mdToHtml(src){
   s=s.replace(/\*\*([^*\n]+?)\*\*/g,'<strong>$1</strong>');
   s=s.replace(/(^|[^*\w])\*([^*\n]+?)\*(?=[^*\w]|$)/g,'$1<em>$2</em>');
   s=s.replace(/\n{2,}/g,'<br><br>').replace(/\n/g,'<br>');
-  s=s.replace(/(\d+)/g,(m,i)=>C[+i]).replace(/(\d+)/g,(m,i)=>B[+i]);   // restore code
+  // restore stashed code/tables — sentinel-delimited, so real prose numbers are untouched
+  s=s.replace(new RegExp(SENT+'(\\d+)'+SENT,'g'),(m,i)=>store[+i]!=null?store[+i]:m);
   return s;
 }
 function wireCarousel(root){
@@ -3594,12 +3676,18 @@ function srcNames(p){ return (p.srcs||[]).map(s=>SRC[s]?SRC[s].name:s).join(', '
 function installState(p,tab){ if(p.upd_avail) return 'update'; if(tab==='installed'||p.inst) return 'installed'; return 'none'; }
 const FACET_META={script:['▶','script','#7ee787'],mod:['◆','mod','#c678dd'],library:['❏','library','#56b6c2'],engine:['♪','engine','#e5c07b']};
 function facetHTML(p){
-  let out=(p.facets||[]).map(f=>{ const m=FACET_META[f]; return m?`<span class="facet" style="--fc:${m[2]}">${m[0]} ${m[1]}</span>`:''; }).join('');
+  let out=(p.facets||[]).map(f=>{ const m=FACET_META[f];
+    // the 'engine' facet shows the actual SuperCollider engine name when we know it
+    if(f==='engine' && p.engine) return `<span class="facet" style="--fc:${FACET_META.engine[2]}" title="ships a SuperCollider synth engine">♪ ${esc(p.engine)}</span>`;
+    return m?`<span class="facet" style="--fc:${m[2]}" title="${m[1]}">${m[0]} ${m[1]}</span>`:''; }).join('');
   if(p.voices){ const pr=(p.voices.provides||[]),us=(p.voices.uses||[]);
-    if(pr.includes('nb')) out+=`<span class="facet" style="--fc:var(--ok,#6c6)">🎹 nb voices</span>`;
-    else if(us.includes('nb')) out+=`<span class="facet" style="--fc:var(--ok,#6c6)">🎹 nb-ready</span>`;
-    pr.filter(s=>s!=='nb').forEach(s=>out+=`<span class="facet">🎚 ${esc(s)}</span>`);
+    if(pr.includes('nb')) out+=`<span class="facet" style="--fc:var(--ok,#6c6)" title="provides a Nota Bene (nb) voice other scripts can play">🎹 nb voices</span>`;
+    else if(us.includes('nb')) out+=`<span class="facet" style="--fc:var(--ok,#6c6)" title="plays Nota Bene (nb) voices">🎹 nb-ready</span>`;
+    pr.filter(s=>s!=='nb').forEach(s=>out+=`<span class="facet" title="provides ${esc(s)}">🎚 ${esc(s)}</span>`);
   }
+  // 'has_params' = the script exposes tweakable settings in the norns PARAMS menu. (has_init
+  // is deliberately NOT badged — every real script has an init; it tells the user nothing.)
+  if(p.has_params) out+=`<span class="facet" style="--fc:#d19a66" title="exposes settings you can tweak in the PARAMS menu (and over the web here)">🎛 params</span>`;
   return out?`<div class="facets">${out}</div>`:'';
 }
 function repoCard(p,tab){
@@ -3613,7 +3701,7 @@ function repoCard(p,tab){
     : p.inst
     ? `<button class="btn btn-remove">Remove</button>`
     : `<button class="btn btn-install">Install</button>`;
-  const pills=(p.tags||[]).map(t=>`<span class="pill" data-tag="${esc(t)}">${esc(t)}</span>`).join('');
+  const pills=cleanTags(p.tags).map(t=>`<span class="pill" data-tag="${esc(t)}">${esc(t)}</span>`).join('');
   const doc=(p.doc||p.docU)?`<span class="lnk" title="documentation"><svg viewBox="0 0 32 32"><path d="${I.book}"/></svg></span>`:'';
   const disc=(p.disc||p.discU)?`<span class="lnk" title="discussion"><svg viewBox="0 0 32 32"><path d="${I.chat}"/></svg></span>`:'';
   const stars=(p.stars!=null && p.gh)?`<span class="stars" title="github stars">★ ${p.stars}</span>`:'';
@@ -3621,8 +3709,9 @@ function repoCard(p,tab){
   const L=(u,t)=> isUrl(u)?`<a class="more-link" href="${esc(u)}" target="_blank" rel="noopener">${t} ↗</a>`:'';
   const hasLinks=isUrl(p.proj)||isUrl(p.docU)||isUrl(p.discU)||isUrl(p.comm);
   const dk=demoKind(p.demo);
+  // No demo → render nothing (silence beats a "no playable demo" label on every card).
   const demoSlot = isForumMedia(p.demo) ? `<code style="${MD_CS}">${esc(p.demo.trim())}</code>`   // forum upload: show as code, don't drop
-    : !dk ? '<span class="more-nodemo">no playable demo</span>'
+    : !dk ? ''
     : (dk==='instagram'||dk==='link')
       ? `<a class="demo-ext" href="${esc(p.demo.trim())}" target="_blank" rel="noopener">▶ ${dk==='instagram'?'watch on Instagram':'open demo'} ↗</a>`
       : `<button class="demo-btn">▶ load ${dk} demo</button>`;
@@ -3638,7 +3727,7 @@ function repoCard(p,tab){
     </div>`;
   return `<div class="card open${p.gh?' gh':''}" data-pn="${esc(p.dir||p.n)}" ${p.gh?`style="--srcc:${SRC[(p.srcs||[])[0]]?SRC[(p.srcs||[])[0]].color:'var(--trim)'}"`:''}>
     <div class="head"><label class="csel" title="select for bulk install"><input type="checkbox" data-sel ${selection.has(p.n)?'checked':''}></label><div class="id">
-      <div class="nm">${esc(p.n)} ${badge}${lock}</div><div class="by">by <a href="#" data-author="${esc(ghOwner(p)||p.a||'')}" title="see this author's norns repos">${esc(p.a)}</a></div></div>
+      <div class="nm">${esc(p.n)} ${badge}${lock}</div><div class="by">by <a href="#" data-author="${esc(authorKey(p))}" title="filter to this author's scripts">${esc(p.a)}</a></div></div>
       <div class="act-row">${actions}</div></div>
     <div class="desc">${esc(p.d)}</div>
     ${(p.facets&&p.facets.length)?facetHTML(p):''}
@@ -3731,6 +3820,7 @@ function renderRepo(){
     cur.forEach(p=>allSel?selection.delete(p.n):selection.add(p.n)); updateGrid(); updateBulkBar();
   });
   wireControls(v);   // dropdowns (faceted counts repaint on change) + sort
+  wireCatBar(v);     // source tabs: independent on/off toggles (wired once per full render)
   const q=document.getElementById('rd-q');
   if(q){ q.value=repoQuery; q.addEventListener('input',e=>{repoQuery=e.target.value;updateGrid();}); }
   v.querySelectorAll('[data-act="refresh"]').forEach(b=>b.onclick=()=>{ b.classList.add('spin'); loadCatalog().then(()=>{ b.classList.remove('spin'); renderRepo(); }); });
