@@ -15,3 +15,6 @@ CONSIDER-LATER.md
 CLAUDE.md
 AGENTS.md
 docs/superpowers/
+
+# on-demand DAST reports (local artifacts)
+dast-reports/
