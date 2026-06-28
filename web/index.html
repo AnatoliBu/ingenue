@@ -1408,6 +1408,7 @@ function feedRowToEntry(e){
     // nornslist ranking + structure signals — native fields, drive score sort and badges
     score:num('score'), rank:num('rank'),
     has_init:!!(e.has_init), has_params:!!(e.has_params), has_image:!!(e.has_image),
+    caps:Array.isArray(e.caps)?e.caps:[],
     cat, srcs:[src==='community'?'community':'github'],
     gh: src==='github'?1:(/github\.com/i.test(proj)?1:0),
   };
@@ -1436,6 +1437,7 @@ function mergeEnrich(t, s){
   if(s.has_init && !t.has_init) t.has_init=s.has_init;
   if(s.has_params && !t.has_params) t.has_params=s.has_params;
   if(s.has_image && !t.has_image) t.has_image=s.has_image;
+  if(s.caps && s.caps.length && !(t.caps&&t.caps.length)) t.caps=s.caps;
   if(s.tags && s.tags.length) t.tags=Array.from(new Set((t.tags||[]).concat(s.tags))).slice(0,8);
   if(s.srcs) s.srcs.forEach(x=>{ if(!t.srcs.includes(x)) t.srcs.push(x); });
 }
@@ -2529,12 +2531,14 @@ function filterDropdownsHTML(){
   const tcount={}; baseTag.forEach(p=>entryTags(p).forEach(t=>{ tcount[t]=(tcount[t]||0)+1; }));
   // keep any selected tags visible even if their faceted count is 0 in the current set
   tagFilter.forEach(t=>{ if(!(t in tcount)) tcount[t]=0; });
-  // detection tags (nb / synth engine) sort to the top and carry their card icon; the rest
-  // are GitHub topics by frequency. Keeps the filter list aligned with the card badges.
+  // Detection tags (nb voice / synth engine / grid / arc / crow / midi) sort to the top and
+  // carry their card icon. Topic tags follow by frequency, but a lone one-off (a topic on a
+  // single script) is hidden — the filter should group scripts, not list curiosities.
   const topTags=Object.entries(tcount)
-    .sort((a,b)=> (DETECT_TAGS[b[0]]?1:0)-(DETECT_TAGS[a[0]]?1:0) || b[1]-a[1])
-    .slice(0,24)
-    .map(([t,c])=>({value:t,label:(DETECT_TAGS[t]?DETECT_TAGS[t]+' ':'')+t,count:c}));
+    .filter(([t,c])=> DETECT_TAGS.has(t) || tagFilter.has(t) || c>=2)
+    .sort((a,b)=> (DETECT_TAGS.has(b[0])?1:0)-(DETECT_TAGS.has(a[0])?1:0) || b[1]-a[1])
+    .slice(0,30)
+    .map(([t,c])=>({value:t,label:(DETECT_ICON[t]?DETECT_ICON[t]+' ':'')+t,count:c}));
   const tags=ddHTML('tag','tags',topTags,tagFilter);
   return type+media+author+tags;
 }
@@ -2583,26 +2587,49 @@ function wireControls(v){
 // per-script update detection (installed tab). Default: fast diff vs the catalog's
 // published sha (no GitHub call). Secondary: live GitHub check for bleeding edge.
 let updChecking=false, updCheckedAt=0, updFilter=false, updProgress={done:0,total:0}, updSource='';
-const NB_TAG='additional voice';
-const ENGINE_TAG='synth engine';
-// Detection-derived tags (vs raw GitHub topics) — these mirror what the card badges show,
-// so the filter list lines up with how we now classify scripts. The icon is shown in the
-// tags dropdown; one "synth engine" tag covers ALL engines (the engine *name* stays on the
-// card, we never fragment the filter into one tag per engine).
-const DETECT_TAGS={[NB_TAG]:'🎹', [ENGINE_TAG]:'♪'};
+// ── Tag taxonomy ──────────────────────────────────────────────────────────────────────
+// The filter/card tags are DETECTION-derived first, GitHub topics second. Detection tags
+// come from how the catalog now classifies a script (capabilities, voices, engine) so they
+// have full, consistent coverage; topics are author-set and patchy, so they're canonicalised
+// (crow + monome-crow → crow) and lone one-offs are hidden from the filter.
+const NB_TAG='nb voice';          // PROVIDES a Nota Bene voice other scripts can play
+const ENGINE_TAG='synth engine';  // ships a SuperCollider engine (name shown on the card)
+const CAP_TAGS=['grid','arc','crow','midi'];   // I/O capabilities detected from the code
+const DETECT_TAGS=new Set([NB_TAG, ENGINE_TAG, ...CAP_TAGS]);
+const DETECT_ICON={[NB_TAG]:'🎹', [ENGINE_TAG]:'♪'};   // grid/arc/crow/midi render plain
+// fold topic variants onto one canonical name so the list never shows two tags for one thing
+const TAG_ALIAS={'monome-crow':'crow','crow-norns':'crow','norns-crow':'crow','ii':'crow','i2c':'crow',
+  'monome-grid':'grid','grid-norns':'grid','monome-arc':'arc','arc-norns':'arc',
+  'monome-teletype':'teletype','midi-controller':'midi','mod-norns':'mod','norns-mod':'mod',
+  'norns-library':'library','norns-lib':'library','norns-shield':'shield'};
+function canonTag(t){ const l=String(t||'').toLowerCase().trim(); return TAG_ALIAS[l]||l; }
 function provGetsVoice(p){ return !!(p.voices && (p.voices.provides||[]).length); }
-function isNbVoice(p){ if(provGetsVoice(p)) return true; const t=(p.tags||[]).map(x=>String(x).toLowerCase());
-  return t.includes('nb')||t.includes('n.b.')||/\bnb\b|note ?bridge|nb_|nb\//i.test(((p.d||'')+' '+(p.n||''))); }
+// PROVIDER, not consumer: a script that exposes a voice to nb (nb_* packs, or voices.provides).
+// "nb-ready" consumers are far too common to be a useful filter — they stay a card badge only.
+function isNbProvider(p){ return provGetsVoice(p) || /^nb[_-]/i.test((p&&p.n)||''); }
 function hasEngine(p){ return !!((p&&p.engine) || ((p&&p.facets)||[]).includes('engine')); }
 // GitHub topics carry ecosystem-generic noise (every norns repo is tagged norns/monome/…);
-// strip it so a card's tags show what's DISTINCTIVE (e.g. washi → sequencer, serge — not
-// norns, monome, monome-norns, norns-script). Also drops the source name if it leaked in.
-const NOISE_TAGS=new Set(['norns','monome','monome-norns','monome-norns-script','norns-script','norns-scripts','nornsscript','nornslist','lua','music','audio','sound','synth','synthesizer','sequencer-norns']);
-function cleanTags(tags){ return (tags||[]).map(String).filter(t=>t&&!NOISE_TAGS.has(t.toLowerCase())); }
-function entryTags(p){ let t=cleanTags(p.tags);
-  if(isNbVoice(p)) t=t.concat(NB_TAG);
-  if(hasEngine(p)) t=t.concat(ENGINE_TAG);
-  return t; }
+// strip it so tags show what's DISTINCTIVE (washi → sequencer, serge — not norns, monome…).
+// generic ecosystem noise + topics that just restate a detection tag (supercollider /
+// norns-engine duplicate "synth engine"; norns/monome duplicate nothing useful)
+const NOISE_TAGS=new Set(['norns','monome','monome-norns','monome-norns-script','norns-script','norns-scripts','nornsscript','nornslist','lua','music','audio','sound','synth','synthesizer','sequencer-norns','maiden','supercollider','norns-engine','sc-engine','engine']);
+function cleanTags(tags){
+  const out=[], seen=new Set();
+  for(const raw of (tags||[])){ const t=canonTag(raw);
+    if(!t || NOISE_TAGS.has(t) || seen.has(t)) continue;
+    seen.add(t); out.push(t); }
+  return out;
+}
+// Full tag set for a script: canonicalised topics + the detection tags (engine, nb-provider,
+// I/O caps). Caps merge with any matching topic via canonTag, so there's never a duplicate.
+function entryTags(p){
+  const out=cleanTags(p.tags), have=new Set(out);
+  const add=t=>{ if(t && !have.has(t)){ have.add(t); out.push(t); } };
+  if(hasEngine(p)) add(ENGINE_TAG);
+  if(isNbProvider(p)) add(NB_TAG);
+  (p.caps||[]).forEach(c=>add(canonTag(c)));
+  return out;
+}
 function allTags(tab){
   const counts={}; repoBaseList(tab).forEach(p=>entryTags(p).forEach(t=>{ counts[t]=(counts[t]||0)+1; }));
   return Object.entries(counts).sort((a,b)=> a[0]===NB_TAG?-1 : b[0]===NB_TAG?1 : b[1]-a[1]);
@@ -3716,7 +3743,11 @@ function repoCard(p,tab){
     : p.inst
     ? `<button class="btn btn-remove">Remove</button>`
     : `<button class="btn btn-install">Install</button>`;
-  const pills=cleanTags(p.tags).map(t=>`<span class="pill" data-tag="${esc(t)}">${esc(t)}</span>`).join('');
+  // card pills = canonicalised topics + detected I/O caps (grid/arc/crow/midi), deduped; nb
+  // and engine stay as their own badges above, so they're not repeated here
+  const pillSet=[]; const _ps=new Set();
+  cleanTags(p.tags).concat((p.caps||[]).map(canonTag)).forEach(t=>{ if(t&&!_ps.has(t)){_ps.add(t);pillSet.push(t);} });
+  const pills=pillSet.map(t=>`<span class="pill" data-tag="${esc(t)}">${esc(t)}</span>`).join('');
   const doc=(p.doc||p.docU)?`<span class="lnk" title="documentation"><svg viewBox="0 0 32 32"><path d="${I.book}"/></svg></span>`:'';
   const disc=(p.disc||p.discU)?`<span class="lnk" title="discussion"><svg viewBox="0 0 32 32"><path d="${I.chat}"/></svg></span>`:'';
   const stars=(p.stars!=null && p.gh)?`<span class="stars" title="github stars">★ ${p.stars}</span>`:'';
