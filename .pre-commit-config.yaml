@@ -1,0 +1,17 @@
+# Local pre-PUSH gate so SAST runs before code ever reaches GitHub (mirrors the semgrep
+# job in .github/workflows/security.yml). One-time setup:
+#
+#   pip install pre-commit
+#   pre-commit install --hook-type pre-push
+#
+# After that, `git push` runs semgrep first and aborts the push on any finding. Skip in an
+# emergency with `git push --no-verify` (the CI gate still catches it).
+repos:
+  - repo: https://github.com/semgrep/semgrep
+    rev: v1.168.0
+    hooks:
+      - id: semgrep
+        name: semgrep (SAST)
+        args: ['--config=auto', '--error', '--metrics=off']
+        # only run on push, not on every commit (semgrep auto-scan is a few seconds)
+        stages: [pre-push]
