@@ -1,7 +1,7 @@
 /* ingenue demo-mode shim — installs a fake device behind the same UI.
    Loaded only when window.__INGENUE_DEMO__ is truthy (set by an inline
    <script> in index.html based on hostname / ?demo). Replaces window.fetch
-   for /api/* paths and window.WebSocket for ws://*:5555 (matron). Everything
+   for /api/* paths and window.WebSocket for the matron port 5555. Everything
    else (catalog JSONs, GitHub API, CDN) goes through unmolested. */
 (function(){
   if (!window.__INGENUE_DEMO__) return;

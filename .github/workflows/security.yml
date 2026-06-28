@@ -27,9 +27,10 @@ jobs:
         with:
           python-version: '3.11'
       - run: pip install semgrep
-      # --error makes any finding fail the job; honors the inline `nosemgrep:` rationale
-      # comments. Metrics off so nothing about the code leaves the runner.
-      - run: semgrep scan --config=auto --error --metrics=off web/
+      # p/default is the curated security ruleset; --metrics=off keeps all telemetry off the
+      # wire (--config=auto would require metrics). --error fails the job on any finding and
+      # the inline `nosemgrep:` rationale comments are honored.
+      - run: semgrep scan --config=p/default --error --metrics=off web/
 
   codeql:
     name: codeql (python)

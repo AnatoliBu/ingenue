@@ -12,6 +12,6 @@ repos:
     hooks:
       - id: semgrep
         name: semgrep (SAST)
-        args: ['--config=auto', '--error', '--metrics=off']
+        args: ['--config=p/default', '--error', '--metrics=off']
         # only run on push, not on every commit (semgrep auto-scan is a few seconds)
         stages: [pre-push]
