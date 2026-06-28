@@ -2983,6 +2983,22 @@ def refresh_catalog():
         return {"ok": False, "error": f"refresh failed ({e.__class__.__name__})"}
 
 
+def _meta_csp():
+    """Pull the Content-Security-Policy out of index.html's <meta> so the header we send
+    stays identical to the in-page policy — one source of truth, no drift."""
+    try:
+        html = open(os.path.join(HERE, "index.html"), encoding="utf-8").read(40000)
+        # content is double-quote-delimited and contains single quotes ('self' …), so match
+        # the double-quoted value rather than stopping at the first inner quote
+        m = re.search(r'http-equiv=["\']Content-Security-Policy["\'][^>]*?content="([^"]*)"', html)
+        return m.group(1).strip() if m else ""
+    except Exception:
+        return ""
+
+
+CSP_HEADER = _meta_csp()
+
+
 class H(http.server.SimpleHTTPRequestHandler):
     def __init__(self, *a, **k):
         super().__init__(*a, directory=HERE, **k)
@@ -2998,7 +3014,29 @@ class H(http.server.SimpleHTTPRequestHandler):
 
     def end_headers(self):
         self.send_header("Cache-Control", "no-store, max-age=0")
+        # security response headers on every reply (DAST hardening). CSP mirrors the in-page
+        # <meta> exactly (read at startup) so there's no second policy to drift out of sync.
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("X-Frame-Options", "DENY")
+        self.send_header("Referrer-Policy", "no-referrer")
+        if CSP_HEADER:
+            self.send_header("Content-Security-Policy", CSP_HEADER)
         super().end_headers()
+
+    # Only static ASSETS should be reachable — never source, secrets, dotfiles, or a
+    # directory listing of the app dir (a SimpleHTTPServer happily serves all of those).
+    _BLOCK_EXT = (".py", ".pyc", ".pyo", ".api", ".pem", ".key", ".log")
+
+    def send_head(self):
+        name = os.path.basename(urllib.parse.urlparse(self.path).path).lower()
+        if name.startswith(".") or name.endswith(self._BLOCK_EXT):
+            self.send_error(404, "Not Found")
+            return None
+        return super().send_head()
+
+    def list_directory(self, path):
+        self.send_error(404, "Not Found")
+        return None
 
     def _q(self):
         return urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
