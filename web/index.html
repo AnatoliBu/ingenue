@@ -2529,7 +2529,12 @@ function filterDropdownsHTML(){
   const tcount={}; baseTag.forEach(p=>entryTags(p).forEach(t=>{ tcount[t]=(tcount[t]||0)+1; }));
   // keep any selected tags visible even if their faceted count is 0 in the current set
   tagFilter.forEach(t=>{ if(!(t in tcount)) tcount[t]=0; });
-  const topTags=Object.entries(tcount).sort((a,b)=>b[1]-a[1]).slice(0,24).map(([t,c])=>({value:t,label:t,count:c}));
+  // detection tags (nb / synth engine) sort to the top and carry their card icon; the rest
+  // are GitHub topics by frequency. Keeps the filter list aligned with the card badges.
+  const topTags=Object.entries(tcount)
+    .sort((a,b)=> (DETECT_TAGS[b[0]]?1:0)-(DETECT_TAGS[a[0]]?1:0) || b[1]-a[1])
+    .slice(0,24)
+    .map(([t,c])=>({value:t,label:(DETECT_TAGS[t]?DETECT_TAGS[t]+' ':'')+t,count:c}));
   const tags=ddHTML('tag','tags',topTags,tagFilter);
   return type+media+author+tags;
 }
@@ -2579,15 +2584,25 @@ function wireControls(v){
 // published sha (no GitHub call). Secondary: live GitHub check for bleeding edge.
 let updChecking=false, updCheckedAt=0, updFilter=false, updProgress={done:0,total:0}, updSource='';
 const NB_TAG='additional voice';
+const ENGINE_TAG='synth engine';
+// Detection-derived tags (vs raw GitHub topics) — these mirror what the card badges show,
+// so the filter list lines up with how we now classify scripts. The icon is shown in the
+// tags dropdown; one "synth engine" tag covers ALL engines (the engine *name* stays on the
+// card, we never fragment the filter into one tag per engine).
+const DETECT_TAGS={[NB_TAG]:'🎹', [ENGINE_TAG]:'♪'};
 function provGetsVoice(p){ return !!(p.voices && (p.voices.provides||[]).length); }
 function isNbVoice(p){ if(provGetsVoice(p)) return true; const t=(p.tags||[]).map(x=>String(x).toLowerCase());
   return t.includes('nb')||t.includes('n.b.')||/\bnb\b|note ?bridge|nb_|nb\//i.test(((p.d||'')+' '+(p.n||''))); }
+function hasEngine(p){ return !!((p&&p.engine) || ((p&&p.facets)||[]).includes('engine')); }
 // GitHub topics carry ecosystem-generic noise (every norns repo is tagged norns/monome/…);
 // strip it so a card's tags show what's DISTINCTIVE (e.g. washi → sequencer, serge — not
 // norns, monome, monome-norns, norns-script). Also drops the source name if it leaked in.
 const NOISE_TAGS=new Set(['norns','monome','monome-norns','monome-norns-script','norns-script','norns-scripts','nornsscript','nornslist','lua','music','audio','sound','synth','synthesizer','sequencer-norns']);
 function cleanTags(tags){ return (tags||[]).map(String).filter(t=>t&&!NOISE_TAGS.has(t.toLowerCase())); }
-function entryTags(p){ const base=cleanTags(p.tags); return isNbVoice(p)?base.concat(NB_TAG):base; }
+function entryTags(p){ let t=cleanTags(p.tags);
+  if(isNbVoice(p)) t=t.concat(NB_TAG);
+  if(hasEngine(p)) t=t.concat(ENGINE_TAG);
+  return t; }
 function allTags(tab){
   const counts={}; repoBaseList(tab).forEach(p=>entryTags(p).forEach(t=>{ counts[t]=(counts[t]||0)+1; }));
   return Object.entries(counts).sort((a,b)=> a[0]===NB_TAG?-1 : b[0]===NB_TAG?1 : b[1]-a[1]);
