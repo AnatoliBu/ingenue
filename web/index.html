@@ -2475,8 +2475,11 @@ function wireCatBar(v){
     hideInstalled=!hideInstalled; paintCatBar(v); updateGrid();
   }));
 }
-// Structural TYPE facet: script / mod / library / engine.
-const TYPE_ORDER=['script','mod','library','engine'];
+// Structural TYPE facet: script / collection / mod / library / engine.
+// A 'collection' is one repo holding many scripts (8+ top-level .lua) — installed as a single
+// folder that norns then lists as several selectable scripts. COLLECTION_MIN matches nornslist.
+const COLLECTION_MIN=8;
+const TYPE_ORDER=['script','collection','mod','library','engine'];
 let typeFilter=new Set(TYPE_ORDER);
 // Generic multiselect dropdown. key -> the live filter Set (looked up fresh so a
 // reassigned set is never stale); opts=[{value,label,count}].
@@ -2511,7 +2514,7 @@ function filteredExcept(except){
 function filterDropdownsHTML(){
   // Source filter is the catBar tab strip; here: type, media, author, tags.
   const baseType=filteredExcept('type');
-  const tc={script:0,mod:0,library:0,engine:0}; baseType.forEach(p=>(p.facets||[]).forEach(f=>{ if(f in tc) tc[f]++; }));
+  const tc={script:0,collection:0,mod:0,library:0,engine:0}; baseType.forEach(p=>(p.facets||[]).forEach(f=>{ if(f in tc) tc[f]++; }));
   const type=ddHTML('type','type',TYPE_ORDER.map(t=>({value:t,label:t,count:tc[t]})),typeFilter);
   // media: has / hasn't a playable demo or images (a +/- pair, faceted counts)
   const baseMedia=filteredExcept('media');
@@ -3257,7 +3260,8 @@ async function classifyRepo(owner,name,branch,pushed){
     voices.systems=[...new Set([...voices.provides,...voices.uses])];
     if(!isNorns){ const res={ok:false,facets:[],voices:{provides:[],uses:[],systems:[]}}; _clsPut(key,res); return _classCache[key]=res; }
     const facets=[];
-    if(topLua.length) facets.push('script');
+    if(topLua.length>=COLLECTION_MIN) facets.push('collection');   // 8+ scripts in one repo
+    else if(topLua.length) facets.push('script');
     if(hasMod) facets.push('mod');
     if(!topLua.length && !hasMod && libLua.length) facets.push('library');
     if(hasEngine) facets.push('engine');
@@ -3716,11 +3720,13 @@ function srcTagsHTML(p){
 }
 function srcNames(p){ return (p.srcs||[]).map(s=>SRC[s]?SRC[s].name:s).join(', '); }
 function installState(p,tab){ if(p.upd_avail) return 'update'; if(tab==='installed'||p.inst) return 'installed'; return 'none'; }
-const FACET_META={script:['▶','script','#7ee787'],mod:['◆','mod','#c678dd'],library:['❏','library','#56b6c2'],engine:['♪','engine','#e5c07b']};
+const FACET_META={script:['▶','script','#7ee787'],collection:['❐','collection','#f0883e'],mod:['◆','mod','#c678dd'],library:['❏','library','#56b6c2'],engine:['♪','engine','#e5c07b']};
 function facetHTML(p){
   let out=(p.facets||[]).map(f=>{ const m=FACET_META[f];
     // the 'engine' facet shows the actual SuperCollider engine name when we know it
     if(f==='engine' && p.engine) return `<span class="facet" style="--fc:${FACET_META.engine[2]}" title="ships a SuperCollider synth engine">♪ ${esc(p.engine)}</span>`;
+    // a 'collection' is several scripts in one repo — installing it lands the whole set
+    if(f==='collection') return `<span class="facet" style="--fc:${m[2]}" title="a repo of several scripts — installs the whole set; pick which to run on the norns">${m[0]} ${m[1]}</span>`;
     return m?`<span class="facet" style="--fc:${m[2]}" title="${m[1]}">${m[0]} ${m[1]}</span>`:''; }).join('');
   if(p.voices){ const pr=(p.voices.provides||[]),us=(p.voices.uses||[]);
     if(pr.includes('nb')) out+=`<span class="facet" style="--fc:var(--ok,#6c6)" title="provides a Nota Bene (nb) voice other scripts can play">🎹 nb voices</span>`;
