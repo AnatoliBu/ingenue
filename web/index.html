@@ -1377,10 +1377,12 @@ const DEP_OVERLAY=[
 // Default source: the device's LOCAL community.json (the curated norns.community
 // list), refreshed on demand by the user (↻ in config → /api/refresh-catalog). The
 // user may also add extra feeds — any catalog/feed JSON URL — which layer on top,
-// deduped by name with enrichment merged onto the surviving card. README text +
+// deduped by repo identity (owner/name) with enrichment merged onto the surviving card,
+// so the same repo from two sources is one card but two different repos that share a
+// filename stay distinct. README text +
 // screenshots load live from GitHub. No external feed is hardcoded. With ONLY the
 // local community.json (no feeds, no network) the catalog still renders fully.
-let CAT_INDEX = new Map();   // norm(name) -> entry; the single dedup/merge authority
+let CAT_INDEX = new Map();   // repo identity (owner/name) -> entry; the dedup/merge authority
 
 // Map a catalog/feed row to an ingenue entry. Tolerant of BOTH the long-form
 // catalog.json schema (Name/Author/'Project URL'/…) AND the short-form data.json
@@ -1441,10 +1443,25 @@ function mergeEnrich(t, s){
   if(s.tags && s.tags.length) t.tags=Array.from(new Set((t.tags||[]).concat(s.tags))).slice(0,8);
   if(s.srcs) s.srcs.forEach(x=>{ if(!t.srcs.includes(x)) t.srcs.push(x); });
 }
-// Add to the merge index, or merge onto an existing same-named entry (case-insensitive).
+// Identity = the actual repo (owner/name from the GitHub URL), NOT the bare script name:
+// two different repos that merely share a filename (e.g. two `awake`s by different authors)
+// are DIFFERENT scripts and must stay separate cards. Falls back to the name only for an
+// entry with no repo URL (a community/dep entry). This is what lets the SAME repo seen via
+// several sources (community.json + a feed + the user's own repos) collapse to one card,
+// without collapsing genuinely-distinct repos that happen to share a name.
+function catKey(e){
+  const m=/github\.com\/([^/]+)\/([^/\s#?]+)/i.exec(e.proj||'');
+  return m ? (m[1]+'/'+m[2].replace(/\.git$/,'')).toLowerCase() : norm(e.n);
+}
+function catFindByName(name){
+  const t=norm(name);
+  for(const v of CAT_INDEX.values()) if(norm(v.n)===t) return v;
+  return null;
+}
+// Add to the merge index, or merge onto the SAME repo already seen via another source.
 function indexAdd(entries, e){
   if(!e || !e.n) return;
-  const k=norm(e.n), cur=CAT_INDEX.get(k);
+  const k=catKey(e), cur=CAT_INDEX.get(k);
   if(cur){ mergeEnrich(cur, e); } else { CAT_INDEX.set(k, e); entries.push(e); }
 }
 // Parse an added feed's JSON into {entries, enrich}. Supports community ({entries:[…]}),
@@ -1500,12 +1517,12 @@ async function loadCatalog(){
       }
       fe.forEach(e=>{ if(e&&e.n){ e.cat=feedName; e.srcs=[feedName];
         if(e.gh==null) e.gh = e.proj&&/github\.com/.test(e.proj)?1:0; indexAdd(entries, e); } });
-      if(enrich) Object.keys(enrich).forEach(k=>{ const cur=CAT_INDEX.get(norm(k)); if(cur) mergeEnrich(cur, enrich[k]); });
+      if(enrich) Object.keys(enrich).forEach(k=>{ const cur=catFindByName(k); if(cur) mergeEnrich(cur, enrich[k]); });
     }
     // merge known un-catalogued lib-deps (nb, …) so they're visible/installable
-    DEP_OVERLAY.forEach(o=>{ if(!CAT_INDEX.has(norm(o.n))){ const e={doc:0,disc:0,cat:'community',srcs:['community'],...o}; CAT_INDEX.set(norm(o.n),e); entries.push(e); } });
+    DEP_OVERLAY.forEach(o=>{ if(!catFindByName(o.n)){ const e={doc:0,disc:0,cat:'community',srcs:['community'],...o}; CAT_INDEX.set(catKey(e),e); entries.push(e); } });
     // ingenue is infra running ON the device (it self-updates) — never an install target
-    CAT_INDEX.delete(norm('ingenue'));
+    for(const [k,v] of CAT_INDEX){ if(norm(v.n)==='ingenue') CAT_INDEX.delete(k); }
     REPO.available = entries.filter(e=>norm(e.n||'')!=='ingenue');
     await loadMyRepos();                              // token-gated: fold in the user's own repos (deduped via CAT_INDEX)
     scriptsState.catalog='ready';
@@ -1547,9 +1564,9 @@ async function loadMyRepos(){
         tags:[], proj:it.html_url||'', upd:(it.pushed_at||'').slice(0,10),
         stars:it.stargazers_count||0, facets:['script'], readme:'', images:[], demo:'',
         sha:'', cat:'mine', srcs:['mine'], gh:1, priv:it.private?1:0 };
-      const cur=CAT_INDEX.get(norm(nm));
-      if(cur){ mergeEnrich(cur, repoEntry); }     // already catalogued → one card, enriched
-      else { CAT_INDEX.set(norm(nm), repoEntry); REPO.available.push(repoEntry); }
+      const k=catKey(repoEntry), cur=CAT_INDEX.get(k);
+      if(cur){ mergeEnrich(cur, repoEntry); }     // SAME repo already catalogued → one card, enriched
+      else { CAT_INDEX.set(k, repoEntry); REPO.available.push(repoEntry); }
     });
   }catch(_){}
 }
