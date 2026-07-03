@@ -802,21 +802,6 @@ button{font-family:inherit}
   color:var(--fg);font-weight:600;font-size:13px;font-family:inherit;cursor:pointer;touch-action:none;user-select:none;-webkit-user-select:none}
 .key-btn.on{background:var(--accent);color:#0c130a;border-color:var(--accent);transform:translateY(1px)}
 
-/* ----- Ableton Link / clock-transport panel ----- */
-.play-top #play-link-toggle.on{background:var(--accent);color:#0c130a;border-color:var(--accent)}
-.link-panel{flex:0 0 auto;background:var(--panel2);border-bottom:1px solid var(--trim);padding:9px 14px;display:flex;flex-direction:column;gap:8px}
-.link-panel[hidden]{display:none}
-.lk-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
-.lk-lbl{font-size:11px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted)}
-.lk-u{font-size:12px;color:var(--faint);margin-left:-4px}
-.lk-seg{display:inline-flex;border:1px solid var(--trim);border-radius:8px;overflow:hidden}
-.lk-seg button{border:0;background:var(--panel);color:var(--muted);font:inherit;font-size:12px;padding:5px 11px;cursor:pointer;border-right:1px solid var(--trim)}
-.lk-seg button:last-child{border-right:0}
-.lk-seg button.on{background:var(--accent);color:#0c130a;font-weight:600}
-.link-panel input[type=number]{width:64px;background:var(--bg);border:1px solid var(--trim);border-radius:7px;padding:5px 8px;color:var(--fg);font:inherit;font-size:16px;outline:none}
-.lk-chk{display:inline-flex;align-items:center;gap:5px;font-size:12px;color:var(--muted);cursor:pointer}
-.lk-peers{margin-left:auto;font-size:12px;color:var(--accent);font-weight:600;white-space:nowrap}
-#lk-start,#lk-stop{padding:5px 12px}
 
 /* ----- mobile (iOS Safari): single column, search-to-switch, one smooth scroll ----- */
 @container (max-width:640px){
@@ -2141,22 +2126,11 @@ async function renderPlay(){
     setHTML(v, `<div class="play-top"><span class="pv-title">PLAY</span>
         <label class="play-search"><svg viewBox="0 0 32 32"><path d="${_MAG}"/></svg>
           <input id="play-q" placeholder="filter scripts…" autocomplete="off" spellcheck="false"></label>
-        <button class="rd-pill-btn" id="play-link-toggle" title="Ableton Link — clock &amp; transport sync">⟲ Link</button>
         <button class="rd-pill-btn" id="play-refresh" title="re-scan installed scripts">↻</button></div>
-      <div class="link-panel" id="link-panel" hidden>
-        <div class="lk-row"><span class="lk-lbl">clock</span>
-          <span class="seg lk-seg" id="lk-source">${['internal','midi','link','crow'].map((s,i)=>`<button data-i="${i+1}">${s}</button>`).join('')}</span></div>
-        <div class="lk-row"><span class="lk-lbl">tempo</span><input type="number" id="lk-tempo" min="20" max="300" step="1"><span class="lk-u">bpm</span>
-          <span class="lk-lbl">quantum</span><input type="number" id="lk-quantum" min="1" max="32" step="1"></div>
-        <div class="lk-row"><button class="rd-pill-btn" id="lk-start">▶ start</button><button class="rd-pill-btn" id="lk-stop">■ stop</button>
-          <label class="lk-chk"><input type="checkbox" id="lk-ssync"> start/stop sync</label>
-          <span class="lk-peers" id="lk-peers">Link · — peers</span></div>
-      </div>
       <div class="play-body">
         <div class="play-list" id="play-list"><div class="play-empty">loading…</div></div>
         <div class="play-detail" id="play-detail"><div class="play-empty">pick a script on the left to read its help and launch it on the device.</div></div>
       </div>`);
-    wireLinkPanel(v);
     const q=v.querySelector('#play-q'); q.value=PLAY.q;
     const setSearching=on=>v.classList.toggle('searching',on);   // mobile: the list only shows while searching
     q.oninput=()=>{ PLAY.q=q.value; setSearching(true); playPaintList(); };
@@ -2483,40 +2457,6 @@ function ensureOscDispatch(){ if(!matronReady) return; matronSend(
  +"if prev then pcall(prev,path,args,from) end end "
  +"_norns.osc.event=_ing_osc_fn end end"); }
 
-/* ===== Ableton Link — clock + transport sync. norns has Link built in; the param sets
-   ride the existing OSC /param path (ctlSend), transport uses clock.link.start/stop, and we
-   poll peer count while the panel is open. Device-global (not per-script). ===== */
-let _linkTimer=null, _linkState={src:1,tempo:120,quantum:4,ssync:1,peers:0};
-function wireLinkPanel(v){
-  const g=id=>v.querySelector('#'+id);
-  g('play-link-toggle').onclick=toggleLinkPanel;
-  v.querySelectorAll('#lk-source button').forEach(b=>b.onclick=()=>{ const i=+b.dataset.i;
-    ctlSend({k:'param',id:'clock_source',v:i}); _linkState.src=i; paintLinkSeg(); });
-  g('lk-tempo').onchange=e=>{ const t=Math.max(20,Math.min(300,Math.round(+e.target.value)||120)); e.target.value=t; ctlSend({k:'param',id:'clock_tempo',v:t}); _linkState.tempo=t; };
-  g('lk-quantum').onchange=e=>{ const q=Math.max(1,Math.min(32,Math.round(+e.target.value)||4)); e.target.value=q; ctlSend({k:'param',id:'link_quantum',v:q}); _linkState.quantum=q; };
-  g('lk-ssync').onchange=e=>{ ctlSend({k:'param',id:'link_start_stop_sync',v:e.target.checked?2:1}); _linkState.ssync=e.target.checked?2:1; };
-  g('lk-start').onclick=()=>{ if(matronReady) matronSend('clock.link.start()'); };
-  g('lk-stop').onclick=()=>{ if(matronReady) matronSend('clock.link.stop()'); };
-}
-function paintLinkSeg(){ document.querySelectorAll('#lk-source button').forEach(b=>b.classList.toggle('on',+b.dataset.i===_linkState.src)); }
-function toggleLinkPanel(){
-  const p=document.getElementById('link-panel'), btn=document.getElementById('play-link-toggle');
-  const show=p.hidden; p.hidden=!show; if(btn) btn.classList.toggle('on',show);
-  if(show){ linkPoll(); if(!_linkTimer) _linkTimer=setInterval(linkPoll,3000); }   // poll only while open
-  else stopLinkPoll();
-}
-function stopLinkPoll(){ if(_linkTimer){ clearInterval(_linkTimer); _linkTimer=null; } }
-function linkPoll(){ if(!matronReady) return;
-  matronSend("print('@@ING_LINK@@'..tostring(params:get('clock_source'))..'\\9'..tostring(params:get('clock_tempo'))..'\\9'..tostring(params:get('link_quantum'))..'\\9'..tostring(params:get('link_start_stop_sync'))..'\\9'..tostring(clock.link.get_number_of_peers()))"); }
-function applyLinkState(a){   // [clock_source, clock_tempo, link_quantum, link_start_stop_sync, peers]
-  _linkState={src:+a[0]||1,tempo:Math.round(+a[1])||120,quantum:Math.round(+a[2])||4,ssync:+a[3]||1,peers:+a[4]||0};
-  paintLinkSeg();
-  const g=id=>document.getElementById(id), tp=g('lk-tempo'), qn=g('lk-quantum');
-  if(tp && document.activeElement!==tp) tp.value=_linkState.tempo;   // don't clobber an active edit
-  if(qn && document.activeElement!==qn) qn.value=_linkState.quantum;
-  if(g('lk-ssync')) g('lk-ssync').checked=(_linkState.ssync===2);
-  if(g('lk-peers')) g('lk-peers').textContent='Link · '+_linkState.peers+' peer'+(_linkState.peers===1?'':'s');
-}
 function playKey(n,z){ ctlSend({k:'key',n:+n,z:z?1:0});
   const b=document.querySelector('.key-btn[data-n="'+n+'"]'); if(b) b.classList.toggle('on',!!z); }
 function encStart(n,disp){ _encState[n]={disp,since:performance.now(),acc:0}; ensureEncTimer(); }   // (re)grab → resets the ramp
@@ -2786,7 +2726,6 @@ function matronConnect(){
       const a=ln.slice(k+10).split('\t'); const el=document.querySelector('.pv-val[data-vi="'+a[0]+'"]'); if(el&&a[1]!=null) el.textContent=a[1]; }); }
     if(t.indexOf('@@ING_PM@@')>=0){ t.split('\n').forEach(ln=>{ const k=ln.indexOf('@@ING_PM@@'); if(k<0) return;   // value→name map for label sliders
       const a=ln.slice(k+10).split('\t'); if(a.length<3) return; (pLabelMap[a[0]]=pLabelMap[a[0]]||{})[a[1]]=a[2]; }); }
-    if(t.indexOf('@@ING_LINK@@')>=0){ const m=t.match(/@@ING_LINK@@([^\n]*)/); if(m) applyLinkState(m[1].split('\t')); }   // Link clock/peer poll
     if(t.indexOf('@@ING_RUN@@')>=0){ const m=t.match(/@@ING_RUN@@([^\n]*)/);   // running-script probe for the Play tab
       if(m && typeof PLAY!=='undefined'){ PLAY.running=m[1].trim(); if(document.getElementById('playview').classList.contains('on')){ playPaintList(); if(PLAY.sel) playPaintDetail(); else playAutoSelectRunning(); } } }
     if(matronOnData) matronOnData(t);                       // params/preset channel may consume markers
@@ -4675,7 +4614,7 @@ function showFav(){document.getElementById('main').style.display='none'; hideVie
   document.getElementById('favview').classList.add('on');
   document.getElementById('maiden').classList.remove('drawer-open');
   setAct('fav');setMtop('favorites',false); renderFav();}
-function hideViews(){ ['repoview','filesview','paramsview','modsview','favview','playview'].forEach(id=>{ const e=document.getElementById(id); if(e) e.classList.remove('on'); }); stopScreenPeek(); stopCpuPoll(); stopLinkPoll(); }
+function hideViews(){ ['repoview','filesview','paramsview','modsview','favview','playview'].forEach(id=>{ const e=document.getElementById(id); if(e) e.classList.remove('on'); }); stopScreenPeek(); stopCpuPoll(); }
 // the mobile top bar (script name + folder icon) is editor-local — it must not bleed into other views
 function setMtop(label, showFileIcon){ const t=document.getElementById('m-title'); if(t&&label!=null) t.textContent=label;
   const m=document.getElementById('m-menu'); if(m) m.style.display=showFileIcon?'':'none'; }
