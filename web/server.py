@@ -16,7 +16,7 @@ API (confined to the dust tree):
   POST /api/install  {name,url,force} -> git clone url into dust/code/name
   POST /api/remove   {name}           -> delete dust/code/name
 """
-import http.server, socketserver, os, sys, json, re, shutil, subprocess, threading, urllib.parse, urllib.request, datetime, pwd, time, io, zipfile, concurrent.futures
+import http.server, socketserver, os, sys, json, re, shutil, subprocess, threading, urllib.parse, urllib.request, datetime, pwd, time, io, zipfile, concurrent.futures, socket, struct
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 
@@ -43,6 +43,28 @@ DUST = find_dust()
 CODE = os.path.join(DUST, "code")
 PORT = int(sys.argv[1]) if len(sys.argv) > 1 else 7777
 HERE = os.path.dirname(os.path.realpath(__file__))   # where server.py / install.sh live
+
+# --- OSC → matron (control without the REPL) -------------------------------
+# matron listens for OSC on UDP :10111 with native handlers /remote/key (ii n z),
+# /remote/enc (ii n delta) → _norns.key/_norns.enc, and /param/<id> (f val). This
+# is a SEPARATE channel from the REPL ws (:5555), so driving it never touches
+# matron's logs. We hand-roll the few bytes of OSC here — no third-party dep.
+OSC_HOST, OSC_PORT = "127.0.0.1", 10111
+_osc_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+_CTL = {"hits": 0, "last": None, "ts": 0}   # diagnostic: counts /api/ctl POSTs that reached the server
+
+def _osc_str(s):
+    b = s.encode("utf-8") + b"\x00"
+    return b + b"\x00" * ((4 - len(b) % 4) % 4)
+
+def osc_send(addr, types="", *args):
+    """Encode + fire one OSC message at matron. Fire-and-forget (UDP)."""
+    msg = _osc_str(addr) + _osc_str("," + types)
+    for t, a in zip(types, args):
+        if t == "i":   msg += struct.pack(">i", int(a))
+        elif t == "f": msg += struct.pack(">f", float(a))
+        elif t == "s": msg += _osc_str(str(a))
+    _osc_sock.sendto(msg, (OSC_HOST, OSC_PORT))
 
 
 def installed_sha():
@@ -3052,6 +3074,59 @@ class H(http.server.SimpleHTTPRequestHandler):
     def do_GET(self):
         path = urllib.parse.urlparse(self.path).path
         try:
+            if path == "/api/screen-stream":
+                # Live screen, OFF the REPL: a matron-side loop (kicked once over the
+                # ws, then silent) writes raw 128x64 frames to /dev/shm/ingenue-screen.
+                # We stream them as [4-byte len][8192 bytes] over one long-lived HTTP
+                # response, and keep the capture loop alive by refreshing the .want
+                # file each tick (the loop self-cancels ~3s after we stop, i.e. when
+                # the browser disconnects). Threaded server → this holds one thread.
+                fps = max(5, min(30, int((self._q().get("fps", ["15"])[0] or 15))))
+                want, frame = "/dev/shm/ingenue-screen.want", "/dev/shm/ingenue-screen"
+                self.send_response(200)
+                self.send_header("Content-Type", "application/octet-stream")
+                self.send_header("Cache-Control", "no-store")
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.end_headers()
+                period = 1.0 / fps
+                try:
+                    while True:
+                        try:
+                            with open(want, "w") as wf:
+                                wf.write("%d %d\n" % (int(time.time()), fps))
+                        except OSError:
+                            pass
+                        data = None
+                        try:
+                            with open(frame, "rb") as ff:
+                                data = ff.read()
+                        except OSError:
+                            data = None
+                        if data and len(data) >= 8192:
+                            self.wfile.write(struct.pack(">I", 8192))
+                            self.wfile.write(data[:8192])
+                            self.wfile.flush()
+                        time.sleep(period)
+                except (BrokenPipeError, ConnectionResetError, OSError):
+                    pass
+                return
+            if path == "/api/ctl-stat":
+                return self._json(_CTL)   # how many control events the browser has actually delivered
+            if path == "/api/matron-cpu":
+                # Live matron CPU% (server-side /proc read, no REPL). Two utime+stime
+                # samples 250ms apart; HZ=100 on norns so %core ≈ Δjiffies / Δt.
+                pid = proc_pid("matron")
+                if not pid:
+                    return self._json({"cpu": None})
+                def _ut(p):
+                    with open("/proc/%s/stat" % p) as f:
+                        a = f.read().rpartition(")")[2].split()
+                    return int(a[11]) + int(a[12])   # utime + stime (fields 14,15)
+                try:
+                    a0 = _ut(pid); time.sleep(0.25); a1 = _ut(pid)
+                    return self._json({"cpu": round((a1 - a0) / 0.25)})
+                except (OSError, ValueError, IndexError):
+                    return self._json({"cpu": None})
             if path == "/api/job":
                 q = self._q()
                 job = get_job(q.get("id", [""])[0])
@@ -3239,6 +3314,18 @@ class H(http.server.SimpleHTTPRequestHandler):
         path = urllib.parse.urlparse(self.path).path
         b = self._body()
         try:
+            if path == "/api/ctl":
+                # High-rate control → OSC to matron (:10111), never the REPL. Keys/
+                # encoders/params. Returns 204 immediately; UDP is fire-and-forget.
+                k = b.get("k")
+                if k == "enc":   osc_send("/remote/enc", "ii", b.get("n", 1), b.get("d", 0))
+                elif k == "key": osc_send("/remote/key", "ii", b.get("n", 1), b.get("z", 0))
+                elif k == "param":
+                    osc_send("/param/" + str(b.get("id", "")), "f", b.get("v", 0))
+                else:
+                    return self._json({"error": "bad ctl"}, 400)
+                _CTL["hits"] += 1; _CTL["last"] = b; _CTL["ts"] = time.time()   # diagnostic: prove browser→server
+                self.send_response(204); self.end_headers(); return
             if path == "/api/refresh-catalog":
                 # Pull the latest curated community.json to the device (best-effort).
                 return self._json(refresh_catalog())
