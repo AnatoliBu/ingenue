@@ -1609,6 +1609,22 @@ def find_installer(full):
     return None
 
 
+def _download_to(url, dest, timeout=30):
+    """Stream a URL to a file with a bounded per-read socket timeout.
+
+    urllib.request.urlretrieve has NO timeout — on a flaky link (the rtw88 wifi on
+    these ports roams across mesh nodes and drops mid-transfer) a stalled download
+    hangs forever while its job holds _busy_lock, wedging every queued install
+    behind it. Here the timeout covers connect AND each blocking read, so a transfer
+    that goes silent for `timeout` seconds raises socket.timeout and the job fails
+    cleanly — ingenue's own heal/retry then resumes instead of the queue dead-locking.
+    Only truly stalled transfers trip it; a slow-but-progressing download is fine.
+    """
+    req = urllib.request.Request(url, headers={"User-Agent": "ingenue"})
+    with urllib.request.urlopen(req, timeout=timeout) as resp, open(dest, "wb") as fout:  # nosemgrep: dynamic-urllib-use-detected -- callers validate/trust url (script install line, or github-allowlisted host)
+        shutil.copyfileobj(resp, fout, 64 * 1024)
+
+
 def run_install(full, emit=None):
     """Interpret a script's installer ourselves so it works on ANY port:
     downloads + tar extracts run in Python (native gzip/xz, no BusyBox-tar / GNU-tar
@@ -1666,7 +1682,7 @@ def run_install(full, emit=None):
                 out = om.group(1) if om else os.path.basename(url.split("?")[0])
                 dest = os.path.join(cwd, out)
                 emit(f"↓ downloading {out} …")
-                urllib.request.urlretrieve(url, dest)  # nosemgrep: dynamic-urllib-use-detected -- url is the script's own wget/curl install line (norns install-trust model)
+                _download_to(url, dest)  # bounded read timeout — a stalled fetch fails the job cleanly instead of hanging the busy-lock forever
                 fixown(dest)
                 add(f"downloaded {out} ({os.path.getsize(dest)} bytes)")
             elif line.startswith("tar "):
@@ -2304,7 +2320,7 @@ def scplugins_heal(source="bundled", url=""):
                                    "https://release-assets.githubusercontent.com/")):
                 return {"ok": False, "error": "online heal only downloads from github release hosts"}
             tgz = os.path.join(tmp, "pack.tar.gz")
-            urllib.request.urlretrieve(url, tgz)  # nosemgrep: dynamic-urllib-use-detected -- host-allowlisted directly above
+            _download_to(url, tgz)  # host-allowlisted directly above; bounded read timeout so a stalled fetch can't wedge the queue
             log.append(f"downloaded {url}")
         else:
             tgz = bundle_path()
