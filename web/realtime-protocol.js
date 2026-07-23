@@ -18,23 +18,45 @@ export function initialProtocolState() {
 
 function clone(value) { return value == null ? value : structuredClone(value); }
 const DELETE = Symbol('delete');
+const BLOCKED_PATH_KEYS = new Set(['__proto__','prototype','constructor']);
 
-function updateAt(root, path, updater) {
-  if (!Array.isArray(path) || path.length === 0) return updater(root);
-  const out = Array.isArray(root) ? root.slice() : {...(root || {})};
-  let cursor = out;
-  for (let i = 0; i < path.length - 1; i++) {
-    const key = path[i];
-    const next = cursor[key];
-    cursor[key] = Array.isArray(next) ? next.slice() : {...(next || {})};
-    cursor = cursor[key];
+function assertPathKey(container,key) {
+  const valid=typeof key==='string'||(Number.isSafeInteger(key)&&key>=0);
+  if(!valid)throw new ProtocolError('operation path keys must be strings or non-negative integers');
+  if(typeof key==='string'&&BLOCKED_PATH_KEYS.has(key))throw new ProtocolError(`unsafe operation path key: ${key}`);
+  if(Array.isArray(container)&&(!Number.isSafeInteger(key)||key<0))throw new ProtocolError('array operation path keys must be non-negative integers');
+}
+
+function ownValue(container,key) {
+  assertPathKey(container,key);
+  return Object.getOwnPropertyDescriptor(container,key)?.value;
+}
+
+function ownSet(target,key,value) {
+  assertPathKey(target,key);
+  Object.defineProperty(target,key,{value,writable:true,enumerable:true,configurable:true});
+}
+
+function cloneContainer(value,nextKey) {
+  if(Array.isArray(value))return value.slice();
+  if(value&&typeof value==='object')return {...value};
+  return Number.isSafeInteger(nextKey)?[]:{};
+}
+
+function updateAt(root,path,updater,index=0) {
+  if(!Array.isArray(path)||path.length===0)return updater(root);
+  const key=path[index];
+  const out=cloneContainer(root,key);
+  assertPathKey(out,key);
+  if(index===path.length-1){
+    const value=updater(ownValue(out,key));
+    if(value===DELETE){
+      if(Array.isArray(out))out.splice(key,1);
+      else Reflect.deleteProperty(out,key);
+    }else ownSet(out,key,value);
+    return out;
   }
-  const key = path.at(-1);
-  const value = updater(cursor[key]);
-  if (value === DELETE) {
-    if (Array.isArray(cursor)) cursor.splice(Number(key), 1);
-    else delete cursor[key];
-  } else cursor[key] = value;
+  ownSet(out,key,updateAt(ownValue(out,key),path,updater,index+1));
   return out;
 }
 
@@ -79,6 +101,12 @@ export class CommandTracker {
     this.pending.set(id,{command,createdAt:now,status:'pending'});
     return {v:PROTOCOL_VERSION,type:'command',id,command};
   }
+  cancel(id,{status='cancelled',error=null}={}) {
+    const pending=this.pending.get(id);
+    if(!pending)return null;
+    this.pending.delete(id);
+    return {...pending,status,revision:null,error};
+  }
   settle(message) {
     validateEnvelope(message);
     if (message.type !== 'ack' && message.type !== 'reject') throw new ProtocolError('command settlement must be ack or reject');
@@ -96,17 +124,25 @@ export class OutboundQueue {
   }
   enqueue(message,{delivery='reliable',key=null,final=false}={}) {
     validateEnvelope(message);
+    const displaced=[];
     if (delivery === 'reliable') {
       if (this.reliable.length >= this.reliableLimit) throw new ProtocolError('reliable queue overflow');
-      this.reliable.push(message); return;
+      this.reliable.push(message); return displaced;
     }
     if (!key) throw new ProtocolError(`${delivery} messages require a key`);
     const map = delivery === 'coalescible' ? this.coalescible : delivery === 'ephemeral' ? this.ephemeral : null;
     if (!map) throw new ProtocolError(`unknown delivery class: ${delivery}`);
     const limit = delivery === 'coalescible' ? this.coalescibleLimit : this.ephemeralLimit;
-    if (!map.has(key) && map.size >= limit) map.delete(map.keys().next().value);
+    if (!map.has(key) && map.size >= limit) {
+      const oldest=map.keys().next().value;
+      const evicted=map.get(oldest);
+      if(evicted)displaced.push(evicted.message);
+      map.delete(oldest);
+    }
     const previous = map.get(key);
+    if(previous)displaced.push(previous.message);
     map.set(key,{message,final:Boolean(final || previous?.final)});
+    return displaced;
   }
   drain() {
     const out = this.reliable.splice(0);

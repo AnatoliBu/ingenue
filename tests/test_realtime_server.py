@@ -1,9 +1,13 @@
 import ast
 import json
 import struct
+import sys
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
+
+ROOT=Path(__file__).resolve().parents[1]
+sys.path.insert(0,str(ROOT/'web'))
 
 from web.realtime_secure import origin_allowed
 from web.realtime_server import (
@@ -47,9 +51,11 @@ def sent_messages(sock):
 
 class RealtimeServerTests(unittest.TestCase):
     def test_server_sources_parse_with_python_37_grammar(self):
-        root=Path(__file__).resolve().parents[1]
-        for relative in ('web/realtime_server.py','web/realtime_secure.py','web/server.py'):
-            source=(root/relative).read_text(encoding='utf-8')
+        for relative in (
+            'web/realtime_server.py','web/realtime_bridge.py','web/realtime_secure.py',
+            'web/ensure_mod_enabled.py','web/server.py'
+        ):
+            source=(ROOT/relative).read_text(encoding='utf-8')
             ast.parse(source,filename=relative,feature_version=(3,7))
 
     def test_rfc_websocket_accept(self):
@@ -90,7 +96,7 @@ class RealtimeServerTests(unittest.TestCase):
         hub.handle(peer,{'v':1,'type':'subscribe','channels':['device']})
         self.assertEqual(sent_messages(peer.sock)[0]['state']['device']['realtime_port'],9123)
 
-    def test_control_command_acknowledges_and_broadcasts_delta(self):
+    def test_base_hub_control_command_acknowledges_and_broadcasts_delta(self):
         hub,calls=self.make_hub();sender=Peer(MemorySocket(),channels={'control'});observer=Peer(MemorySocket(),channels={'control'});hub.register(sender);hub.register(observer)
         hub.handle(sender,{'v':1,'type':'command','id':'cmd-1','command':{'target':'control','action':'enc','args':{'n':2,'d':-3}}})
         self.assertEqual(calls,[('/remote/enc','ii',2,-3)])
