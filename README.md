@@ -17,6 +17,10 @@ service on :7777 and the two sit side by side, so there's zero risk to your
 setup. if you don't like it, run the uninstall script or remove the folder and
 you're exactly where you started.
 
+**fork development:** the proposed browser performance-surface extension is documented in
+[`docs/REMOTE-CONTROL-ARCHITECTURE.md`](docs/REMOTE-CONTROL-ARCHITECTURE.md) and
+[`docs/REMOTE-CONTROL-ROADMAP.md`](docs/REMOTE-CONTROL-ROADMAP.md).
+
 **poke around without a norns:** [seajaysec.github.io/ingenue](https://seajaysec.github.io/ingenue/)
 is a static demo (every device call is faked, so nothing is connected to a real
 norns, but the ui is the same one that runs on your device).
@@ -175,7 +179,7 @@ they've made for norns.
 
 <details><summary>scripts: installed / available / discover</summary>
 
-![phone scripts](screenshots/phone/repo.jpg)
+![phone repository manager](screenshots/phone/repo.jpg)
 </details>
 
 <details><summary>configuration + themes</summary>
