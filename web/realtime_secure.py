@@ -3,8 +3,14 @@
 import os
 import urllib.parse
 
-from realtime_bridge import AppliedAdapter, AppliedHub, StateBridge
-from realtime_server import RealtimeRequestHandler, ThreadingRealtimeServer
+try:
+    from .realtime_bridge import StateBridge
+    from .realtime_midi import MidiAppliedAdapter, MidiAppliedHub
+    from .realtime_server import RealtimeRequestHandler, ThreadingRealtimeServer
+except ImportError:
+    from realtime_bridge import StateBridge
+    from realtime_midi import MidiAppliedAdapter, MidiAppliedHub
+    from realtime_server import RealtimeRequestHandler, ThreadingRealtimeServer
 
 
 def _default_port(scheme):
@@ -71,13 +77,13 @@ def serve_realtime(host, port, legacy):
     allowed = [item.strip().rstrip("/") for item in
                os.environ.get("INGENUE_REALTIME_ORIGINS", "").split(",")
                if item.strip()]
-    adapter = AppliedAdapter(legacy, realtime_port=port, state_port=state_port)
-    hub = AppliedHub(adapter)
+    adapter = MidiAppliedAdapter(legacy, realtime_port=port, state_port=state_port)
+    hub = MidiAppliedHub(adapter)
     bridge = StateBridge(hub, "127.0.0.1", state_port)
     bridge.start()
     try:
         with OriginCheckedServer((host, port), hub, http_port, allowed) as server:
-            print("ingenue realtime on {}:{}/realtime (Lua-applied, origin-checked)".format(host, port), flush=True)
+            print("ingenue realtime on {}:{}/realtime (Lua-applied, MIDI-ready, origin-checked)".format(host, port), flush=True)
             server.serve_forever()
     finally:
         bridge.close()
