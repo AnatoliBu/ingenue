@@ -12,8 +12,6 @@ def _run_realtime(port):
     try:
         serve_realtime("0.0.0.0", port, server_legacy)
     except OSError as error:
-        # Keep the established HTTP/editor service usable even if the optional
-        # realtime port is occupied or unavailable on an unusual port build.
         print("ingenue realtime unavailable on :{}: {}".format(port, error), flush=True)
 
 

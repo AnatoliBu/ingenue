@@ -2,41 +2,53 @@
 
 Tracking: #3
 
-Ingenue now launches two stdlib-only services from the existing `server.py` entrypoint:
+Ingenue launches two stdlib-only services from the existing `server.py` entrypoint:
 
 - HTTP editor/API on `INGENUE_PORT` (default `7777`);
 - protocol-v1 WebSocket on `INGENUE_REALTIME_PORT` (default HTTP port + 1, normally `7778`).
 
-The established HTTP implementation is preserved byte-for-byte as `server_legacy.py`. The small launcher starts the realtime endpoint in a daemon thread, then calls the legacy main function. Existing device launchers and systemd units still execute `python3 server.py 7777` unchanged.
-
-Both new Python modules are kept compatible with Python 3.7 grammar because norns hardware and ports do not all ship the same Python minor version. The test suite parses them explicitly with the Python 3.7 grammar in addition to normal import and unit tests.
+The established HTTP implementation remains in `server_legacy.py`. The small launcher starts the realtime endpoint in a daemon thread, then starts the existing HTTP backend. All new Python modules remain compatible with Python 3.7 grammar.
 
 ## Endpoint
 
 `ws://<norns-host>:7778/realtime`
 
-The server supports:
+Supported behavior:
 
 - `hello` capability negotiation;
-- `subscribe` with `device` and `control` channels;
-- authoritative `snapshot` plus monotonic `delta` revisions;
-- explicit `resync` snapshots;
+- subscriptions to `device`, `control`, and `grid`;
+- authoritative snapshot and monotonic delta revisions;
+- no-op deltas for filtered subscriptions, preserving the global revision sequence;
+- explicit resync snapshots;
 - correlated `ack` / `reject` command settlement;
-- 2-second heartbeats;
-- bounded 1 MiB WebSocket frames;
-- masked client frames, validated Upgrade headers, ping/pong and clean close handling.
+- 2-second browser heartbeats;
+- masked and bounded WebSocket frames;
+- Origin validation against the Ingenue HTTP host/port.
 
-## Browser-origin protection
-
-The WebSocket handshake requires an `Origin` matching the current Ingenue HTTP host and HTTP port. This prevents an unrelated website opened by the user from controlling a norns reachable on the same LAN.
-
-Reverse proxies or custom frontends can add exact origins with a comma-separated environment variable:
+Reverse proxies or custom frontends can add exact origins with:
 
 ```sh
 INGENUE_REALTIME_ORIGINS=https://music.example,https://studio.example
 ```
 
-Missing, `null`, credential-bearing and unmatched origins are rejected before the WebSocket peer is created.
+## Applied acknowledgements
+
+Commands affecting norns use this path:
+
+```text
+browser
+→ protocol WebSocket
+→ bounded Python pending map
+→ localhost UDP OSC
+→ Ingenue Lua mod inside matron
+→ script handler / params / Grid vport
+→ localhost OSC ack or reject
+→ protocol revision + delta + browser ack
+```
+
+Python no longer treats UDP `sendto()` as success. The command receives `ack` only after the Lua adapter returns from the actual matron-side handler. A Lua exception becomes `reject`, and a missing adapter or lost reply becomes a bounded timeout without advancing state revision.
+
+The Python reply listener binds only to `127.0.0.1`. Its default port is `10112`; override it with `INGENUE_OSC_REPLY_PORT` when necessary.
 
 ## Commands
 
@@ -44,12 +56,16 @@ Missing, `null`, credential-bearing and unmatched origins are rejected before th
 {"v":1,"type":"command","id":"cmd-1","command":{"target":"control","action":"enc","args":{"n":2,"d":1}}}
 {"v":1,"type":"command","id":"cmd-2","command":{"target":"control","action":"key","args":{"n":3,"z":1}}}
 {"v":1,"type":"command","id":"cmd-3","command":{"target":"param","action":"set","args":{"id":"cutoff","value":0.5}}}
+{"v":1,"type":"command","id":"cmd-4","command":{"target":"grid","action":"key","args":{"port":1,"x":4,"y":3,"z":1}}}
 ```
 
-Commands use the same existing Python → UDP OSC → matron paths as `/api/ctl`. This first endpoint increment correlates browser commands and rejects invalid inputs; the Lua adapter increment moves final applied-command acknowledgement behind matron execution.
+`system.ping` remains local to Python and responds immediately. Every other command is settled by matron.
 
-## Inspector
+## Lua mod
 
-Open `/realtime-inspector.html` on the normal Ingenue HTTP port. It shows connection state, current revision and authoritative state, and provides direct K1–K3, E1–E3 and parameter controls. `?rt=<port>` overrides the realtime port for nonstandard installations; the device snapshot also reports the actual configured port.
+The installer already copies `web/lib/mod.lua` into `dust/code/ingenue/lib/mod.lua`. In accordance with norns mod behavior, the user explicitly enables **ingenue** under `SYSTEM > MODS` and restarts norns. The WebSocket snapshot reports whether the file is installed, whether the mod is enabled, and whether its heartbeat is currently online.
 
-This remains an engineering inspector, not the final performance UI.
+## Interfaces
+
+- `/realtime-inspector.html` — engineering state and command inspector;
+- `/performance.html` — first performance-oriented K/E/Grid surface.
