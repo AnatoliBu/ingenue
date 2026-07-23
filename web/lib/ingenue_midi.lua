@@ -1,7 +1,7 @@
--- Ingenue normalized parameter bridge for browser-hosted Web MIDI.
+-- Ingenue normalized parameter and native-controller dispatcher.
 local mods = require 'core/mods'
 
-local M = {previous_osc_event=nil, osc_wrapper=nil}
+local M = {previous_osc_event=nil, osc_wrapper=nil, handlers={}}
 
 local function clamp(value, low, high)
   if value < low then return low end
@@ -32,8 +32,8 @@ local function send(path, args)
     _path.code .. 'ingenue/data/realtime-state-port',
     _path.code .. 'ingenue/web/data/realtime-state-port',
   }
-  for _, path in ipairs(candidates) do
-    local file = io.open(path, 'r')
+  for _, candidate in ipairs(candidates) do
+    local file = io.open(candidate, 'r')
     if file then
       local value = tonumber(file:read('*l'))
       file:close()
@@ -41,7 +41,7 @@ local function send(path, args)
     end
   end
   local ok, err = pcall(osc.send, {'127.0.0.1', port}, path, args)
-  if not ok then print('ingenue MIDI send failed: ' .. tostring(err)) end
+  if not ok then print('ingenue controller send failed: ' .. tostring(err)) end
 end
 
 local function get_param(id)
@@ -103,28 +103,46 @@ local function set_normalized(id, raw)
   return descriptor(param_id)
 end
 
+local function execute_param(args, action)
+  if action == 'describe' then
+    return descriptor(args[4])
+  elseif action == 'set_normalized' then
+    return set_normalized(args[4], args[5])
+  elseif action == 'delta' then
+    local id = tostring(args[4] or '')
+    get_param(id)
+    params:delta(id, strict_integer(args[5], 'parameter delta', -127, 127))
+    return descriptor(id)
+  end
+  error('unsupported MIDI command param.' .. action)
+end
+
+function M.register_handler(target, handler)
+  target = tostring(target or '')
+  if target == '' or type(handler) ~= 'function' then error('invalid Ingenue controller handler') end
+  if M.handlers[target] and M.handlers[target] ~= handler then error('Ingenue controller handler already registered: ' .. target) end
+  M.handlers[target] = handler
+end
+
 local function execute(args)
   local wire_id = tostring(args[1] or '')
   local target = tostring(args[2] or '')
   local action = tostring(args[3] or '')
   if wire_id == '' then error('command id is required') end
-  if target ~= 'param' then error('unsupported MIDI target') end
 
-  local descriptor_result
-  if action == 'describe' then
-    descriptor_result = descriptor(args[4])
-  elseif action == 'set_normalized' then
-    descriptor_result = set_normalized(args[4], args[5])
-  elseif action == 'delta' then
-    local id = tostring(args[4] or '')
-    get_param(id)
-    params:delta(id, strict_integer(args[5], 'parameter delta', -127, 127))
-    descriptor_result = descriptor(id)
+  local payload
+  if target == 'param' then
+    payload = execute_param(args, action)
+  elseif M.handlers[target] then
+    payload = M.handlers[target](args, action)
   else
-    error('unsupported MIDI command param.' .. action)
+    error('unsupported Ingenue controller target ' .. target)
   end
+
   local result = {wire_id}
-  for _, value in ipairs(descriptor_result) do table.insert(result, value) end
+  if payload then
+    for _, value in ipairs(payload) do table.insert(result, value) end
+  end
   return result
 end
 
@@ -139,7 +157,10 @@ local function install_wrapper()
   if osc.event == M.osc_wrapper then return end
   M.previous_osc_event = osc.event
   M.osc_wrapper = function(path, args, from)
-    if path == '/ingenue/midi-command' then handle(args or {}); return end
+    if path == '/ingenue/midi-command' or path == '/ingenue/control-command' then
+      handle(args or {})
+      return
+    end
     if M.previous_osc_event then return M.previous_osc_event(path, args, from) end
   end
   osc.event = M.osc_wrapper

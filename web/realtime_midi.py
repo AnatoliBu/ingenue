@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Web MIDI extensions for Ingenue's Lua-applied realtime transport."""
+"""Web MIDI and native-controller extensions for Ingenue realtime."""
 import math
 
 try:
@@ -9,8 +9,9 @@ except ImportError:
     from realtime_bridge import AppliedAdapter, AppliedHub, PARAM_ID_RE, PreparedCommand, RealtimeError
     from realtime_server import PROTOCOL_VERSION, RealtimeError as ProtocolRealtimeError, validate_envelope
 
-MIDI_COMMANDS = (
-    "control.enc", "control.key", "grid.key", "param.set",
+CONTROL_CHANNELS = frozenset({"device", "control", "script", "grid", "arc"})
+CONTROL_COMMANDS = (
+    "control.enc", "control.key", "grid.key", "arc.delta", "arc.key", "param.set",
     "param.describe", "param.set_normalized", "param.delta", "system.ping",
 )
 
@@ -19,6 +20,12 @@ def _finite(value, label):
     if not isinstance(value, (int, float)) or isinstance(value, bool) or not math.isfinite(value):
         raise RealtimeError("{} must be finite".format(label))
     return float(value)
+
+
+def _integer(value, label, low, high):
+    if isinstance(value, bool) or not isinstance(value, int) or value < low or value > high:
+        raise RealtimeError("{} must be an integer between {} and {}".format(label, low, high))
+    return value
 
 
 def _metadata_number(value, label):
@@ -83,7 +90,30 @@ def parse_param_result(args):
 
 
 class MidiAppliedAdapter(AppliedAdapter):
-    """Add normalized/query parameter commands without changing legacy commands."""
+    """Add normalized params and native virtual-controller state."""
+    def __init__(self, legacy, realtime_port, state_port, now=None):
+        kwargs = {}
+        if now is not None:
+            kwargs["now"] = now
+        AppliedAdapter.__init__(
+            self,
+            legacy,
+            realtime_port=realtime_port,
+            state_port=state_port,
+            **kwargs
+        )
+        self.arc_state = {"ports": {}}
+
+    def snapshot(self):
+        state = AppliedAdapter.snapshot(self)
+        state["arc"] = {
+            "ports": {
+                key: dict(value)
+                for key, value in self.arc_state["ports"].items()
+            }
+        }
+        return state
+
     def prepare(self, wire_id, command):
         if isinstance(command, dict) and command.get("target") == "param":
             action = command.get("action")
@@ -114,22 +144,83 @@ class MidiAppliedAdapter(AppliedAdapter):
                     {"target": "param", "action": action, "args": normalized},
                     "ssssi", (wire_id, "param", action, normalized["id"], value),
                 )
+        if isinstance(command, dict) and command.get("target") == "arc":
+            action = command.get("action")
+            args = command.get("args") or {}
+            if not isinstance(args, dict):
+                raise RealtimeError("command args must be an object")
+            port = _integer(args.get("port", 1), "arc port", 1, 4)
+            ring = _integer(args.get("n"), "arc ring", 1, 4)
+            if action == "delta":
+                value = _integer(args.get("d"), "arc delta", -127, 127)
+                normalized = {"port": port, "n": ring, "d": value}
+            elif action == "key":
+                value = _integer(args.get("z"), "arc key state", 0, 1)
+                normalized = {"port": port, "n": ring, "z": value}
+            else:
+                raise RealtimeError("unsupported arc command")
+            return PreparedCommand(
+                {"target": "arc", "action": action, "args": normalized},
+                "sssiii", (wire_id, "arc", action, port, ring, value),
+            )
         return AppliedAdapter.prepare(self, wire_id, command)
 
     def send_prepared(self, prepared):
-        if prepared.command.get("target") == "param" and prepared.command.get("action") in {
-            "describe", "set_normalized", "delta"
-        }:
-            try:
-                self.legacy.osc_send("/ingenue/midi-command", prepared.osc_types, *prepared.osc_args)
-            except OSError as error:
-                raise RealtimeError("matron MIDI OSC dispatch failed: {}".format(error))
-            return
-        return AppliedAdapter.send_prepared(self, prepared)
+        target = prepared.command.get("target")
+        action = prepared.command.get("action")
+        if target == "param" and action in {"describe", "set_normalized", "delta"}:
+            path = "/ingenue/midi-command"
+            label = "MIDI"
+        elif target == "arc" and action in {"delta", "key"}:
+            path = "/ingenue/control-command"
+            label = "controller"
+        else:
+            return AppliedAdapter.send_prepared(self, prepared)
+        try:
+            self.legacy.osc_send(path, prepared.osc_types, *prepared.osc_args)
+        except OSError as error:
+            raise RealtimeError("matron {} OSC dispatch failed: {}".format(label, error))
+
+    def apply_runtime(self, path, args):
+        if path == "/ingenue/arc/frame":
+            if len(args) < 6:
+                raise RealtimeError("invalid arc frame")
+            port = _integer(args[0], "arc port", 1, 4)
+            rings = _integer(args[1], "arc rings", 2, 4)
+            if rings not in (2, 4):
+                raise RealtimeError("arc rings must be 2 or 4")
+            frame = str(args[2]).lower()
+            if len(frame) != rings * 64 or any(ch not in "0123456789abcdef" for ch in frame):
+                raise RealtimeError("invalid arc frame payload")
+            value = {
+                "port": port,
+                "rings": rings,
+                "frame": frame,
+                "sequence": _integer(args[3], "arc sequence", 0, 2147483647),
+                "intensity": _integer(args[4], "arc intensity", 0, 15),
+                "virtual": bool(_integer(args[5], "arc virtual", 0, 1)),
+            }
+            key = str(port)
+            self.arc_state["ports"][key] = value
+            return "arc", [
+                {"op": "set", "path": ["arc", "ports", key], "value": dict(value)}
+            ]
+        return AppliedAdapter.apply_runtime(self, path, args)
 
 
 class MidiAppliedHub(AppliedHub):
-    """Expose MIDI capabilities and return Lua parameter descriptors in ACKs."""
+    """Expose native controller capabilities and parameter descriptors."""
+    def _channels(self, raw):
+        if raw is None:
+            return set(CONTROL_CHANNELS)
+        if not isinstance(raw, list):
+            raise RealtimeError("channels must be an array")
+        requested = {str(item) for item in raw}
+        unknown = requested - CONTROL_CHANNELS
+        if unknown:
+            raise RealtimeError("unsupported channels: " + ", ".join(sorted(unknown)))
+        return requested or set(CONTROL_CHANNELS)
+
     def handle(self, peer, raw):
         try:
             message = validate_envelope(raw)
@@ -141,10 +232,11 @@ class MidiAppliedHub(AppliedHub):
                 "type": "hello",
                 "server": "ingenue",
                 "capabilities": {
-                    "channels": sorted(self.adapter.snapshot().keys()),
-                    "commands": list(MIDI_COMMANDS),
+                    "channels": sorted(CONTROL_CHANNELS),
+                    "commands": list(CONTROL_COMMANDS),
                     "ack": "lua-applied",
                     "midi": {"normalized_params": True, "profiles": "browser"},
+                    "arc": {"rings": [2, 4], "leds_per_ring": 64, "varibright": 16},
                 },
             })
             return
@@ -170,7 +262,12 @@ class MidiAppliedHub(AppliedHub):
             descriptor = parse_param_result(args[1:])
         except RealtimeError as error:
             if pending.peer.alive:
-                pending.peer.send({"v": PROTOCOL_VERSION, "type": "reject", "id": pending.browser_id, "error": str(error)})
+                pending.peer.send({
+                    "v": PROTOCOL_VERSION,
+                    "type": "reject",
+                    "id": pending.browser_id,
+                    "error": str(error),
+                })
             return
         if descriptor is not None:
             result["param"] = descriptor

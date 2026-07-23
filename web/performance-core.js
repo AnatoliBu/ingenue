@@ -11,29 +11,50 @@ function positiveInteger(value, label, max = 32) {
   return value;
 }
 
+function decodeHexFrame(frame, expected, label) {
+  const payload = String(frame ?? '').toLowerCase();
+  if (payload.length !== expected || !/^[0-9a-f]+$/.test(payload)) {
+    throw new SurfaceError(`${label} payload does not match its dimensions`);
+  }
+  return Array.from(payload, digit => Number.parseInt(digit, 16));
+}
+
 export function decodeGridFrame(raw) {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
     throw new SurfaceError('grid frame must be an object');
   }
   const cols = positiveInteger(raw.cols, 'grid cols');
   const rows = positiveInteger(raw.rows, 'grid rows');
-  const frame = String(raw.frame ?? '').toLowerCase();
-  if (frame.length !== cols * rows || !/^[0-9a-f]+$/.test(frame)) {
-    throw new SurfaceError('grid frame payload does not match its dimensions');
-  }
   const intensity = Number.isSafeInteger(raw.intensity) ? clamp(raw.intensity, 0, 15) : 15;
   return {
     port: positiveInteger(Number(raw.port ?? 1), 'grid port', 4),
     cols,
     rows,
-    values: Array.from(frame, digit => Number.parseInt(digit, 16)),
+    values: decodeHexFrame(raw.frame, cols * rows, 'grid frame'),
     sequence: Number.isSafeInteger(raw.sequence) && raw.sequence >= 0 ? raw.sequence : 0,
     intensity,
     virtual: Boolean(raw.virtual),
   };
 }
 
-export function selectGridPort(ports, preferredPort = null) {
+export function decodeArcFrame(raw) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+    throw new SurfaceError('arc frame must be an object');
+  }
+  const rings = positiveInteger(raw.rings, 'arc rings', 4);
+  if (![2, 4].includes(rings)) throw new SurfaceError('arc rings must be 2 or 4');
+  const intensity = Number.isSafeInteger(raw.intensity) ? clamp(raw.intensity, 0, 15) : 15;
+  return {
+    port: positiveInteger(Number(raw.port ?? 1), 'arc port', 4),
+    rings,
+    values: decodeHexFrame(raw.frame, rings * 64, 'arc frame'),
+    sequence: Number.isSafeInteger(raw.sequence) && raw.sequence >= 0 ? raw.sequence : 0,
+    intensity,
+    virtual: Boolean(raw.virtual),
+  };
+}
+
+function selectPort(ports, preferredPort = null) {
   if (!ports || typeof ports !== 'object') return null;
   const entries = Object.entries(ports)
     .map(([key, value]) => [Number(key), value])
@@ -43,6 +64,14 @@ export function selectGridPort(ports, preferredPort = null) {
   if (Number.isSafeInteger(preferred) && entries.some(([port]) => port === preferred)) return preferred;
   const physical = entries.find(([, value]) => !value.virtual);
   return physical?.[0] ?? entries[0]?.[0] ?? null;
+}
+
+export function selectGridPort(ports, preferredPort = null) {
+  return selectPort(ports, preferredPort);
+}
+
+export function selectArcPort(ports, preferredPort = null) {
+  return selectPort(ports, preferredPort);
 }
 
 export function effectiveBrightness(level, intensity = 15) {
@@ -56,6 +85,18 @@ export function encoderSteps(startY, currentY, pixelsPerStep = 14) {
     throw new SurfaceError('invalid encoder gesture');
   }
   return Math.trunc((startY - currentY) / pixelsPerStep);
+}
+
+export function arcAngularSteps(previousAngle, currentAngle, stepsPerTurn = 1024) {
+  if (!Number.isFinite(previousAngle) || !Number.isFinite(currentAngle) ||
+      !Number.isFinite(stepsPerTurn) || stepsPerTurn <= 0) {
+    throw new SurfaceError('invalid Arc gesture');
+  }
+  const tau = Math.PI * 2;
+  let delta = currentAngle - previousAngle;
+  while (delta > Math.PI) delta -= tau;
+  while (delta < -Math.PI) delta += tau;
+  return delta / tau * stepsPerTurn;
 }
 
 export class PressLedger {
@@ -111,6 +152,7 @@ export class AppliedValueLane {
     const desired = this.queued;
     this.queued = null;
     if (status === 'uncertain') return this.#dispatch(desired ?? completed.value);
+    if (status === 'reject') return null;
     if (desired == null || Object.is(desired, this.lastApplied)) return null;
     return this.#dispatch(desired);
   }

@@ -24,14 +24,31 @@
     </header>
 
     <div class="layout">
-      <section class="panel">
-        <div class="panel-head">
-          <h2>Grid</h2>
-          <select id="grid-port" data-performance-control aria-label="Grid port"></select>
-        </div>
-        <div class="grid-shell"><div class="grid" id="grid" aria-label="Virtual Grid"></div></div>
-        <p class="notice" id="surface-notice">Waiting for authoritative state…</p>
-      </section>
+      <div class="primary">
+        <section class="panel">
+          <div class="panel-head">
+            <h2>Grid</h2>
+            <select id="grid-port" data-performance-control aria-label="Grid port"></select>
+          </div>
+          <div class="grid-shell"><div class="grid" id="grid" aria-label="Virtual Grid"></div></div>
+          <p class="notice" id="surface-notice">Waiting for authoritative state…</p>
+        </section>
+
+        <section class="panel">
+          <div class="panel-head">
+            <h2>Arc</h2>
+            <div class="device-options">
+              <select id="arc-port" data-performance-control aria-label="Arc port"></select>
+              <select id="arc-layout" data-performance-control aria-label="Arc layout">
+                <option value="4">4 rings</option>
+                <option value="2">2 rings</option>
+              </select>
+            </div>
+          </div>
+          <div class="arc-deck" id="arc" aria-label="Virtual Arc"></div>
+          <p class="notice" id="arc-notice">Waiting for authoritative state…</p>
+        </section>
+      </div>
 
       <aside class="side">
         <section class="panel">
