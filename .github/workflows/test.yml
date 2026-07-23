@@ -17,8 +17,24 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '24'
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-      - run: npm test
+      - name: run complete test suite
+        id: suite
+        shell: bash
+        run: |
+          set +e
+          npm test 2>&1 | tee test-output.txt
+          status=${PIPESTATUS[0]}
+          echo "status=$status" >> "$GITHUB_OUTPUT"
+          exit "$status"
+      - name: upload failing test output
+        if: failure() && steps.suite.outputs.status != '0'
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-output
+          path: test-output.txt
+          if-no-files-found: error
+          retention-days: 7
