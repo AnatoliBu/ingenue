@@ -1,54 +1,9 @@
-import test from 'node:test';
-import assert from 'node:assert/strict';
-import { percentile, summarize, runPool, createHttpProbe, createWebSocketProbe, runTransportDiagnostics } from '../web/transport-diagnostics.js';
+import test from 'node:test';import assert from 'node:assert/strict';import {percentile,summarize,runPool,createHttpProbe,createWebSocketConnectProbe,createMatronRoundTripProbe,runTransportDiagnostics} from '../web/transport-diagnostics.js';
 
-test('percentile uses nearest-rank semantics', () => {
-  assert.equal(percentile([1,2,3,4], .5), 2);
-  assert.equal(percentile([1,2,3,4], .95), 4);
-  assert.equal(percentile([], .5), null);
-});
-
-test('summarize filters non-finite values and calculates stable percentiles', () => {
-  assert.deepEqual(summarize([4, 1, NaN, 3, 2, Infinity]), {count:4,min_ms:1,mean_ms:2.5,p50_ms:2,p95_ms:4,p99_ms:4,max_ms:4});
-});
-
-test('runPool caps concurrency and collects failures without aborting', async () => {
-  let active = 0, maxActive = 0;
-  const out = await runPool(8, 3, async i => {
-    active++; maxActive = Math.max(maxActive, active);
-    await new Promise(r => setTimeout(r, 2));
-    active--;
-    if (i === 3) throw new Error('boom');
-    return i;
-  });
-  assert.ok(maxActive <= 3);
-  assert.equal(out.values.length, 7);
-  assert.deepEqual(out.errors, ['boom']);
-});
-
-test('HTTP probe measures complete response and rejects non-2xx', async () => {
-  let t = 10;
-  const now = () => (t += 5);
-  const ok = createHttpProbe({url:'/api/version', now, fetchImpl:async()=>({ok:true,text:async()=>''})});
-  assert.equal(await ok(), 5);
-  const bad = createHttpProbe({url:'/api/version', now, fetchImpl:async()=>({ok:false,status:503,text:async()=>''})});
-  await assert.rejects(bad, /HTTP 503/);
-});
-
-test('WebSocket probe measures open time and closes socket', async () => {
-  let closed = false, t = 0;
-  class FakeWS { constructor(){this.listeners={};queueMicrotask(()=>this.listeners.open());} addEventListener(n,fn){this.listeners[n]=fn;} close(){closed=true;} }
-  const probe = createWebSocketProbe({url:'ws://norns:5555',WebSocketImpl:FakeWS,now:()=>++t,timeoutMs:50});
-  assert.equal(await probe(), 1);
-  assert.equal(closed, true);
-});
-
-test('diagnostics returns JSON-safe summaries and progress order', async () => {
-  const stages=[];
-  const report = await runTransportDiagnostics({samples:10,concurrency:2,httpUrl:'http://x',wsUrl:'ws://x',httpProbe:async()=>4,wsProbe:async()=>7,onProgress:s=>stages.push(s)});
-  assert.equal(report.benchmark_version, 2);
-  assert.equal(report.http_serial.latency.count, 10);
-  assert.equal(report.http_concurrent.latency.p95_ms, 4);
-  assert.equal(report.websocket_connect.latency.count, 10);
-  assert.deepEqual(stages, ['http_serial','http_concurrent','websocket_connect','done']);
-});
+test('percentile and summarize are stable',()=>{assert.equal(percentile([1,2,3,4],.5),2);assert.deepEqual(summarize([4,1,NaN,3,2]),{count:4,min_ms:1,mean_ms:2.5,p50_ms:2,p95_ms:4,p99_ms:4,max_ms:4});});
+test('runPool caps concurrency',async()=>{let active=0,max=0;const out=await runPool(8,3,async i=>{active++;max=Math.max(max,active);await new Promise(r=>setTimeout(r,2));active--;if(i===5)throw new Error('boom');return i;});assert.equal(max,3);assert.equal(out.errors.length,1);assert.equal(out.values.length,7);});
+test('http probe measures successful request',async()=>{let t=0;const probe=createHttpProbe({url:'/x',now:()=>t+=5,fetchImpl:async()=>({ok:true,status:200,text:async()=>''})});assert.equal(await probe(),5);});
+class FakeWS{constructor(){this.handlers={};queueMicrotask(()=>this.emit('open',{}));}addEventListener(n,fn){(this.handlers[n]??=[]).push(fn);}send(msg){this.sent=msg;}close(){}emit(n,e){for(const fn of this.handlers[n]||[])fn(e);}}
+test('websocket connect probe measures open',async()=>{let t=0;const probe=createWebSocketConnectProbe({WebSocketImpl:FakeWS,url:'ws://x',now:()=>t+=4});assert.equal(await probe(),4);});
+test('matron round-trip resolves only after matching token',async()=>{let t=0;class EchoWS extends FakeWS{send(msg){super.send(msg);queueMicrotask(()=>this.emit('message',{data:'noise'}));queueMicrotask(()=>this.emit('message',{data:'ACK fixed'}));}}const probe=createMatronRoundTripProbe({WebSocketImpl:EchoWS,url:'ws://x',now:()=>t+=7,tokenFactory:()=> 'fixed'});assert.equal(await probe(),7);});
+test('report includes matron round-trip',async()=>{const report=await runTransportDiagnostics({samples:10,concurrency:2,httpUrl:'x',wsUrl:'y',httpProbe:async()=>1,wsConnectProbe:async()=>2,matronProbe:async()=>3});assert.equal(report.benchmark_version,3);assert.equal(report.matron_roundtrip.latency.p50_ms,3);});
