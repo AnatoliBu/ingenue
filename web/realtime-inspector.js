@@ -14,7 +14,7 @@ export async function mountInspector(root=document) {
   const revisionEl=root.getElementById('revision');
   const url=realtimeUrl();
   root.getElementById('endpoint').textContent=url;
-  const session=new RealtimeSession({socketFactory:value=>new WebSocket(value),url,channels:['device','control']});
+  const session=new RealtimeSession({socketFactory:value=>new WebSocket(value),url,channels:['device','control','script','grid']});
   const log=(value)=>{const line=`${new Date().toLocaleTimeString()} ${value}\n`;logEl.textContent=(line+logEl.textContent).slice(0,12000);};
   session.addEventListener('state',event=>{const state=event.detail;statusEl.textContent=state.status;revisionEl.textContent=state.revision??'—';stateEl.textContent=JSON.stringify(state.data,null,2);});
   session.addEventListener('command',event=>log(`${event.detail.status} ${event.detail.id}${event.detail.error?`: ${event.detail.error}`:''}`));

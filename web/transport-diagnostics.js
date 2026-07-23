@@ -50,12 +50,17 @@ export function createOscControlRoundTripProbe({WebSocketImpl=WebSocket,fetchImp
   });
 }
 
+export function matronWebSocketUrl(locationLike=location){
+  const protocol=locationLike.protocol==='https:'?'wss':'ws';
+  return `${protocol}://${locationLike.hostname}:5555/`;
+}
+
 export async function runTransportDiagnostics(options={}){
   const samples=Math.max(10,Number(options.samples||100));
   const concurrency=Math.max(1,Math.min(32,Number(options.concurrency||8)));
   const httpUrl=options.httpUrl||new URL('api/version',location.href).href;
   const ctlUrl=options.ctlUrl||new URL('api/ctl',location.href).href;
-  const wsUrl=options.wsUrl||`ws://${location.hostname}:5555/`;
+  const wsUrl=options.wsUrl||matronWebSocketUrl();
   const httpProbe=options.httpProbe||createHttpProbe({url:httpUrl});
   const wsConnectProbe=options.wsConnectProbe||createWebSocketConnectProbe({url:wsUrl});
   const matronProbe=options.matronProbe||createMatronRoundTripProbe({url:wsUrl});

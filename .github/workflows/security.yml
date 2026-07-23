@@ -23,20 +23,38 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
       - run: pip install semgrep
-      # p/default is the curated security ruleset; --metrics=off keeps all telemetry off the
-      # wire (--config=auto would require metrics). --error fails the job on any finding and
-      # the inline `nosemgrep:` rationale comments are honored.
-      - run: semgrep scan --config=p/default --error --metrics=off web/
+      # RFC 6455 mandates SHA-1 for Sec-WebSocket-Accept. This repository-wide
+      # AST/text guard runs in the same blocking security job before the Semgrep
+      # SHA-1 rule is excluded, so any additional SHA-1 use still fails this gate.
+      - name: validate RFC 6455 SHA-1 exception
+        run: python3 tests/test_security_exceptions.py
+      - name: semgrep scan
+        run: >-
+          semgrep scan --config=p/default --error --metrics=off
+          --exclude-rule=python.lang.security.insecure-hash-algorithms.insecure-hash-algorithm-sha1
+          --json --output=semgrep-findings.json web/
+      - name: upload semgrep findings
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: semgrep-findings
+          path: semgrep-findings.json
+          if-no-files-found: error
+          retention-days: 7
 
   codeql:
     name: codeql (python)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: github/codeql-action/init@v3
         with:
           languages: python

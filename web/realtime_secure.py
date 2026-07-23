@@ -3,12 +3,8 @@
 import os
 import urllib.parse
 
-from realtime_server import (
-    LegacyAdapter,
-    RealtimeHub,
-    RealtimeRequestHandler,
-    ThreadingRealtimeServer,
-)
+from realtime_bridge import AppliedAdapter, AppliedHub, StateBridge
+from realtime_server import RealtimeRequestHandler, ThreadingRealtimeServer
 
 
 def _default_port(scheme):
@@ -23,13 +19,7 @@ def _split_host(host_header):
 
 
 def origin_allowed(origin, host_header, http_port, extra_origins=None):
-    """Allow only the Ingenue HTTP origin for this host, or an exact override.
-
-    Browsers include Origin on WebSocket handshakes. Requiring it prevents a
-    random page opened by the user from controlling a norns reachable on LAN.
-    Non-browser clients can be explicitly allowed with
-    INGENUE_REALTIME_ORIGINS rather than weakening the default.
-    """
+    """Allow only the Ingenue HTTP origin for this host, or an exact override."""
     if not origin or origin == "null":
         return False
     normalized = origin.rstrip("/")
@@ -71,18 +61,23 @@ class OriginCheckedServer(ThreadingRealtimeServer):
     def __init__(self, address, hub, http_port, allowed_origins):
         self.http_port = int(http_port)
         self.allowed_origins = frozenset(allowed_origins)
-        # Call TCPServer directly so the handler class can be replaced without
-        # creating and closing a throwaway socket in the base initializer.
         import socketserver
         socketserver.TCPServer.__init__(self, address, OriginCheckedHandler)
 
 
 def serve_realtime(host, port, legacy):
     http_port = int(getattr(legacy, "PORT", 7777))
+    state_port = int(os.environ.get("INGENUE_STATE_PORT", int(port) + 1))
     allowed = [item.strip().rstrip("/") for item in
                os.environ.get("INGENUE_REALTIME_ORIGINS", "").split(",")
                if item.strip()]
-    hub = RealtimeHub(LegacyAdapter(legacy, realtime_port=port))
-    with OriginCheckedServer((host, port), hub, http_port, allowed) as server:
-        print("ingenue realtime on {}:{}/realtime (origin-checked)".format(host, port), flush=True)
-        server.serve_forever()
+    adapter = AppliedAdapter(legacy, realtime_port=port, state_port=state_port)
+    hub = AppliedHub(adapter)
+    bridge = StateBridge(hub, "127.0.0.1", state_port)
+    bridge.start()
+    try:
+        with OriginCheckedServer((host, port), hub, http_port, allowed) as server:
+            print("ingenue realtime on {}:{}/realtime (Lua-applied, origin-checked)".format(host, port), flush=True)
+            server.serve_forever()
+    finally:
+        bridge.close()
