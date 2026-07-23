@@ -51,22 +51,32 @@ export function relativeDelta(event, mode) {
 }
 
 export class SoftTakeover {
-  constructor(epsilon = 2 / 127) { this.epsilon=epsilon;this.target=null;this.last=null;this.picked=false; }
+  constructor(epsilon = 2 / 127) {
+    this.epsilon = epsilon;
+    this.target = null;
+    this.last = null;
+    this.picked = false;
+  }
   arm(target) {
     if (!Number.isFinite(target)) throw new MidiError('pickup target must be finite');
-    this.target=Math.min(1,Math.max(0,target));this.last=null;this.picked=false;
+    this.target = Math.min(1, Math.max(0, target));
+    this.last = null;
+    this.picked = false;
   }
   accept(value) {
     if (!Number.isFinite(value) || this.target == null) return false;
-    const current=Math.min(1,Math.max(0,value));
+    const current = Math.min(1, Math.max(0, value));
     if (!this.picked) {
-      const close=Math.abs(current-this.target)<=this.epsilon;
-      const crossed=this.last!=null&&((this.last<=this.target&&current>=this.target)||(this.last>=this.target&&current<=this.target));
-      this.picked=close||crossed;
+      const close = Math.abs(current - this.target) <= this.epsilon;
+      const crossed = this.last != null && ((this.last <= this.target && current >= this.target) || (this.last >= this.target && current <= this.target));
+      this.picked = close || crossed;
     }
-    this.last=current;return this.picked;
+    this.last = current;
+    return this.picked;
   }
-  updateApplied(value) { if (Number.isFinite(value)) this.target=Math.min(1,Math.max(0,value)); }
+  updateApplied(value) {
+    if (Number.isFinite(value)) this.target = Math.min(1, Math.max(0, value));
+  }
 }
 
 function validateSource(source) {
@@ -76,52 +86,69 @@ function validateSource(source) {
 
 export function validateMapping(mapping) {
   if (!mapping || typeof mapping !== 'object' || Array.isArray(mapping)) throw new MidiError('mapping must be an object');
-  const id=String(mapping.id||'').trim();if(!id)throw new MidiError('mapping id is required');
-  const source=validateSource(mapping.source);const target=mapping.target||{};
+  const id = String(mapping.id || '').trim();
+  if (!id) throw new MidiError('mapping id is required');
+  const source = validateSource(mapping.source);
+  const target = mapping.target || {};
   if (target.kind === 'param') {
-    const paramId=String(target.id||'').trim();if(!/^[A-Za-z0-9_.:-]{1,128}$/.test(paramId))throw new MidiError('invalid target param id');
-    const mode=mapping.mode||'absolute';if(!['absolute','relative-twos','relative-offset','relative-sign'].includes(mode))throw new MidiError('invalid param mapping mode');
-    return {id,source,target:{kind:'param',id:paramId},mode,pickup:mapping.pickup!==false};
+    const paramId = String(target.id || '').trim();
+    if (!/^[A-Za-z0-9_.:-]{1,128}$/.test(paramId)) throw new MidiError('invalid target param id');
+    const mode = mapping.mode || 'absolute';
+    if (!['absolute','relative-twos','relative-offset','relative-sign'].includes(mode)) throw new MidiError('invalid param mapping mode');
+    return {id,source,target:{kind:'param',id:paramId},mode,pickup:mapping.pickup !== false};
   }
   if (target.kind === 'key') {
-    const n=Number(target.n);if(![1,2,3].includes(n))throw new MidiError('key target must be K1–K3');
+    const n = Number(target.n);
+    if (![1,2,3].includes(n)) throw new MidiError('key target must be K1–K3');
     return {id,source,target:{kind:'key',n},mode:'gate',pickup:false};
   }
   if (target.kind === 'encoder') {
-    const n=Number(target.n);if(![1,2,3].includes(n))throw new MidiError('encoder target must be E1–E3');
-    const mode=mapping.mode||'relative-twos';if(!['relative-twos','relative-offset','relative-sign'].includes(mode))throw new MidiError('encoder target requires a relative mode');
+    const n = Number(target.n);
+    if (![1,2,3].includes(n)) throw new MidiError('encoder target must be E1–E3');
+    const mode = mapping.mode || 'relative-twos';
+    if (!['relative-twos','relative-offset','relative-sign'].includes(mode)) throw new MidiError('encoder target requires a relative mode');
     return {id,source,target:{kind:'encoder',n},mode,pickup:false};
   }
   throw new MidiError('unsupported mapping target');
 }
 
-function profileKey(value) { return `k:${encodeURIComponent(String(value || ''))}`; }
-
 export class ProfileStore {
-  constructor(storage,key='ingenue:midi:v1') {
-    if(!storage||typeof storage.getItem!=='function'||typeof storage.setItem!=='function')throw new MidiError('storage is required');
-    this.storage=storage;this.key=key;
+  constructor(storage, key = 'ingenue:midi:v1') {
+    if (!storage || typeof storage.getItem !== 'function' || typeof storage.setItem !== 'function') throw new MidiError('storage is required');
+    this.storage = storage;
+    this.key = key;
   }
   readAll() {
     try {
-      const parsed=JSON.parse(this.storage.getItem(this.key)||'{}');
-      return parsed&&parsed.version===1&&parsed.profiles&&typeof parsed.profiles==='object'&&!Array.isArray(parsed.profiles)?parsed:{version:1,profiles:{}};
-    } catch { return {version:1,profiles:{}}; }
+      const parsed = JSON.parse(this.storage.getItem(this.key) || '{}');
+      return parsed && parsed.version === 1 && parsed.profiles && typeof parsed.profiles === 'object' ? parsed : {version:1,profiles:{}};
+    } catch {
+      return {version:1,profiles:{}};
+    }
   }
-  load(scriptName,fingerprint) {
-    const raw=this.readAll().profiles?.[profileKey(scriptName)]?.[profileKey(fingerprint)];
-    if(!Array.isArray(raw))return [];
-    const valid=[];for(const mapping of raw){try{valid.push(validateMapping(mapping));}catch{}}
+  load(scriptName, fingerprint) {
+    const script = String(scriptName || '');
+    const device = String(fingerprint || '');
+    const raw = this.readAll().profiles?.[script]?.[device];
+    if (!Array.isArray(raw)) return [];
+    const valid = [];
+    for (const mapping of raw) {
+      try { valid.push(validateMapping(mapping)); } catch { /* skip corrupt rows */ }
+    }
     return valid;
   }
-  save(scriptName,fingerprint,mappings) {
-    const script=String(scriptName||'').trim();const device=String(fingerprint||'').trim();
-    if(!script||!device)throw new MidiError('script and MIDI device are required');
-    const data=this.readAll();const scriptKey=profileKey(script);const deviceKey=profileKey(device);
-    if(!Object.hasOwn(data.profiles,scriptKey))Object.defineProperty(data.profiles,scriptKey,{value:{},writable:true,enumerable:true,configurable:true});
-    Object.defineProperty(data.profiles[scriptKey],deviceKey,{value:mappings.map(validateMapping),writable:true,enumerable:true,configurable:true});
-    this.storage.setItem(this.key,JSON.stringify(data));return data.profiles[scriptKey][deviceKey];
+  save(scriptName, fingerprint, mappings) {
+    const script = String(scriptName || '').trim();
+    const device = String(fingerprint || '').trim();
+    if (!script || !device) throw new MidiError('script and MIDI device are required');
+    const data = this.readAll();
+    data.profiles[script] ||= {};
+    data.profiles[script][device] = mappings.map(validateMapping);
+    this.storage.setItem(this.key, JSON.stringify(data));
+    return data.profiles[script][device];
   }
 }
 
-export function mappingMatches(mapping,event) { return sourceKey(mapping.source)===sourceKey(event); }
+export function mappingMatches(mapping, event) {
+  return sourceKey(mapping.source) === sourceKey(event);
+}

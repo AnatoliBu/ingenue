@@ -3,11 +3,11 @@
 import math
 
 try:
-    from .realtime_bridge import AppliedAdapter, AppliedHub, PARAM_ID_RE, PreparedCommand
-    from .realtime_server import PROTOCOL_VERSION, RealtimeError, validate_envelope
+    from .realtime_bridge import AppliedAdapter, AppliedHub, PARAM_ID_RE, PreparedCommand, RealtimeError
+    from .realtime_server import PROTOCOL_VERSION, RealtimeError as ProtocolRealtimeError, validate_envelope
 except ImportError:
-    from realtime_bridge import AppliedAdapter, AppliedHub, PARAM_ID_RE, PreparedCommand
-    from realtime_server import PROTOCOL_VERSION, RealtimeError, validate_envelope
+    from realtime_bridge import AppliedAdapter, AppliedHub, PARAM_ID_RE, PreparedCommand, RealtimeError
+    from realtime_server import PROTOCOL_VERSION, RealtimeError as ProtocolRealtimeError, validate_envelope
 
 MIDI_COMMANDS = (
     "control.enc", "control.key", "grid.key", "param.set",
@@ -133,7 +133,7 @@ class MidiAppliedHub(AppliedHub):
     def handle(self, peer, raw):
         try:
             message = validate_envelope(raw)
-        except RealtimeError:
+        except (RealtimeError, ProtocolRealtimeError):
             return AppliedHub.handle(self, peer, raw)
         if message["type"] == "hello":
             peer.send({
