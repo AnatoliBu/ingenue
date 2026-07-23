@@ -1,31 +1,25 @@
-# Web MIDI bridge and MIDI Learn
+# Web MIDI Learn
 
-Tracking: #5
+`/midi.html` owns Web MIDI permission, device enumeration, learn state and browser-local profiles. It never opens SysEx access.
 
-`/midi.html` owns browser-side Web MIDI permission, device enumeration, learning and local profiles. Profiles are keyed by the exact active norns script name and a fingerprint containing the input manufacturer, name and browser port id. A profile never activates silently for another script or input.
+Profiles are keyed by the exact active `norns.state.name` and the selected MIDI input fingerprint. A script or device change deactivates the prior runtime before loading another profile.
 
-## Secure-context requirement
+## Device authority
 
-Web MIDI is a secure-context API. Plain LAN HTTP such as `http://norns.local:7777` may not expose `navigator.requestMIDIAccess`. Ingenue reports this explicitly. Use an HTTPS reverse proxy (and add its exact origin to `INGENUE_REALTIME_ORIGINS`) or a trustworthy localhost context.
+The browser does not guess Norns parameter ranges. It requests `param.describe` from Lua and uses the returned normalized value for pickup. `CONTROL` and `TAPER` use their native raw 0–1 API; `NUMBER` and `OPTION` are rounded to device-side discrete values; non-trigger binary params use a threshold. Trigger params reject absolute mapping.
 
-## Applied parameter path
+Commands:
 
-The browser never guesses norns parameter ranges or warps:
+- `param.describe`
+- `param.set_normalized`
+- `param.delta`
 
-1. `param.describe` asks Lua for authoritative type, raw-normalized value, range, formatted value and writability.
-2. Absolute CC / pitch bend uses `param.set_normalized`; Lua calls `set_raw` for CONTROL/TAPER and discrete mapping for NUMBER/OPTION/BINARY.
-3. Relative CC uses `param.delta` and the normal `params:delta` implementation.
-4. Lua returns the resulting descriptor inside the applied ACK.
+Every mutation remains Lua-applied and returns the resulting parameter descriptor in `ack.result.param`. Infinite dB metadata is represented as nullable numeric fields plus exact text fields; the normalized raw value remains finite.
 
-`ControlSpec.DB` and other non-finite display ranges are represented with textual min/max metadata while normalized 0–1 remains finite.
+## Web platform constraint
 
-## Ownership and safety
+Web MIDI is a secure-context API. Direct HTTP device pages may not expose it. In that case the UI reports the insecure-origin state rather than pretending there are no devices. Serve the frontend through HTTPS or a trustworthy localhost origin and add that exact origin to `INGENUE_REALTIME_ORIGINS` when needed.
 
-- absolute mappings use soft takeover by default;
-- one absolute command is in flight per mapping and only the latest desired value is retained;
-- uncertain absolute commands are safely replayed after reconnect;
-- key mappings deduplicate held/released gates;
-- script or input changes deactivate the whole runtime before loading another exact profile;
-- corrupt saved rows and unsupported parameter profiles fail closed.
+## Ownership
 
-Sysex and software-synth privileges are not requested. Output ports are enumerated for future feedback support but this slice does not send feedback yet.
+Absolute mappings use soft takeover. After pickup, the browser owns the target until the script, device or profile changes. Relative mappings call `params:delta`, preserving each Norns parameter's native delta semantics.
