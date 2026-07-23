@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#090a0c">
+  <title>Ingenue performance</title>
+  <link rel="stylesheet" href="./performance.css">
+</head>
+<body>
+  <main class="surface">
+    <header class="topbar">
+      <div>
+        <div class="brand">Ingenue performance</div>
+        <div class="endpoint" id="surface-endpoint"></div>
+      </div>
+      <div class="session">
+        <span class="pill" id="surface-status">connecting</span>
+        <span class="pill">rev <b id="surface-revision">—</b></span>
+        <span class="pill" id="surface-script">no active script</span>
+        <a class="pill" href="./realtime-inspector.html">inspector</a>
+      </div>
+    </header>
+
+    <div class="layout">
+      <section class="panel">
+        <div class="panel-head">
+          <h2>Grid</h2>
+          <select id="grid-port" data-performance-control aria-label="Grid port"></select>
+        </div>
+        <div class="grid-shell"><div class="grid" id="grid" aria-label="Virtual Grid"></div></div>
+        <p class="notice" id="surface-notice">Waiting for authoritative state…</p>
+      </section>
+
+      <aside class="side">
+        <section class="panel">
+          <div class="panel-head"><h2>Keys</h2><span class="muted">hold</span></div>
+          <div class="keys">
+            <button class="hardware-key" data-performance-control data-key="1">K1</button>
+            <button class="hardware-key" data-performance-control data-key="2">K2</button>
+            <button class="hardware-key" data-performance-control data-key="3">K3</button>
+          </div>
+        </section>
+
+        <section class="panel">
+          <div class="panel-head"><h2>Encoders</h2><span class="muted">drag / wheel</span></div>
+          <div class="encoders">
+            <div class="encoder" data-performance-control data-encoder="1" role="group" aria-label="Encoder 1">
+              <div class="encoder-dial"></div><strong>E1</strong>
+              <div class="encoder-actions"><button data-delta="-1">−</button><button data-delta="1">+</button></div>
+            </div>
+            <div class="encoder" data-performance-control data-encoder="2" role="group" aria-label="Encoder 2">
+              <div class="encoder-dial"></div><strong>E2</strong>
+              <div class="encoder-actions"><button data-delta="-1">−</button><button data-delta="1">+</button></div>
+            </div>
+            <div class="encoder" data-performance-control data-encoder="3" role="group" aria-label="Encoder 3">
+              <div class="encoder-dial"></div><strong>E3</strong>
+              <div class="encoder-actions"><button data-delta="-1">−</button><button data-delta="1">+</button></div>
+            </div>
+          </div>
+        </section>
+
+        <section class="panel">
+          <div class="panel-head"><h2>Parameter lane</h2><span class="muted">one applied command in flight</span></div>
+          <div class="param-grid">
+            <input class="wide" id="param-id" data-performance-control value="cutoff" pattern="[A-Za-z0-9_.:-]+" aria-label="Parameter id">
+            <input id="param-min" data-performance-control type="number" value="0" step="any" aria-label="Minimum">
+            <input id="param-max" data-performance-control type="number" value="1" step="any" aria-label="Maximum">
+            <input class="wide" id="param-slider" data-performance-control type="range" min="0" max="1" value="0.5" step="0.01" aria-label="Parameter value">
+            <input class="wide" id="param-number" data-performance-control type="number" value="0.5" step="0.01" aria-label="Parameter numeric value">
+          </div>
+        </section>
+      </aside>
+    </div>
+  </main>
+  <script type="module">import {mountPerformanceSurface} from './performance-surface.js'; mountPerformanceSurface();</script>
+</body>
+</html>
