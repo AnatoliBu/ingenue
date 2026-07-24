@@ -20,9 +20,9 @@ button:disabled, input:disabled, select:disabled, [data-disabled="true"] { opaci
 .endpoint, .muted, .notice { color: var(--muted); font-size: 12px; }
 .session { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; justify-content: flex-end; }
 .pill { border: 1px solid var(--line); background: rgba(17,19,24,.86); border-radius: 999px; padding: 7px 10px; font-size: 12px; }
-.layout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(260px, 360px); gap: 18px; }
+.layout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(280px, 360px); gap: 18px; }
 .primary, .side { display: grid; gap: 18px; align-content: start; min-width: 0; }
-.panel { border: 1px solid var(--line); background: rgba(17,19,24,.92); border-radius: 18px; padding: clamp(14px, 2vw, 22px); box-shadow: 0 24px 80px rgba(0,0,0,.2); }
+.panel { min-width: 0; overflow: hidden; border: 1px solid var(--line); background: rgba(17,19,24,.92); border-radius: 18px; padding: clamp(14px, 2vw, 22px); box-shadow: 0 24px 80px rgba(0,0,0,.2); }
 .panel-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 14px; }
 h1, h2, p { margin: 0; }
 h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .13em; color: #c7ccd5; }
@@ -32,9 +32,9 @@ select, input { min-width: 0; border: 1px solid var(--line); border-radius: 10px
 .controller-config label { display: grid; gap: 4px; min-width: 0; }
 .controller-config label span { color: var(--muted); font-size: 10px; text-transform: uppercase; letter-spacing: .1em; }
 .controller-config button { align-self: end; min-height: 40px; border: 1px solid #48505d; border-radius: 10px; background: #242a31; color: inherit; padding: 0 14px; font-weight: 700; }
-.grid-shell { overflow: auto; padding: 3px; }
-.grid { display: grid; grid-template-columns: repeat(var(--grid-cols, 16), minmax(25px, 1fr)); gap: clamp(4px, .65vw, 9px); min-width: max-content; touch-action: none; }
-.grid-key { width: clamp(25px, 5.2vw, 62px); aspect-ratio: 1; border-radius: clamp(6px, 1vw, 12px); border: 1px solid #303641; background: rgb(32 36 43); position: relative; overflow: hidden; pointer-events: auto; }
+.grid-shell { width: 100%; max-width: 100%; min-width: 0; overflow: auto; padding: 3px; overscroll-behavior-inline: contain; scrollbar-gutter: stable; }
+.grid { display: grid; width: 100%; min-width: 560px; grid-template-columns: repeat(var(--grid-cols, 16), minmax(28px, 1fr)); gap: clamp(4px, .55vw, 8px); touch-action: none; }
+.grid-key { width: 100%; max-width: 62px; justify-self: center; aspect-ratio: 1; border-radius: clamp(6px, 1vw, 12px); border: 1px solid #303641; background: rgb(32 36 43); position: relative; overflow: hidden; pointer-events: auto; }
 .grid-key::after { content: ""; position: absolute; inset: 17%; border-radius: 50%; background: var(--accent); opacity: var(--level, 0); box-shadow: 0 0 var(--glow, 4px) rgba(217,255,91,var(--level, 0)); }
 .grid-key[data-pressed="true"] { transform: scale(.94); }
 .arc-deck { display: grid; grid-template-columns: repeat(var(--arc-rings, 4), minmax(120px, 1fr)); gap: clamp(10px, 1.8vw, 22px); }
@@ -77,6 +77,6 @@ body:not([data-ready]) .grid, body:not([data-ready]) .arc-deck { filter: graysca
   .side { grid-template-columns: 1fr; }
   .side .panel:last-child { grid-column: auto; }
   .panel { border-radius: 14px; padding: 12px; }
-  .grid-key { width: clamp(24px, 10vw, 44px); }
+  .grid { min-width: 520px; }
   .arc-deck { grid-template-columns: repeat(2, minmax(100px, 1fr)); }
 }
