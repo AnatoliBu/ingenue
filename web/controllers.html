@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#08090b">
+  <title>Ingenue controllers</title>
+  <link rel="stylesheet" href="./controllers.css">
+</head>
+<body>
+  <main class="hub">
+    <header class="hub-head">
+      <div><div class="hub-brand">Ingenue controllers</div><div class="hub-endpoint" id="hub-endpoint"></div></div>
+      <div class="hub-session">
+        <span class="hub-pill" id="hub-connection">connecting</span>
+        <span class="hub-pill">rev <b id="hub-revision">—</b></span>
+        <span class="hub-pill" id="hub-script">no active script</span>
+      </div>
+    </header>
+    <section class="hub-panel">
+      <div class="hub-tools">
+        <p class="hub-summary" id="hub-summary">Waiting for realtime hello + authoritative snapshot…</p>
+        <div class="hub-ping"><button id="hub-ping" type="button" disabled>safe ping</button><output id="hub-ping-output">not checked</output></div>
+      </div>
+      <div class="hub-cards" id="hub-cards"></div>
+      <p class="hub-note">The readiness page never changes audio or controller state. The ping command is handled inside the Python realtime server.</p>
+    </section>
+  </main>
+  <script type="module">import {mountControllerHub} from './controllers.js'; mountControllerHub();</script>
+</body>
+</html>
