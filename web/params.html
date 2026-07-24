@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#08090b">
+  <title>Ingenue parameters</title>
+  <link rel="stylesheet" href="./params.css">
+</head>
+<body>
+  <main class="params-surface">
+    <header class="params-topbar">
+      <div><div class="params-brand">Ingenue parameters</div><div class="params-endpoint" id="params-endpoint"></div></div>
+      <nav class="params-session" aria-label="Ingenue pages">
+        <span class="params-pill" id="params-status">connecting</span>
+        <span class="params-pill">rev <b id="params-revision">—</b></span>
+        <span class="params-pill" id="params-script">no active script</span>
+        <a class="params-pill" href="./performance.html">performance</a>
+        <a class="params-pill" href="./launchpad.html">Launchpad</a>
+        <a class="params-pill" href="./gamepad.html">Gamepad</a>
+        <a class="params-pill" href="./midi.html">MIDI Learn</a>
+      </nav>
+    </header>
+    <section class="params-panel">
+      <div class="params-toolbar">
+        <input id="params-filter" data-param-control type="search" placeholder="Filter parameter name or ID" aria-label="Filter parameters">
+        <button id="params-refresh" data-param-control type="button">refresh catalog</button>
+      </div>
+      <div class="params-catalog" id="params-catalog" aria-live="polite"></div>
+      <p class="params-notice" id="params-notice">Waiting for authoritative session state…</p>
+    </section>
+  </main>
+  <script type="module">import {mountParamsSurface} from './params-surface.js'; mountParamsSurface();</script>
+</body>
+</html>

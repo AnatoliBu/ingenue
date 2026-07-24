@@ -8,4 +8,5 @@ require 'ingenue_midi'
 require 'ingenue_grid_hardening'
 require 'ingenue_arc'
 require 'ingenue_gamepad'
+require 'ingenue_params'
 return grid_adapter
