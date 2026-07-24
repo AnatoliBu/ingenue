@@ -1,7 +1,8 @@
 # Device realtime endpoint
 
 Tracking: #3  
-Lua authority boundary: `docs/LUA-ADAPTER.md`
+Lua authority boundary: `docs/LUA-ADAPTER.md`  
+Browser ownership: `docs/CONTROLLER-OWNERSHIP.md`
 
 Ingenue launches two stdlib-only services from the existing `server.py` entrypoint:
 
@@ -20,11 +21,13 @@ ws://<norns-host>:7778/realtime
 
 Supported protocol features:
 
-- `hello` capability negotiation;
-- `device`, `control`, `script`, and `grid` subscriptions;
+- `hello` capability negotiation with a stable browser `client_id`;
+- `device`, `control`, `script`, `grid`, `arc`, `params`, and `ownership` subscriptions;
 - authoritative snapshot and monotonic delta revisions;
 - explicit resync snapshots;
 - Lua-applied correlated `ack` / `reject` command settlement;
+- resource ownership and five-second reconnect leases;
+- immediate balanced release of held browser input on disconnect;
 - two-second heartbeats;
 - bounded pending commands and WebSocket frames;
 - reconnect without restarting script playback.
@@ -36,9 +39,13 @@ Supported protocol features:
 {"v":1,"type":"command","id":"cmd-2","command":{"target":"control","action":"key","args":{"n":3,"z":1}}}
 {"v":1,"type":"command","id":"cmd-3","command":{"target":"param","action":"set","args":{"id":"cutoff","value":0.5}}}
 {"v":1,"type":"command","id":"cmd-4","command":{"target":"grid","action":"key","args":{"port":1,"x":4,"y":2,"z":1}}}
+{"v":1,"type":"command","id":"cmd-5","command":{"target":"arc","action":"configure","args":{"port":2,"rings":4}}}
+{"v":1,"type":"command","id":"cmd-6","command":{"target":"session","action":"release_all","args":{}}}
 ```
 
-`system.ping` is acknowledged immediately by Python because it intentionally tests the transport service itself. Controls, params, and Grid keys are acknowledged only after Lua completes execution in matron.
+`system.ping` and `session.*` commands are acknowledged immediately by Python because they intentionally test or modify the transport service itself. Controls, params, Grid, Arc and gamepad commands are acknowledged only after Lua completes execution in matron.
+
+The first valid controller command implicitly claims its ownership resource. Commands from another browser identity are rejected until the owner releases it or the reconnect lease expires.
 
 ## Local state bridge
 
@@ -48,11 +55,11 @@ Lua state and applied acknowledgements return over localhost UDP. Configure with
 INGENUE_STATE_PORT
 ```
 
-Default: realtime port + 1 (`7779`). The socket binds to `127.0.0.1`; datagrams from non-loopback sources are discarded.
+Default: realtime port + 1 (`7779`). The socket binds to `127.0.0.1`; datagrams from non-loopback sources are discarded. The bridge also expires command deadlines and disconnected ownership leases.
 
 ## Browser-origin mode
 
-The realtime endpoint is open by default because Ingenue targets a trusted local network. Any browser that can reach the norns WebSocket port can therefore attempt controller commands; do not expose port `7778` to an untrusted network or the public internet.
+The realtime endpoint is open by default because Ingenue targets a trusted local network. Any browser that can reach the norns WebSocket port can therefore attempt controller commands; ownership prevents accidental multi-browser contention but is not authentication. Do not expose port `7778` to an untrusted network or the public internet.
 
 Set the following environment variable to restore strict browser-origin checking:
 
@@ -70,8 +77,6 @@ In strict mode, missing, `null`, credential-bearing, and unmatched origins are r
 
 ## Inspector
 
-Open `/realtime-inspector.html` on the normal Ingenue HTTP port. It subscribes to all four channels and exposes K1–K3, E1–E3, generic parameter control, revision state, and command settlement logs.
+Open `/realtime-inspector.html` on the normal Ingenue HTTP port. It subscribes to the full authoritative state, exposes K1–K3, E1–E3, generic parameter control, revision state, command settlement and ownership data.
 
 `?rt=<port>` overrides the realtime port for nonstandard installations.
-
-The inspector remains an engineering view. The next layer is the user-facing performance surface with an authoritative virtual Grid renderer.
