@@ -50,17 +50,23 @@ INGENUE_STATE_PORT
 
 Default: realtime port + 1 (`7779`). The socket binds to `127.0.0.1`; datagrams from non-loopback sources are discarded.
 
-## Browser-origin protection
+## Browser-origin mode
 
-The WebSocket handshake requires an `Origin` matching the current Ingenue HTTP host and port. This prevents an unrelated website opened by the user from controlling a norns reachable on the same LAN.
+The realtime endpoint is open by default because Ingenue targets a trusted local network. Any browser that can reach the norns WebSocket port can therefore attempt controller commands; do not expose port `7778` to an untrusted network or the public internet.
 
-Reverse proxies or custom frontends can add exact origins:
+Set the following environment variable to restore strict browser-origin checking:
+
+```sh
+INGENUE_REALTIME_STRICT=1
+```
+
+Strict mode accepts only an `Origin` matching the current Ingenue HTTP host and port. Reverse proxies or custom frontends can add exact origins:
 
 ```sh
 INGENUE_REALTIME_ORIGINS=https://music.example,https://studio.example
 ```
 
-Missing, `null`, credential-bearing, and unmatched origins are rejected before a peer is created.
+In strict mode, missing, `null`, credential-bearing, and unmatched origins are rejected before a peer is created.
 
 ## Inspector
 
