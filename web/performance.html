@@ -28,9 +28,21 @@
         <section class="panel">
           <div class="panel-head">
             <h2>Grid</h2>
-            <select id="grid-port" data-performance-control aria-label="Grid port"></select>
+            <select id="grid-port" data-performance-control aria-label="Grid display port"></select>
           </div>
-          <div class="grid-shell"><div class="grid" id="grid" aria-label="Virtual Grid"></div></div>
+          <div class="controller-config" aria-label="Virtual Grid configuration">
+            <label><span>vport</span><select id="grid-config-port" data-performance-control>
+              <option value="1">1</option><option value="2">2</option><option value="3">3</option><option value="4">4</option>
+            </select></label>
+            <label><span>shape</span><select id="grid-shape" data-performance-control>
+              <option value="8x8">8×8</option><option value="16x8" selected>16×8</option><option value="16x16">16×16</option>
+            </select></label>
+            <label><span>rotation</span><select id="grid-rotation" data-performance-control>
+              <option value="0">0°</option><option value="1">90°</option><option value="2">180°</option><option value="3">270°</option>
+            </select></label>
+            <button id="grid-apply" data-performance-control type="button">apply</button>
+          </div>
+          <div class="grid-shell"><div class="grid" id="grid" data-performance-control aria-label="Virtual Grid"></div></div>
           <p class="notice" id="surface-notice">Waiting for authoritative state…</p>
         </section>
 
@@ -91,6 +103,6 @@
       </aside>
     </div>
   </main>
-  <script type="module">import {mountPerformanceSurface} from './performance-surface.js'; mountPerformanceSurface();</script>
+  <script type="module">import {mountPerformanceSurface} from './performance-surface.js'; import {mountGridHardening} from './grid-hardening-ui.js'; const session=mountPerformanceSurface(); mountGridHardening(session);</script>
 </body>
 </html>

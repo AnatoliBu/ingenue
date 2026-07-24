@@ -26,6 +26,8 @@ export function decodeGridFrame(raw) {
   const cols = positiveInteger(raw.cols, 'grid cols');
   const rows = positiveInteger(raw.rows, 'grid rows');
   const intensity = Number.isSafeInteger(raw.intensity) ? clamp(raw.intensity, 0, 15) : 15;
+  const rotation = Number.isSafeInteger(raw.rotation) ? raw.rotation : 0;
+  if (rotation < 0 || rotation > 3) throw new SurfaceError('grid rotation must be 0–3');
   return {
     port: positiveInteger(Number(raw.port ?? 1), 'grid port', 4),
     cols,
@@ -33,6 +35,7 @@ export function decodeGridFrame(raw) {
     values: decodeHexFrame(raw.frame, cols * rows, 'grid frame'),
     sequence: Number.isSafeInteger(raw.sequence) && raw.sequence >= 0 ? raw.sequence : 0,
     intensity,
+    rotation,
     virtual: Boolean(raw.virtual),
   };
 }
@@ -80,6 +83,34 @@ export function effectiveBrightness(level, intensity = 15) {
   return Number((led * global).toFixed(4));
 }
 
+export function normalizeGridConfiguration(raw) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+    throw new SurfaceError('grid configuration must be an object');
+  }
+  const port = positiveInteger(Number(raw.port), 'grid port', 4);
+  const rotation = Number(raw.rotation);
+  if (!Number.isSafeInteger(rotation) || rotation < 0 || rotation > 3) {
+    throw new SurfaceError('grid rotation must be 0–3');
+  }
+  const shape = String(raw.shape || '').toLowerCase();
+  const shapes = {
+    '8x8': {cols: 8, rows: 8},
+    '16x8': {cols: 16, rows: 8},
+    '16x16': {cols: 16, rows: 16},
+  };
+  if (!shapes[shape]) throw new SurfaceError('grid shape must be 8×8, 16×8 or 16×16');
+  return {port, ...shapes[shape], rotation};
+}
+
+export function gridConfigurationFromFrame(frame) {
+  const rotation = Number.isSafeInteger(frame?.rotation) ? frame.rotation : 0;
+  const cols = rotation % 2 ? frame?.rows : frame?.cols;
+  const rows = rotation % 2 ? frame?.cols : frame?.rows;
+  const shape = `${cols}x${rows}`;
+  if (!['8x8', '16x8', '16x16'].includes(shape)) return null;
+  return normalizeGridConfiguration({port: frame.port, shape, rotation});
+}
+
 export function encoderSteps(startY, currentY, pixelsPerStep = 14) {
   if (!Number.isFinite(startY) || !Number.isFinite(currentY) || !Number.isFinite(pixelsPerStep) || pixelsPerStep <= 0) {
     throw new SurfaceError('invalid encoder gesture');
@@ -99,6 +130,13 @@ export function arcAngularSteps(previousAngle, currentAngle, stepsPerTurn = 1024
   return delta / tau * stepsPerTurn;
 }
 
+function sameTarget(left, right) {
+  if (!left || !right) return false;
+  const leftKeys = Object.keys(left);
+  const rightKeys = Object.keys(right);
+  return leftKeys.length === rightKeys.length && leftKeys.every(key => Object.is(left[key], right[key]));
+}
+
 export class PressLedger {
   constructor(send) {
     if (typeof send !== 'function') throw new SurfaceError('press sender is required');
@@ -111,6 +149,14 @@ export class PressLedger {
     const normalized = structuredClone(target);
     this.pointers.set(pointerId, normalized);
     this.send(normalized, 1);
+  }
+
+  move(pointerId, target) {
+    const current = this.pointers.get(pointerId);
+    if (sameTarget(current, target)) return false;
+    if (current) this.release(pointerId);
+    if (target) this.press(pointerId, target);
+    return true;
   }
 
   release(pointerId) {

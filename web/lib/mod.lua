@@ -5,5 +5,6 @@ assert(directory, 'ingenue mod directory unavailable')
 package.path = directory .. '?.lua;' .. package.path
 local grid_adapter = require 'ingenue_grid_mod'
 require 'ingenue_midi'
+require 'ingenue_grid_hardening'
 require 'ingenue_arc'
 return grid_adapter

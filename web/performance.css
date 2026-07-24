@@ -28,12 +28,15 @@ h1, h2, p { margin: 0; }
 h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .13em; color: #c7ccd5; }
 select, input { min-width: 0; border: 1px solid var(--line); border-radius: 10px; background: #0b0d11; color: inherit; padding: 10px; }
 .device-options { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
+.controller-config { display: grid; grid-template-columns: repeat(3, minmax(90px, 1fr)) auto; gap: 8px; margin-bottom: 12px; }
+.controller-config label { display: grid; gap: 4px; min-width: 0; }
+.controller-config label span { color: var(--muted); font-size: 10px; text-transform: uppercase; letter-spacing: .1em; }
+.controller-config button { align-self: end; min-height: 40px; border: 1px solid #48505d; border-radius: 10px; background: #242a31; color: inherit; padding: 0 14px; font-weight: 700; }
 .grid-shell { overflow: auto; padding: 3px; }
-.grid { display: grid; grid-template-columns: repeat(var(--grid-cols, 16), minmax(25px, 1fr)); gap: clamp(4px, .65vw, 9px); min-width: max-content; }
-.grid-key { width: clamp(25px, 5.2vw, 62px); aspect-ratio: 1; border-radius: clamp(6px, 1vw, 12px); border: 1px solid #303641; background: rgb(32 36 43); position: relative; overflow: hidden; }
+.grid { display: grid; grid-template-columns: repeat(var(--grid-cols, 16), minmax(25px, 1fr)); gap: clamp(4px, .65vw, 9px); min-width: max-content; touch-action: none; }
+.grid-key { width: clamp(25px, 5.2vw, 62px); aspect-ratio: 1; border-radius: clamp(6px, 1vw, 12px); border: 1px solid #303641; background: rgb(32 36 43); position: relative; overflow: hidden; pointer-events: auto; }
 .grid-key::after { content: ""; position: absolute; inset: 17%; border-radius: 50%; background: var(--accent); opacity: var(--level, 0); box-shadow: 0 0 var(--glow, 4px) rgba(217,255,91,var(--level, 0)); }
 .grid-key[data-pressed="true"] { transform: scale(.94); }
-
 .arc-deck { display: grid; grid-template-columns: repeat(var(--arc-rings, 4), minmax(120px, 1fr)); gap: clamp(10px, 1.8vw, 22px); }
 .arc-ring { min-width: 0; aspect-ratio: 1; position: relative; border: 1px solid #303641; border-radius: 50%; background: radial-gradient(circle, #101319 0 41%, #191d24 42% 64%, #0c0e12 65%); user-select: none; touch-action: none; outline: none; }
 .arc-ring:focus-visible { box-shadow: 0 0 0 2px var(--accent); }
@@ -42,7 +45,6 @@ select, input { min-width: 0; border: 1px solid var(--line); border-radius: 10px
 .arc-leds circle { fill: var(--accent); opacity: var(--level, 0); filter: drop-shadow(0 0 var(--glow, 1px) rgba(217,255,91,var(--level, 0))); }
 .arc-key { position: absolute; inset: 33%; width: 34%; height: 34%; margin: auto; border-radius: 50%; border: 1px solid #424955; background: radial-gradient(circle at 35% 28%, #414954, #171a20 70%); color: #d9dde4; font-weight: 760; }
 .arc-key[data-pressed="true"] { transform: scale(.94); background: #303640; }
-
 .keys { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
 .hardware-key { min-height: 70px; border: 1px solid #353a44; border-radius: 14px; color: inherit; background: linear-gradient(#22262d, #171a20); font-weight: 760; }
 .hardware-key[data-pressed="true"] { transform: translateY(2px); background: #303640; }
@@ -58,14 +60,15 @@ select, input { min-width: 0; border: 1px solid var(--line); border-radius: 10px
 input[type="range"] { width: 100%; padding: 0; accent-color: var(--accent); }
 .notice { min-height: 18px; margin-top: 10px; }
 body:not([data-ready]) .grid, body:not([data-ready]) .arc-deck { filter: grayscale(1); }
-
-@media (max-width: 1050px) {
-  .arc-deck { grid-template-columns: repeat(2, minmax(120px, 1fr)); }
-}
+@media (max-width: 1050px) { .arc-deck { grid-template-columns: repeat(2, minmax(120px, 1fr)); } }
 @media (max-width: 850px) {
   .layout { grid-template-columns: 1fr; }
   .side { grid-template-columns: 1fr 1fr; }
   .side .panel:last-child { grid-column: 1 / -1; }
+}
+@media (max-width: 620px) {
+  .controller-config { grid-template-columns: 1fr 1fr; }
+  .controller-config button { min-height: 42px; }
 }
 @media (max-width: 560px) {
   .surface { padding: 10px; }
