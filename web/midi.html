@@ -18,6 +18,16 @@
       </nav>
     </header>
     <div class="layout">
+      <section class="panel wide bridge-panel" id="midi-bridge" hidden>
+        <h2>Localhost MIDI bridge</h2>
+        <p class="bridge-copy">The norns interface may stay on ordinary local HTTP. Run this small read-only proxy on the computer connected to your MIDI device, then open the localhost page.</p>
+        <div class="bridge-command"><code id="midi-bridge-command"></code><button type="button" id="midi-bridge-copy">copy</button></div>
+        <div class="row">
+          <a class="button-link" href="./midi-local.py" download="midi-local.py">download midi-local.py</a>
+          <a class="button-link primary" id="midi-bridge-open" target="_blank" rel="noopener">open localhost bridge</a>
+        </div>
+        <p class="notice" id="midi-bridge-notice">Python 3 is enough; no packages are required.</p>
+      </section>
       <section class="panel">
         <h2>MIDI access</h2>
         <div class="stack">

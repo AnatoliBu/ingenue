@@ -20,7 +20,8 @@ export function mountMidiSurface(root=document,env={}){
   const navigatorLike=env.navigatorLike||navigator;
   const secure=env.isSecureContext??globalThis.isSecureContext;
   const storage=env.storage||localStorage;
-  const session=env.session||new RealtimeSession({socketFactory:value=>new WebSocket(value),url:env.url||realtimeUrl(env.locationLike||location),channels:['device','control','script']});
+  const locationLike=env.locationLike||location;
+  const session=env.session||new RealtimeSession({socketFactory:value=>new WebSocket(value),url:env.url||realtimeUrl(locationLike),channels:['device','control','script']});
   const broker=new AppliedBroker(session);
   const store=new ProfileStore(storage);
   const status=root.getElementById('midi-status');
@@ -36,6 +37,11 @@ export function mountMidiSurface(root=document,env={}){
   const modeSelect=root.getElementById('midi-mode');
   const pickup=root.getElementById('midi-pickup');
   const mappingsEl=root.getElementById('midi-mappings');
+  const bridgePanel=root.getElementById('midi-bridge');
+  const bridgeCommand=root.getElementById('midi-bridge-command');
+  const bridgeCopy=root.getElementById('midi-bridge-copy');
+  const bridgeOpen=root.getElementById('midi-bridge-open');
+  const bridgeNotice=root.getElementById('midi-bridge-notice');
 
   let access=null,currentInput=null,currentFingerprint=null,currentScript=null,mappings=[],learning=false;
   const runtime=new MidiRuntime({
@@ -46,6 +52,27 @@ export function mountMidiSurface(root=document,env={}){
   const setNotice=(message,error=false)=>{notice.textContent=message||'';notice.dataset.error=error?'true':'false';};
   const contextReady=()=>Boolean(currentScript&&currentInput&&session.state.status==='synced');
   const updateLearnEnabled=()=>{learnButton.disabled=!contextReady();};
+
+  function configureBridge(availability){
+    if(!bridgePanel)return;
+    if(!availability?.recoverable||!availability.bridge){bridgePanel.hidden=true;return;}
+    bridgePanel.hidden=false;
+    bridgeCommand.textContent=availability.bridge.command;
+    bridgeOpen.href=availability.bridge.url;
+    bridgeNotice.textContent=`Device ${availability.bridge.device}; UI ${availability.bridge.httpPort}; realtime ${availability.bridge.realtimePort}. Python 3, no packages required.`;
+  }
+
+  async function copyBridgeCommand(){
+    const command=bridgeCommand?.textContent||'';
+    if(!command)return;
+    try{
+      if(typeof navigatorLike.clipboard?.writeText!=='function')throw new Error('clipboard API unavailable');
+      await navigatorLike.clipboard.writeText(command);
+      bridgeNotice.textContent='Command copied. Run it from the folder containing midi-local.py.';
+    }catch{
+      bridgeNotice.textContent='Select and copy the command manually, then run it from the folder containing midi-local.py.';
+    }
+  }
 
   async function activateProfile(){
     runtime.deactivate();broker.clear('profile changed');
@@ -98,12 +125,13 @@ export function mountMidiSurface(root=document,env={}){
   }
 
   permission.addEventListener('click',async()=>{
-    const availability=midiAvailability(navigatorLike,secure);if(!availability.ok){setNotice(availability.message,true);return;}
+    const availability=midiAvailability(navigatorLike,secure,locationLike);configureBridge(availability);if(!availability.ok){setNotice(availability.message,true);return;}
     permission.disabled=true;setNotice('Requesting MIDI permission…');
     try{access=await requestMidiAccess(navigatorLike);access.onstatechange=renderPorts;renderPorts();setNotice('MIDI permission granted.');}
     catch(error){setNotice(`MIDI permission failed: ${error.name||error.message}`,true);}
     finally{permission.disabled=false;}
   });
+  bridgeCopy?.addEventListener('click',copyBridgeCommand);
   inputSelect.addEventListener('change',selectInput);
   learnButton.addEventListener('click',()=>{if(!contextReady())return;learning=!learning;learnButton.textContent=learning?'Cancel learn':'Learn next MIDI message';setNotice(learning?'Move one MIDI control now.':'Learn cancelled.');});
   targetKind.addEventListener('change',()=>{
@@ -119,6 +147,6 @@ export function mountMidiSurface(root=document,env={}){
   session.addEventListener('command',event=>{runtime.settle(event.detail);broker.settle(event.detail);if(event.detail.status==='reject')setNotice(event.detail.error||'Command rejected',true);});
   session.addEventListener('protocolerror',event=>setNotice(`Protocol error: ${event.detail.message}`,true));
 
-  const availability=midiAvailability(navigatorLike,secure);if(!availability.ok){permission.disabled=true;setNotice(availability.message,true);}else setNotice('Grant MIDI permission, then select an input.');
+  const availability=midiAvailability(navigatorLike,secure,locationLike);configureBridge(availability);if(!availability.ok){permission.disabled=true;setNotice(availability.message,true);}else setNotice('Grant MIDI permission, then select an input.');
   updateLearnEnabled();session.connect();return {session,runtime};
 }
