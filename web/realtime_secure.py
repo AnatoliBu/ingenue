@@ -70,6 +70,10 @@ class OriginCheckedHandler(RealtimeRequestHandler):
 
 class OriginCheckedServer(ThreadingRealtimeServer):
     def __init__(self, address, hub, http_port, allowed_origins):
+        # self.hub MUST be set — RealtimeRequestHandler.handle reads self.server.hub.
+        # Skipping it (as this override previously did) makes every socket raise
+        # AttributeError and drop, so the browser loops on 'reconnecting'.
+        self.hub = hub
         self.http_port = int(http_port)
         self.allowed_origins = frozenset(allowed_origins)
         import socketserver
@@ -82,13 +86,23 @@ def serve_realtime(host, port, legacy):
     allowed = [item.strip().rstrip("/") for item in
                os.environ.get("INGENUE_REALTIME_ORIGINS", "").split(",")
                if item.strip()]
+    # Origin checking is OFF by default: ingenue is meant for a trusted local
+    # network, where the browser-origin gate is redundant. Set
+    # INGENUE_REALTIME_STRICT=1 to re-enable the origin-checked server.
+    strict = os.environ.get("INGENUE_REALTIME_STRICT", "").strip().lower() not in ("", "0", "false", "no")
     adapter = MidiAppliedAdapter(legacy, realtime_port=port, state_port=state_port)
     hub = MidiAppliedHub(adapter)
     bridge = StateBridge(hub, "127.0.0.1", state_port)
     bridge.start()
     try:
-        with OriginCheckedServer((host, port), hub, http_port, allowed) as server:
-            print("ingenue realtime on {}:{}/realtime (Lua-applied, Grid/Arc/Gamepad/Params/MIDI-ready, origin-checked)".format(host, port), flush=True)
+        if strict:
+            server = OriginCheckedServer((host, port), hub, http_port, allowed)
+            note = "origin-checked"
+        else:
+            server = ThreadingRealtimeServer((host, port), hub)
+            note = "open (local network)"
+        with server:
+            print("ingenue realtime on {}:{}/realtime (Lua-applied, Grid/Arc/Gamepad/Params/MIDI-ready, {})".format(host, port, note), flush=True)
             server.serve_forever()
     finally:
         bridge.close()
