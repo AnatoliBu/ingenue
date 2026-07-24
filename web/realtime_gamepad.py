@@ -5,11 +5,11 @@ import re
 
 try:
     from .realtime_bridge import PreparedCommand, RealtimeError
-    from .realtime_grid import GRID_COMMANDS, GridAppliedAdapter, GridAppliedHub
+    from .realtime_controller_lifecycle import CONTROLLER_COMMANDS, ControllerLifecycleAdapter, ControllerLifecycleHub
     from .realtime_server import PROTOCOL_VERSION, RealtimeError as ProtocolRealtimeError, validate_envelope
 except ImportError:
     from realtime_bridge import PreparedCommand, RealtimeError
-    from realtime_grid import GRID_COMMANDS, GridAppliedAdapter, GridAppliedHub
+    from realtime_controller_lifecycle import CONTROLLER_COMMANDS, ControllerLifecycleAdapter, ControllerLifecycleHub
     from realtime_server import PROTOCOL_VERSION, RealtimeError as ProtocolRealtimeError, validate_envelope
 
 GAMEPAD_BUTTONS = frozenset({
@@ -18,8 +18,8 @@ GAMEPAD_BUTTONS = frozenset({
 GAMEPAD_ANALOG_AXES = frozenset({
     "leftx", "lefty", "rightx", "righty", "triggerleft", "triggerright",
 })
-GAMEPAD_COMMANDS = tuple(GRID_COMMANDS) + tuple(
-    item for item in ("gamepad.button", "gamepad.dpad", "gamepad.analog") if item not in GRID_COMMANDS
+GAMEPAD_COMMANDS = tuple(CONTROLLER_COMMANDS) + tuple(
+    item for item in ("gamepad.button", "gamepad.dpad", "gamepad.analog") if item not in CONTROLLER_COMMANDS
 )
 AXIS_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_]{0,31}$")
 
@@ -39,11 +39,11 @@ def _finite(value, label, low, high):
     return numeric
 
 
-class GamepadAppliedAdapter(GridAppliedAdapter):
+class GamepadAppliedAdapter(ControllerLifecycleAdapter):
     """Validate and dispatch virtual gamepad callbacks through matron."""
     def prepare(self, wire_id, command):
         if not isinstance(command, dict) or command.get("target") != "gamepad":
-            return GridAppliedAdapter.prepare(self, wire_id, command)
+            return ControllerLifecycleAdapter.prepare(self, wire_id, command)
         action = command.get("action")
         args = command.get("args") or {}
         if not isinstance(args, dict):
@@ -91,16 +91,16 @@ class GamepadAppliedAdapter(GridAppliedAdapter):
             except OSError as error:
                 raise RealtimeError("matron gamepad OSC dispatch failed: {}".format(error))
             return
-        return GridAppliedAdapter.send_prepared(self, prepared)
+        return ControllerLifecycleAdapter.send_prepared(self, prepared)
 
 
-class GamepadAppliedHub(GridAppliedHub):
+class GamepadAppliedHub(ControllerLifecycleHub):
     """Advertise the virtual gamepad callback contract."""
     def handle(self, peer, raw):
         try:
             message = validate_envelope(raw)
         except (RealtimeError, ProtocolRealtimeError):
-            return GridAppliedHub.handle(self, peer, raw)
+            return ControllerLifecycleHub.handle(self, peer, raw)
         if message["type"] == "hello":
             peer.send({
                 "v": PROTOCOL_VERSION,
@@ -111,8 +111,19 @@ class GamepadAppliedHub(GridAppliedHub):
                     "commands": list(GAMEPAD_COMMANDS),
                     "ack": "lua-applied",
                     "midi": {"normalized_params": True, "profiles": "browser"},
-                    "grid": {"shapes": ["8x8", "16x8", "16x16"], "rotations": [0, 1, 2, 3]},
-                    "arc": {"rings": [2, 4], "leds_per_ring": 64, "varibright": 16},
+                    "grid": {
+                        "shapes": ["8x8", "16x8", "16x16"],
+                        "rotations": [0, 1, 2, 3],
+                        "ports": [1, 2, 3, 4],
+                        "persistent": True,
+                    },
+                    "arc": {
+                        "rings": [2, 4],
+                        "ports": [1, 2, 3, 4],
+                        "leds_per_ring": 64,
+                        "varibright": 16,
+                        "persistent": True,
+                    },
                     "gamepad": {
                         "buttons": sorted(GAMEPAD_BUTTONS),
                         "analog_axes": sorted(GAMEPAD_ANALOG_AXES),
@@ -122,4 +133,4 @@ class GamepadAppliedHub(GridAppliedHub):
                 },
             })
             return
-        return GridAppliedHub.handle(self, peer, raw)
+        return ControllerLifecycleHub.handle(self, peer, raw)
