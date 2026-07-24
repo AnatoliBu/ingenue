@@ -67,6 +67,15 @@ The localhost helper:
 
 This creates a trustworthy local browser origin. It is not an authentication layer for the norns realtime port. Keep Ingenue on a trusted network or enable its strict-origin mode.
 
+When `INGENUE_REALTIME_STRICT=1` is enabled on norns, explicitly allow the local bridge origin before restarting Ingenue:
+
+```sh
+INGENUE_REALTIME_STRICT=1 \
+INGENUE_REALTIME_ORIGINS=http://localhost:7780
+```
+
+Use the actual `--local-port` value when it differs from `7780`. The origin list is exact, so `127.0.0.1` and `localhost` are separate entries if both are used.
+
 ## Browser support
 
 When the localhost page opens, press **Grant MIDI permission**, select the input and use Learn. If the page reports that Web MIDI is unsupported rather than insecure, use a desktop browser that exposes `navigator.requestMIDIAccess`; the helper cannot add a missing browser API.
