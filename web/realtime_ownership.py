@@ -64,35 +64,46 @@ def _held_transition(command):
     args = command.get("args") or {}
     if not isinstance(args, dict):
         return None
-
     if target == "control" and action == "key":
-        key = (target, action, args.get("n"))
-        release = {"target": target, "action": action, "args": {"n": args.get("n"), "z": 0}}
-        return key, release, args.get("z") == 1
+        return (
+            (target, action, args.get("n")),
+            {"target": target, "action": action, "args": {"n": args.get("n"), "z": 0}},
+            args.get("z") == 1,
+        )
     if target == "grid" and action == "key":
-        key = (target, action, args.get("port"), args.get("x"), args.get("y"))
-        release = {"target": target, "action": action, "args": {
-            "port": args.get("port"), "x": args.get("x"), "y": args.get("y"), "z": 0,
-        }}
-        return key, release, args.get("z") == 1
+        return (
+            (target, action, args.get("port"), args.get("x"), args.get("y")),
+            {"target": target, "action": action, "args": {
+                "port": args.get("port"), "x": args.get("x"), "y": args.get("y"), "z": 0,
+            }},
+            args.get("z") == 1,
+        )
     if target == "arc" and action == "key":
-        key = (target, action, args.get("port"), args.get("n"))
-        release = {"target": target, "action": action, "args": {
-            "port": args.get("port"), "n": args.get("n"), "z": 0,
-        }}
-        return key, release, args.get("z") == 1
+        return (
+            (target, action, args.get("port"), args.get("n")),
+            {"target": target, "action": action, "args": {
+                "port": args.get("port"), "n": args.get("n"), "z": 0,
+            }},
+            args.get("z") == 1,
+        )
     if target == "gamepad" and action == "button":
-        key = (target, action, args.get("name"))
-        release = {"target": target, "action": action, "args": {"name": args.get("name"), "z": 0}}
-        return key, release, args.get("z") == 1
+        return (
+            (target, action, args.get("name")),
+            {"target": target, "action": action, "args": {"name": args.get("name"), "z": 0}},
+            args.get("z") == 1,
+        )
     if target == "gamepad" and action == "dpad":
-        key = (target, action, args.get("axis"))
-        release = {"target": target, "action": action, "args": {"axis": args.get("axis"), "sign": 0}}
-        return key, release, args.get("sign") != 0
+        return (
+            (target, action, args.get("axis")),
+            {"target": target, "action": action, "args": {"axis": args.get("axis"), "sign": 0}},
+            args.get("sign") != 0,
+        )
     if target == "gamepad" and action == "analog":
-        key = (target, action, args.get("axis"))
-        release = {"target": target, "action": action, "args": {"axis": args.get("axis"), "value": 0.0}}
-        return key, release, float(args.get("value", 0)) != 0.0
+        return (
+            (target, action, args.get("axis")),
+            {"target": target, "action": action, "args": {"axis": args.get("axis"), "value": 0.0}},
+            float(args.get("value", 0)) != 0.0,
+        )
     return None
 
 
@@ -141,10 +152,7 @@ class OwnershipAppliedHub(ParamAppliedHub):
                 "connected": connected,
                 "status": "active" if connected else "reconnecting",
             }
-        return {
-            "lease_grace_ms": int(self.lease_grace * 1000),
-            "resources": resources,
-        }
+        return {"lease_grace_ms": int(self.lease_grace * 1000), "resources": resources}
 
     def snapshot(self, channels):
         requested = set(channels) or set(OWNERSHIP_CHANNELS)
@@ -175,14 +183,10 @@ class OwnershipAppliedHub(ParamAppliedHub):
         if not CLIENT_ID_RE.fullmatch(client_id):
             raise RealtimeError("invalid browser client id")
         previous = getattr(peer, "client_id", None)
+        if previous and previous != client_id:
+            raise RealtimeError("browser client id cannot change during a connection")
         changed_resources = []
         with self.lock:
-            if previous and previous != client_id:
-                peers = self.client_peers.get(previous)
-                if peers:
-                    peers.discard(peer)
-                    if not peers:
-                        self.client_peers.pop(previous, None)
             peer.client_id = client_id
             self.client_peers.setdefault(client_id, set()).add(peer)
             for resource, lease in self.leases.items():
@@ -205,6 +209,7 @@ class OwnershipAppliedHub(ParamAppliedHub):
     def _claim(self, client_id, resource):
         now = self.monotonic()
         changed = False
+        created = False
         with self.lock:
             lease = self.leases.get(resource)
             if lease is not None and lease.deadline is not None and lease.deadline <= now:
@@ -215,27 +220,24 @@ class OwnershipAppliedHub(ParamAppliedHub):
             if lease is None:
                 self.leases[resource] = Lease(client_id, None)
                 changed = True
+                created = True
             elif lease.deadline is not None:
                 lease.deadline = None
                 changed = True
         if changed:
             self._publish_resource(resource)
-        return resource
+        return created
 
-    def _release_resource(self, client_id, resource):
-        removed = False
+    def _release_commands(self, client_id, resource=None):
+        releases = []
         with self.lock:
-            lease = self.leases.get(resource)
-            if lease is not None and lease.client_id == client_id:
-                self.leases.pop(resource, None)
-                removed = True
-        if removed:
-            self._publish_resource(resource)
-        return removed
-
-    def _release_commands(self, client_id):
-        with self.lock:
-            releases = list(self.held.pop(client_id, {}).values())
+            held = self.held.get(client_id, {})
+            for identity, command in list(held.items()):
+                if resource is None or _command_resource(command) == resource:
+                    releases.append(command)
+                    held.pop(identity, None)
+            if not held:
+                self.held.pop(client_id, None)
         for command in releases:
             with self.lock:
                 wire_id = "release-{}".format(self.next_release_id)
@@ -246,6 +248,21 @@ class OwnershipAppliedHub(ParamAppliedHub):
             except (RealtimeError, OSError) as error:
                 print("ingenue ownership release failed: {}".format(error), flush=True)
         return len(releases)
+
+    def _release_resource(self, client_id, resource):
+        with self.lock:
+            lease = self.leases.get(resource)
+            owned = lease is not None and lease.client_id == client_id
+        if not owned:
+            return False
+        self._release_commands(client_id, resource)
+        with self.lock:
+            lease = self.leases.get(resource)
+            if lease is None or lease.client_id != client_id:
+                return False
+            self.leases.pop(resource, None)
+        self._publish_resource(resource)
+        return True
 
     def _release_all(self, client_id):
         released_inputs = self._release_commands(client_id)
@@ -270,7 +287,8 @@ class OwnershipAppliedHub(ParamAppliedHub):
             raise RealtimeError("command args must be an object")
         client_id = self._ensure_client(peer)
         if action == "claim":
-            resource = self._claim(client_id, _resource(args.get("resource")))
+            resource = _resource(args.get("resource"))
+            self._claim(client_id, resource)
             result = {"claimed": resource}
         elif action == "release":
             resource = _resource(args.get("resource"))
@@ -340,9 +358,17 @@ class OwnershipAppliedHub(ParamAppliedHub):
                     return
                 client_id = self._ensure_client(peer)
                 resource = _command_resource(command)
+                created = False
                 if resource:
-                    self._claim(client_id, resource)
-                return ParamAppliedHub.handle(self, peer, raw)
+                    self.adapter.prepare("ownership-validation", command)
+                    created = self._claim(client_id, resource)
+                try:
+                    self._command(peer, message)
+                except RealtimeError:
+                    if created:
+                        self._release_resource(client_id, resource)
+                    raise
+                return
             return ParamAppliedHub.handle(self, peer, raw)
         except (RealtimeError, ProtocolRealtimeError) as error:
             command_id = raw.get("id") if isinstance(raw, dict) else None
