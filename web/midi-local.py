@@ -218,8 +218,9 @@ def configuration_from_args(args):
 
 def main(argv=None):
     parser = build_parser()
+    args = parser.parse_args(argv)
     try:
-        config = configuration_from_args(parser.parse_args(argv))
+        config = configuration_from_args(args)
     except ValueError as error:
         parser.error(str(error))
     server = MidiBridgeServer(config)
@@ -227,7 +228,7 @@ def main(argv=None):
     print("  device: http://{}:{}".format(query_host(config.device), config.device_port), flush=True)
     print("  browser: {}".format(config.launch_url()), flush=True)
     print("Press Ctrl+C to stop.", flush=True)
-    if parser.parse_args(argv).open:
+    if args.open:
         webbrowser.open(config.launch_url())
     try:
         server.serve_forever()
