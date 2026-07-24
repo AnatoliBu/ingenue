@@ -157,8 +157,7 @@ local function dispatch_grid_key(args)
   if vp.device and not vp.device._ingenue_virtual and vp.device.key then
     vp.device.key(x, y, z)
     handled = true
-  end
-  if vp.key then
+  elseif vp.key then
     vp.key(x, y, z)
     handled = true
   end
