@@ -6,20 +6,16 @@
   <meta name="theme-color" content="#08090b">
   <title>Ingenue gamepad</title>
   <link rel="stylesheet" href="./gamepad.css">
+  <link rel="stylesheet" href="./shared-nav.css">
 </head>
 <body>
   <main class="gamepad-surface">
     <header class="gamepad-topbar">
       <div><div class="gamepad-brand">Ingenue gamepad</div><div class="gamepad-endpoint" id="gamepad-endpoint"></div></div>
-      <nav class="gamepad-session" aria-label="Ingenue pages">
+      <nav class="gamepad-session" data-ingenue-nav="gamepad" aria-label="Ingenue pages">
         <span class="gamepad-pill" id="gamepad-status">connecting</span>
         <span class="gamepad-pill">rev <b id="gamepad-revision">—</b></span>
         <span class="gamepad-pill" id="gamepad-script">no active script</span>
-        <a class="gamepad-pill" href="./controllers.html">controllers</a>
-        <a class="gamepad-pill" href="./performance.html">performance</a>
-        <a class="gamepad-pill" href="./launchpad.html">Launchpad</a>
-        <a class="gamepad-pill" href="./params.html">Parameters</a>
-        <a class="gamepad-pill" href="./midi.html">MIDI Learn</a>
       </nav>
     </header>
 
@@ -70,6 +66,6 @@
       <p class="gamepad-notice" id="gamepad-notice">Waiting for authoritative session state…</p>
     </section>
   </main>
-  <script type="module">import {mountGamepadSurface} from './gamepad-surface.js'; mountGamepadSurface();</script>
+  <script type="module">import {mountSharedNavigation} from './shared-nav.js'; import {mountGamepadSurface} from './gamepad-surface.js'; mountSharedNavigation(); mountGamepadSurface();</script>
 </body>
 </html>
