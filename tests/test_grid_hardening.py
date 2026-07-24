@@ -6,6 +6,7 @@ from types import SimpleNamespace
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
+sys.path.insert(0, str(ROOT / "web"))
 
 from web.realtime_grid import GridAppliedAdapter, GridAppliedHub, RealtimeError
 
