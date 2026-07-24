@@ -13,3 +13,23 @@ test('socket close marks only sent commands uncertain and leaves queued work',()
 test('socket close schedules exponential reconnect and resubscribes',()=>{const{session,sockets,timers}=harness({reconnect:{minMs:100,maxMs:1000,factor:2}});session.connect();sockets[0].open();sockets[0].close();const reconnect=timers.find(t=>t.delay===100&&!t.cancelled);assert.ok(reconnect);reconnect.fn();assert.equal(sockets.length,2);sockets[1].open();assert.deepEqual(sockets[1].sent.slice(0,2).map(x=>x.type),['hello','subscribe']);});
 test('heartbeat watchdog closes stale sockets',()=>{const{session,sockets,timers}=harness({heartbeatTimeoutMs:321});let stale=0;session.addEventListener('stale',()=>stale++);session.connect();sockets[0].open();const watchdog=timers.find(t=>t.delay===321&&!t.cancelled);assert.ok(watchdog);watchdog.fn();assert.equal(stale,1);assert.equal(sockets[0].closed,true);});
 test('continuous commands remain coalesced and tracker stays bounded while disconnected',()=>{const{session,sockets}=harness();session.connect();for(let i=0;i<500;i++)session.command({target:'param',action:'set',args:{id:'cutoff',value:i}},{delivery:'coalescible',key:'cutoff'});assert.equal(session.queue.size,1);assert.equal(session.commands.pending.size,1);sockets[0].open();const commands=sockets[0].sent.filter(x=>x.type==='command');assert.equal(commands.length,1);assert.equal(commands[0].command.args.value,499);});
+test('default timers preserve the global receiver required by browsers',()=>{
+  const originalSetTimeout=globalThis.setTimeout;
+  const originalClearTimeout=globalThis.clearTimeout;
+  const sockets=[];
+  const timers=[];
+  globalThis.setTimeout=function(fn,delay){assert.equal(this,globalThis);const timer={fn,delay,cancelled:false};timers.push(timer);return timer;};
+  globalThis.clearTimeout=function(timer){assert.equal(this,globalThis);timer.cancelled=true;};
+  try{
+    const session=new RealtimeSession({socketFactory:()=>{const socket=new FakeSocket();sockets.push(socket);return socket;},url:'ws://device'});
+    session.connect();
+    sockets[0].open();
+    assert.equal(timers.length,1);
+    assert.equal(timers[0].delay,5000);
+    session.disconnect();
+    assert.equal(timers[0].cancelled,true);
+  }finally{
+    globalThis.setTimeout=originalSetTimeout;
+    globalThis.clearTimeout=originalClearTimeout;
+  }
+});
