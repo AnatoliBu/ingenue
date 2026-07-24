@@ -231,8 +231,19 @@ class ParamAppliedHub(GamepadAppliedHub):
                     "commands": list(PARAM_COMMANDS),
                     "ack": "lua-applied",
                     "midi": {"normalized_params": True, "profiles": "browser"},
-                    "grid": {"shapes": ["8x8", "16x8", "16x16"], "rotations": [0, 1, 2, 3]},
-                    "arc": {"rings": [2, 4], "leds_per_ring": 64, "varibright": 16},
+                    "grid": {
+                        "shapes": ["8x8", "16x8", "16x16"],
+                        "rotations": [0, 1, 2, 3],
+                        "ports": [1, 2, 3, 4],
+                        "persistent": True,
+                    },
+                    "arc": {
+                        "rings": [2, 4],
+                        "ports": [1, 2, 3, 4],
+                        "leds_per_ring": 64,
+                        "varibright": 16,
+                        "persistent": True,
+                    },
                     "gamepad": {
                         "buttons": sorted(GAMEPAD_BUTTONS),
                         "analog_axes": sorted(GAMEPAD_ANALOG_AXES),
