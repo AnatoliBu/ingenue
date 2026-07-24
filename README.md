@@ -17,9 +17,11 @@ service on :7777 and the two sit side by side, so there's zero risk to your
 setup. if you don't like it, run the uninstall script or remove the folder and
 you're exactly where you started.
 
-**fork development:** the proposed browser performance-surface extension is documented in
-[`docs/REMOTE-CONTROL-ARCHITECTURE.md`](docs/REMOTE-CONTROL-ARCHITECTURE.md) and
-[`docs/REMOTE-CONTROL-ROADMAP.md`](docs/REMOTE-CONTROL-ROADMAP.md).
+**browser performance stack:** the shipped architecture and remaining real-device
+validation are documented in
+[`docs/REMOTE-CONTROL-ARCHITECTURE.md`](docs/REMOTE-CONTROL-ARCHITECTURE.md),
+[`docs/REMOTE-CONTROL-ROADMAP.md`](docs/REMOTE-CONTROL-ROADMAP.md), and the
+feature-specific documents under `docs/`.
 
 **poke around without a norns:** [seajaysec.github.io/ingenue](https://seajaysec.github.io/ingenue/)
 is a static demo (every device call is faked, so nothing is connected to a real
@@ -68,6 +70,22 @@ device on your network.
     export/import so you can back up or share a patch with other people using
     ingenue. preset import is gated to the script it came from, so a preset
     only loads back where it belongs.
+- a browser performance stack with device-owned state and Lua-applied commands:
+  - K1–K3, E1–E3, parameters, virtual Grid, virtual Arc, gamepad and Launchpad
+    surfaces
+  - reconnect-safe snapshots, revisions, ownership leases and automatic release
+    of abandoned held controls
+  - persistent virtual Grid/Arc profiles without replacing physical devices
+- Browser MIDI Learn:
+  - notes, CC, pitch bend and relative encoder mappings scoped to the exact
+    script and MIDI device
+  - normalized values, soft takeover and Lua acknowledgement feedback
+  - a bundled dependency-free localhost bridge when the browser blocks Web MIDI
+    on ordinary LAN HTTP
+- a per-script UI Builder:
+  - compose Key, Encoder, normalized Parameter, Label and Spacer widgets
+  - responsive one-to-four-column layouts with autosave and live preview
+  - exact-script JSON import plus clipboard and file export
 - a script repository browser, made for a touch ui:
   - the whole community catalog (350+), with search, sort, and a multi-select
     tag filter
@@ -142,7 +160,7 @@ detects that and offers to install matching 64-bit builds it ships. (more in
 every norns repo on GitHub, badged by facet (`script` / `mod` / `library` /
 `engine`) so mods and shared libraries are first-class. already-cataloged or
 installed repos are skipped by default. click any author to see everything
-they've made for norns.
+they've made on norns.
 
 ![github discovery with facet badges](screenshots/desktop/discover.png)
 </details>
@@ -200,12 +218,12 @@ they've made for norns.
 
 ## stretch goals (PRs welcome)
 
-- a browser → MIDI bridge for PARAMS, using Web MIDI, so you could map a
-  controller on your computer to the running script's params over the live
-  matron link
+- deeper script capability manifests and adapters for structured custom state
+- specialized sequencer, sampler, waveform and piano-roll editors
+- hardware-neutral export for standalone controller prototypes
 - safer wide-range param edits (commit-on-tap for huge integer ranges)
 
-more in `DESIGN-NOTES.md`.
+more in `DESIGN-NOTES.md` and `docs/REMOTE-CONTROL-ROADMAP.md`.
 
 ## credits
 
