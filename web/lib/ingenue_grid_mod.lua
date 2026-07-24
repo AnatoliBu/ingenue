@@ -13,6 +13,7 @@ local M = {
   originals = {},
   wrapped = false,
   virtual_device = nil,
+  original_grid_update = nil,
 }
 
 local function clamp(value, low, high)
@@ -56,8 +57,16 @@ local function frame_for(port)
   if rows == 0 then rows = M.virtual_rows end
   local frame = M.frames[port]
   if frame == nil or frame.cols ~= cols or frame.rows ~= rows then
-    frame = {cols=cols, rows=rows, values={}, dirty=true, sequence=0, intensity=15}
-    for i=1,cols*rows do frame.values[i] = 0 end
+    local previous = frame and frame.values or {}
+    frame = {
+      cols=cols,
+      rows=rows,
+      values={},
+      dirty=true,
+      sequence=frame and frame.sequence or 0,
+      intensity=frame and frame.intensity or 15,
+    }
+    for i=1,cols*rows do frame.values[i] = previous[i] or 0 end
     M.frames[port] = frame
   end
   return frame
@@ -113,12 +122,13 @@ local function encode_frame(frame)
 end
 
 local function send_frame(port, force)
+  local vp = grid and grid.vports and grid.vports[port]
+  if not vp or not vp.device then return end
   local frame = frame_for(port)
   if not force and not frame.dirty then return end
   frame.sequence = frame.sequence + 1
   frame.dirty = false
-  local vp = grid.vports[port]
-  local virtual = vp and vp.device and vp.device._ingenue_virtual and 1 or 0
+  local virtual = vp.device._ingenue_virtual and 1 or 0
   send('/ingenue/grid/frame', {
     port, frame.cols, frame.rows, encode_frame(frame), frame.sequence,
     frame.intensity or 15, virtual
@@ -153,7 +163,20 @@ local function attach_virtual()
     vp.cols = M.virtual_device.cols
     vp.rows = M.virtual_device.rows
   end
-  frame_for(M.virtual_port)
+  if vp.device and vp.device._ingenue_virtual then frame_for(M.virtual_port) end
+end
+
+local function reconcile_devices()
+  attach_virtual()
+  for port=1,4 do
+    local vp = grid.vports[port]
+    if vp and vp.device then
+      send_frame(port, true)
+    elseif M.frames[port] then
+      M.frames[port] = nil
+      send('/ingenue/grid/disconnect', {port})
+    end
+  end
 end
 
 local function install_grid_wrappers()
@@ -196,7 +219,7 @@ local function install_grid_wrappers()
     M.original_grid_update = grid.update_devices
     grid.update_devices = function(...)
       local result = M.original_grid_update(...)
-      attach_virtual()
+      reconcile_devices()
       return result
     end
   end
@@ -218,13 +241,16 @@ end
 
 local function post_init()
   send_script_state(true)
-  for port=1,4 do
-    if grid.vports[port] and grid.vports[port].device then send_frame(port, true) end
-  end
+  reconcile_devices()
 end
 
 local function post_cleanup()
   send_script_state(false)
+  for port, frame in pairs(M.frames) do
+    for i=1,#frame.values do frame.values[i] = 0 end
+    frame.dirty = true
+    send_frame(port, true)
+  end
 end
 
 install_grid_wrappers()
