@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#08090b">
+  <title>Ingenue gamepad</title>
+  <link rel="stylesheet" href="./gamepad.css">
+</head>
+<body>
+  <main class="gamepad-surface">
+    <header class="gamepad-topbar">
+      <div><div class="gamepad-brand">Ingenue gamepad</div><div class="gamepad-endpoint" id="gamepad-endpoint"></div></div>
+      <nav class="gamepad-session" aria-label="Ingenue pages">
+        <span class="gamepad-pill" id="gamepad-status">connecting</span>
+        <span class="gamepad-pill">rev <b id="gamepad-revision">—</b></span>
+        <span class="gamepad-pill" id="gamepad-script">no active script</span>
+        <a class="gamepad-pill" href="./performance.html">performance</a>
+        <a class="gamepad-pill" href="./launchpad.html">Launchpad</a>
+        <a class="gamepad-pill" href="./midi.html">MIDI Learn</a>
+      </nav>
+    </header>
+
+    <section class="gamepad-panel">
+      <div class="gamepad-shoulders">
+        <button data-gamepad-control data-gamepad-button="L1">L1</button>
+        <label><span>L2</span><input id="gamepad-left-trigger" data-gamepad-control type="range" min="0" max="1" step="0.01" value="0"><b id="gamepad-left-trigger-value">0.00</b></label>
+        <label><span>R2</span><input id="gamepad-right-trigger" data-gamepad-control type="range" min="0" max="1" step="0.01" value="0"><b id="gamepad-right-trigger-value">0.00</b></label>
+        <button data-gamepad-control data-gamepad-button="R1">R1</button>
+      </div>
+
+      <div class="gamepad-deck">
+        <div class="gamepad-dpad" aria-label="D-pad">
+          <button class="dpad-up" data-gamepad-control data-gamepad-direction="Y:-1" aria-label="D-pad up">▲</button>
+          <button class="dpad-left" data-gamepad-control data-gamepad-direction="X:-1" aria-label="D-pad left">◀</button>
+          <div class="dpad-center"></div>
+          <button class="dpad-right" data-gamepad-control data-gamepad-direction="X:1" aria-label="D-pad right">▶</button>
+          <button class="dpad-down" data-gamepad-control data-gamepad-direction="Y:1" aria-label="D-pad down">▼</button>
+        </div>
+
+        <div class="gamepad-center-controls">
+          <div class="gamepad-menu-buttons">
+            <button data-gamepad-control data-gamepad-button="SELECT">select</button>
+            <button data-gamepad-control data-gamepad-button="START">start</button>
+          </div>
+          <p>touch / mouse / keyboard</p>
+        </div>
+
+        <div class="gamepad-face" aria-label="Face buttons">
+          <button class="face-y" data-gamepad-control data-gamepad-button="Y">Y</button>
+          <button class="face-x" data-gamepad-control data-gamepad-button="X">X</button>
+          <button class="face-b" data-gamepad-control data-gamepad-button="B">B</button>
+          <button class="face-a" data-gamepad-control data-gamepad-button="A">A</button>
+        </div>
+      </div>
+
+      <div class="gamepad-analogs">
+        <div class="gamepad-stick" id="gamepad-left-stick" data-gamepad-control role="group" aria-label="Left analog stick">
+          <div class="gamepad-stick-knob" style="aspect-ratio:1"><span>L3</span></div><div class="gamepad-stick-value">0.00, 0.00</div>
+        </div>
+        <button class="gamepad-stick-button" data-gamepad-control data-gamepad-button="L3">L3</button>
+        <button class="gamepad-stick-button" data-gamepad-control data-gamepad-button="R3">R3</button>
+        <div class="gamepad-stick" id="gamepad-right-stick" data-gamepad-control role="group" aria-label="Right analog stick">
+          <div class="gamepad-stick-knob" style="aspect-ratio:1"><span>R3</span></div><div class="gamepad-stick-value">0.00, 0.00</div>
+        </div>
+      </div>
+
+      <p class="gamepad-notice" id="gamepad-notice">Waiting for authoritative session state…</p>
+    </section>
+  </main>
+  <script type="module">import {mountGamepadSurface} from './gamepad-surface.js'; mountGamepadSurface();</script>
+</body>
+</html>

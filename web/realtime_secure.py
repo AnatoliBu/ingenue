@@ -5,17 +5,17 @@ import urllib.parse
 
 try:
     from .realtime_bridge import StateBridge
-    from .realtime_grid import GridAppliedAdapter, GridAppliedHub
+    from .realtime_gamepad import GamepadAppliedAdapter, GamepadAppliedHub
     from .realtime_server import RealtimeRequestHandler, ThreadingRealtimeServer
 except ImportError:
     from realtime_bridge import StateBridge
-    from realtime_grid import GridAppliedAdapter, GridAppliedHub
+    from realtime_gamepad import GamepadAppliedAdapter, GamepadAppliedHub
     from realtime_server import RealtimeRequestHandler, ThreadingRealtimeServer
 
 # Preserve the established injection seam used by tests and downstream wrappers.
-# These aliases now point at the Grid-aware subclasses.
-MidiAppliedAdapter = GridAppliedAdapter
-MidiAppliedHub = GridAppliedHub
+# These aliases now point at the most capable native-controller subclasses.
+MidiAppliedAdapter = GamepadAppliedAdapter
+MidiAppliedHub = GamepadAppliedHub
 
 
 def _default_port(scheme):
@@ -88,7 +88,7 @@ def serve_realtime(host, port, legacy):
     bridge.start()
     try:
         with OriginCheckedServer((host, port), hub, http_port, allowed) as server:
-            print("ingenue realtime on {}:{}/realtime (Lua-applied, Grid/Arc/MIDI-ready, origin-checked)".format(host, port), flush=True)
+            print("ingenue realtime on {}:{}/realtime (Lua-applied, Grid/Arc/Gamepad/MIDI-ready, origin-checked)".format(host, port), flush=True)
             server.serve_forever()
     finally:
         bridge.close()
