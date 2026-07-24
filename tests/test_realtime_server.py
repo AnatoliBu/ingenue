@@ -1,15 +1,18 @@
 import ast
 import json
+import os
 import struct
 import sys
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import patch
 
 ROOT=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT/'web'))
 
-from web.realtime_secure import origin_allowed
+import web.realtime_secure as realtime_secure
+from web.realtime_secure import OriginCheckedServer, origin_allowed
 from web.realtime_server import (
     LegacyAdapter,
     Peer,
@@ -53,7 +56,7 @@ class RealtimeServerTests(unittest.TestCase):
     def test_server_sources_parse_with_python_37_grammar(self):
         for relative in (
             'web/realtime_server.py','web/realtime_bridge.py','web/realtime_secure.py',
-            'web/ensure_mod_enabled.py','web/server.py'
+            'web/realtime_grid.py','web/ensure_mod_enabled.py','web/server.py'
         ):
             source=(ROOT/relative).read_text(encoding='utf-8')
             ast.parse(source,filename=relative,feature_version=(3,7))
@@ -79,6 +82,70 @@ class RealtimeServerTests(unittest.TestCase):
     def test_origin_exact_allowlist_supports_reverse_proxy(self):
         self.assertTrue(origin_allowed('https://music.example','norns.local:7778',7777,{'https://music.example'}))
         self.assertFalse(origin_allowed('https://music.example.evil','norns.local:7778',7777,{'https://music.example'}))
+
+    def test_origin_checked_server_preserves_realtime_hub(self):
+        hub=object()
+        server=OriginCheckedServer(('127.0.0.1',0),hub,7777,())
+        try:
+            self.assertIs(server.hub,hub)
+        finally:
+            server.server_close()
+
+    def _serve_mode_events(self, strict_value):
+        events=[]
+        adapter=object();hub=object()
+
+        class FakeBridge:
+            def __init__(self, received_hub, host, port):
+                self.received_hub=received_hub
+                events.append(('bridge-init',received_hub,host,port))
+            def start(self):events.append(('bridge-start',))
+            def close(self):events.append(('bridge-close',))
+
+        class FakeServer:
+            def __init__(self, kind, address, received_hub, extra=()):
+                self.kind=kind
+                events.append(('server-init',kind,address,received_hub,extra))
+            def __enter__(self):events.append(('server-enter',self.kind));return self
+            def __exit__(self,*_):events.append(('server-exit',self.kind))
+            def serve_forever(self):events.append(('serve',self.kind))
+
+        def open_server(address, received_hub):
+            return FakeServer('open',address,received_hub)
+
+        def strict_server(address, received_hub, http_port, allowed):
+            return FakeServer('strict',address,received_hub,(http_port,tuple(allowed)))
+
+        replacements={
+            'StateBridge':FakeBridge,
+            'MidiAppliedAdapter':lambda *_args,**_kwargs:adapter,
+            'MidiAppliedHub':lambda received_adapter:hub if received_adapter is adapter else None,
+            'ThreadingRealtimeServer':open_server,
+            'OriginCheckedServer':strict_server,
+        }
+        environment={
+            'INGENUE_REALTIME_STRICT':strict_value,
+            'INGENUE_STATE_PORT':'7779',
+            'INGENUE_REALTIME_ORIGINS':'https://music.example',
+        }
+        with patch.multiple(realtime_secure,**replacements):
+            with patch.dict(os.environ,environment,clear=True):
+                realtime_secure.serve_realtime('127.0.0.1',7778,SimpleNamespace(PORT=7777))
+        return events,hub
+
+    def test_realtime_server_is_open_for_local_network_by_default(self):
+        events,hub=self._serve_mode_events('')
+        self.assertIn(('server-init','open',('127.0.0.1',7778),hub,()),events)
+        self.assertIn(('serve','open'),events)
+        self.assertIn(('bridge-close',),events)
+        self.assertFalse(any(event[:2]==('server-init','strict') for event in events))
+
+    def test_realtime_server_strict_origin_mode_is_opt_in(self):
+        events,hub=self._serve_mode_events('1')
+        self.assertIn(('server-init','strict',('127.0.0.1',7778),hub,(7777,('https://music.example',))),events)
+        self.assertIn(('serve','strict'),events)
+        self.assertIn(('bridge-close',),events)
+        self.assertFalse(any(event[:2]==('server-init','open') for event in events))
 
     def make_hub(self, realtime_port=9000):
         calls=[]
