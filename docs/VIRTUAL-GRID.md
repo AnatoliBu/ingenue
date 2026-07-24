@@ -23,7 +23,7 @@ Grid input preserves standard `key(x, y, z)` semantics. Pointer tracking is cont
 - a balanced release before the next cell is pressed;
 - release-all on disconnect, page hide or pointer cancellation.
 
-## Output
+## Output and lifecycle
 
 `led`, `all`, `intensity`, `rotation` and `refresh` are mirrored into an authoritative frame. Frames include:
 
@@ -34,8 +34,10 @@ Grid input preserves standard `key(x, y, z)` semantics. Pointer tracking is cont
 - virtual/physical identity;
 - rotation 0–3.
 
-Changing vport publishes a delete operation for the old port before the new full frame, preventing stale virtual devices from remaining in reconnect snapshots.
+Changing vport publishes a delete operation for the old port before the new full frame. Device reconciliation also publishes `/ingenue/grid/disconnect` whenever a previously mirrored physical or virtual port disappears, preventing stale devices from remaining in reconnect snapshots.
+
+On script cleanup, every attached Grid frame is zeroed and republished before the next script starts. The browser therefore never treats LEDs from the previous script as current state.
 
 ## Device validation
 
-CI validates shape and rotation normalization, OSC command validation, stale-port deletion, persistent configuration wiring, multitouch slide semantics, Python 3.7 compatibility and the legacy Grid/Arc/MIDI contracts. Real-device validation remains required against awake, mlr, meadowphysics, n.kria, ndls and cheat_codes_2.
+CI validates shape and rotation normalization, OSC command validation, stale-port deletion, persistent configuration wiring, multitouch slide semantics, cleanup frames, Python 3.7 compatibility and the legacy Grid/Arc/MIDI contracts. Real-device validation remains required against awake, mlr, meadowphysics, n.kria, ndls and cheat_codes_2.

@@ -29,6 +29,7 @@ h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .13em; color: #
 select, input { min-width: 0; border: 1px solid var(--line); border-radius: 10px; background: #0b0d11; color: inherit; padding: 10px; }
 .device-options { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
 .controller-config { display: grid; grid-template-columns: repeat(3, minmax(90px, 1fr)) auto; gap: 8px; margin-bottom: 12px; }
+.arc-controller-config { grid-template-columns: repeat(2, minmax(110px, 1fr)) auto; }
 .controller-config label { display: grid; gap: 4px; min-width: 0; }
 .controller-config label span { color: var(--muted); font-size: 10px; text-transform: uppercase; letter-spacing: .1em; }
 .controller-config button { align-self: end; min-height: 40px; border: 1px solid #48505d; border-radius: 10px; background: #242a31; color: inherit; padding: 0 14px; font-weight: 700; }
@@ -67,7 +68,7 @@ body:not([data-ready]) .grid, body:not([data-ready]) .arc-deck { filter: graysca
   .side .panel:last-child { grid-column: 1 / -1; }
 }
 @media (max-width: 620px) {
-  .controller-config { grid-template-columns: 1fr 1fr; }
+  .controller-config, .arc-controller-config { grid-template-columns: 1fr 1fr; }
   .controller-config button { min-height: 42px; }
 }
 @media (max-width: 560px) {

@@ -7,6 +7,7 @@ local M = {
   state_port = 7779,
   virtual_port = 1,
   virtual_rings = 4,
+  config = {port=1, rings=4},
   frames = {},
   originals = {},
   wrapped = false,
@@ -14,6 +15,7 @@ local M = {
   original_arc_update = nil,
 }
 
+local CONFIG_PATH = _path.code .. 'ingenue/data/virtual-arc-config'
 local TAU = math.pi * 2
 
 local function clamp(value, low, high)
@@ -31,6 +33,36 @@ local function strict_integer(value, label, low, high)
     error(label .. ' must be between ' .. low .. ' and ' .. high)
   end
   return value
+end
+
+local function valid_rings(rings)
+  return rings == 2 or rings == 4
+end
+
+local function parse_config(line)
+  local port, rings = tostring(line or ''):match('^(%d+),(%d+)$')
+  port, rings = tonumber(port), tonumber(rings)
+  if not port or port < 1 or port > 4 or not valid_rings(rings) then return nil end
+  return {port=port, rings=rings}
+end
+
+local function read_config()
+  local file = io.open(CONFIG_PATH, 'r')
+  if not file then return end
+  local parsed = parse_config(file:read('*l'))
+  file:close()
+  if parsed then
+    M.config = parsed
+    M.virtual_port = parsed.port
+    M.virtual_rings = parsed.rings
+  end
+end
+
+local function persist_config(config)
+  local file, err = io.open(CONFIG_PATH, 'w')
+  if not file then error('could not persist virtual Arc config: ' .. tostring(err)) end
+  file:write(string.format('%d,%d\n', config.port, config.rings))
+  file:close()
 end
 
 local function read_state_port()
@@ -61,12 +93,12 @@ local function frame_for(port)
   local rings = M.virtual_rings
   if vp and vp.device and tonumber(vp.device.rings) then
     local reported = math.floor(tonumber(vp.device.rings))
-    if reported == 2 or reported == 4 then rings = reported end
+    if valid_rings(reported) then rings = reported end
   end
   local frame = M.frames[port]
   if frame == nil or frame.rings ~= rings then
     local previous = frame and frame.values or {}
-    frame = {rings=rings, values={}, dirty=true, sequence=0, intensity=15}
+    frame = {rings=rings, values={}, dirty=true, sequence=frame and frame.sequence or 0, intensity=frame and frame.intensity or 15}
     for i=1,rings*64 do frame.values[i] = previous[i] or 0 end
     M.frames[port] = frame
   end
@@ -153,12 +185,13 @@ local function encode_frame(frame)
 end
 
 local function send_frame(port, force)
+  local vp = arc and arc.vports and arc.vports[port]
+  if not vp or not vp.device then return end
   local frame = frame_for(port)
   if not force and not frame.dirty then return end
   frame.sequence = frame.sequence + 1
   frame.dirty = false
-  local vp = arc.vports[port]
-  local virtual = vp and vp.device and vp.device._ingenue_virtual and 1 or 0
+  local virtual = vp.device._ingenue_virtual and 1 or 0
   send('/ingenue/arc/frame', {
     port, frame.rings, encode_frame(frame), frame.sequence,
     frame.intensity or 15, virtual
@@ -181,17 +214,63 @@ local function make_virtual_device(port)
   }
 end
 
-local function attach_virtual()
-  if not arc or not arc.vports then return end
-  local vp = arc.vports[M.virtual_port]
-  if not vp then return end
-  if vp.device == nil then
-    if M.virtual_device == nil then
-      M.virtual_device = make_virtual_device(M.virtual_port)
-    end
-    vp.device = M.virtual_device
+local function update_virtual_device()
+  if M.virtual_device == nil then
+    M.virtual_device = make_virtual_device(M.virtual_port)
   end
+  M.virtual_device.port = M.virtual_port
+  M.virtual_device.rings = M.virtual_rings
+  M.virtual_device.id = -2000 - M.virtual_port
+end
+
+local function detach_virtual(port)
+  local vp = arc and arc.vports and arc.vports[port]
+  if vp and vp.device and vp.device._ingenue_virtual then
+    vp.device = nil
+    M.frames[port] = nil
+    send('/ingenue/arc/disconnect', {port})
+  end
+end
+
+local function attach_virtual()
+  if not arc or not arc.vports then return false end
+  local vp = arc.vports[M.virtual_port]
+  if not vp then return false end
+  update_virtual_device()
+  if vp.device == nil then vp.device = M.virtual_device end
+  if vp.device ~= M.virtual_device then return false end
   frame_for(M.virtual_port)
+  return true
+end
+
+local function reconcile_devices()
+  attach_virtual()
+  for port=1,4 do
+    local vp = arc.vports[port]
+    if vp and vp.device then
+      send_frame(port, true)
+    elseif M.frames[port] then
+      M.frames[port] = nil
+      send('/ingenue/arc/disconnect', {port})
+    end
+  end
+end
+
+local function apply_config(config)
+  local target = arc and arc.vports and arc.vports[config.port]
+  if not target then error('arc vport not found') end
+  if target.device and not target.device._ingenue_virtual then
+    error('target arc vport is occupied by a physical device')
+  end
+  local old_port = M.virtual_port
+  if old_port ~= config.port then detach_virtual(old_port) end
+  M.config = {port=config.port, rings=config.rings}
+  M.virtual_port = config.port
+  M.virtual_rings = config.rings
+  update_virtual_device()
+  M.frames[config.port] = nil
+  if not attach_virtual() then error('virtual Arc could not attach to requested vport') end
+  send_frame(config.port, true)
 end
 
 local function install_arc_wrappers()
@@ -239,7 +318,7 @@ local function install_arc_wrappers()
     M.original_arc_update = arc.update_devices
     arc.update_devices = function(...)
       local result = M.original_arc_update(...)
-      attach_virtual()
+      reconcile_devices()
       return result
     end
   end
@@ -286,6 +365,18 @@ local function execute(args, action)
     dispatch_delta(args[4], args[5], args[6])
   elseif action == 'key' then
     dispatch_key(args[4], args[5], args[6])
+  elseif action == 'configure' then
+    local config = {
+      port = strict_integer(args[4], 'arc port', 1, 4),
+      rings = strict_integer(args[5], 'arc rings', 2, 4),
+    }
+    if not valid_rings(config.rings) then error('arc rings must be 2 or 4') end
+    local target = arc and arc.vports and arc.vports[config.port]
+    if target and target.device and not target.device._ingenue_virtual then
+      error('target arc vport is occupied by a physical device')
+    end
+    persist_config(config)
+    apply_config(config)
   else
     error('unsupported Arc command arc.' .. tostring(action))
   end
@@ -293,16 +384,15 @@ end
 
 local function pre_init()
   read_state_port()
+  read_config()
   install_arc_wrappers()
-  attach_virtual()
+  local ok, err = pcall(apply_config, M.config)
+  if not ok then print('ingenue virtual Arc profile inactive: ' .. tostring(err)) end
 end
 
 local function post_init()
   install_arc_wrappers()
-  attach_virtual()
-  for port=1,4 do
-    if arc.vports[port] and arc.vports[port].device then send_frame(port, true) end
-  end
+  reconcile_devices()
 end
 
 local function post_cleanup()
@@ -314,6 +404,7 @@ local function post_cleanup()
 end
 
 dispatcher.register_handler('arc', execute)
+read_config()
 install_arc_wrappers()
 attach_virtual()
 mods.hook.register('script_pre_init', 'ingenue Arc pre-init', pre_init)

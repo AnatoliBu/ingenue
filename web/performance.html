@@ -49,12 +49,21 @@
           <div class="panel-head">
             <h2>Arc</h2>
             <div class="device-options">
-              <select id="arc-port" data-performance-control aria-label="Arc port"></select>
-              <select id="arc-layout" data-performance-control aria-label="Arc layout">
-                <option value="4">4 rings</option>
-                <option value="2">2 rings</option>
+              <select id="arc-port" data-performance-control aria-label="Arc display port"></select>
+              <select id="arc-layout" data-performance-control aria-label="Arc display layout">
+                <option value="4">show 4 rings</option>
+                <option value="2">show 2 rings</option>
               </select>
             </div>
+          </div>
+          <div class="controller-config arc-controller-config" aria-label="Virtual Arc configuration">
+            <label><span>vport</span><select id="arc-config-port" data-performance-control>
+              <option value="1">1</option><option value="2">2</option><option value="3">3</option><option value="4">4</option>
+            </select></label>
+            <label><span>device rings</span><select id="arc-config-rings" data-performance-control>
+              <option value="4" selected>4 rings</option><option value="2">2 rings</option>
+            </select></label>
+            <button id="arc-apply" data-performance-control type="button">apply</button>
           </div>
           <div class="arc-deck" id="arc" aria-label="Virtual Arc"></div>
           <p class="notice" id="arc-notice">Waiting for authoritative state…</p>
@@ -102,6 +111,6 @@
       </aside>
     </div>
   </main>
-  <script type="module">import {mountSharedNavigation} from './shared-nav.js'; import {mountPerformanceSurface} from './performance-surface.js'; import {mountGridHardening} from './grid-hardening-ui.js'; mountSharedNavigation(); const session=mountPerformanceSurface(); mountGridHardening(session);</script>
+  <script type="module">import {mountSharedNavigation} from './shared-nav.js'; import {mountPerformanceSurface} from './performance-surface.js'; import {mountGridHardening} from './grid-hardening-ui.js'; import {mountArcHardening} from './arc-hardening-ui.js'; mountSharedNavigation(); const session=mountPerformanceSurface(); mountGridHardening(session); mountArcHardening(session);</script>
 </body>
 </html>
