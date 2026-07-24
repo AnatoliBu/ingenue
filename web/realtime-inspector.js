@@ -1,9 +1,25 @@
+function validPort(value, fallback) {
+  const port=Number(value);
+  return Number.isInteger(port)&&port>0&&port<65536?port:fallback;
+}
+
+export function realtimeHost(value, fallback) {
+  const raw=String(value||'').trim();
+  if(!raw)return fallback;
+  try{
+    const parsed=new URL(`http://${raw}`);
+    if(parsed.username||parsed.password||parsed.port||parsed.pathname!=='/'||parsed.search||parsed.hash)return fallback;
+    return parsed.hostname||fallback;
+  }catch{return fallback;}
+}
+
 export function realtimeUrl(locationLike=location) {
-  const httpPort=Number(locationLike.port||7777);
-  const configured=new URLSearchParams(locationLike.search||'').get('rt');
-  const port=configured?Number(configured):httpPort+1;
+  const httpPort=validPort(locationLike.port||7777,7777);
+  const parameters=new URLSearchParams(locationLike.search||'');
+  const port=validPort(parameters.get('rt'),httpPort+1);
+  const host=realtimeHost(parameters.get('device'),locationLike.hostname);
   const protocol=locationLike.protocol==='https:'?'wss:':'ws:';
-  return `${protocol}//${locationLike.hostname}:${port}/realtime`;
+  return `${protocol}//${host}:${port}/realtime`;
 }
 
 export async function mountInspector(root=document) {
