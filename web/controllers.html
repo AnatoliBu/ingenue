@@ -6,16 +6,17 @@
   <meta name="theme-color" content="#08090b">
   <title>Ingenue controllers</title>
   <link rel="stylesheet" href="./controllers.css">
+  <link rel="stylesheet" href="./shared-nav.css">
 </head>
 <body>
   <main class="hub">
     <header class="hub-head">
       <div><div class="hub-brand">Ingenue controllers</div><div class="hub-endpoint" id="hub-endpoint"></div></div>
-      <div class="hub-session">
+      <nav class="hub-session" data-ingenue-nav="controllers" aria-label="Ingenue pages">
         <span class="hub-pill" id="hub-connection">connecting</span>
         <span class="hub-pill">rev <b id="hub-revision">—</b></span>
         <span class="hub-pill" id="hub-script">no active script</span>
-      </div>
+      </nav>
     </header>
     <section class="hub-panel">
       <div class="hub-tools">
@@ -26,6 +27,6 @@
       <p class="hub-note">The readiness page never changes audio or controller state. The ping command is handled inside the Python realtime server.</p>
     </section>
   </main>
-  <script type="module">import {mountControllerHub} from './controllers.js'; mountControllerHub();</script>
+  <script type="module">import {mountSharedNavigation} from './shared-nav.js'; import {mountControllerHub} from './controllers.js'; mountSharedNavigation(); mountControllerHub();</script>
 </body>
 </html>

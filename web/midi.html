@@ -1,7 +1,46 @@
-<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="theme-color" content="#090a0c"><title>Ingenue MIDI Learn</title><link rel="stylesheet" href="./midi.css"></head><body><main class="page">
-<header class="top"><div><div class="brand">Ingenue MIDI Learn</div><div class="muted">Browser-hosted MIDI → Lua-applied Norns controls</div></div><div class="chips"><span class="chip" id="midi-status">connecting</span><span class="chip" id="midi-script">no active script</span><a class="chip" href="./performance.html">performance</a><a class="chip" href="./realtime-inspector.html">inspector</a></div></header>
-<div class="layout">
-<section class="panel"><h2>MIDI access</h2><div class="stack"><button class="primary" id="midi-permission">Grant MIDI permission</button><label class="stack"><span class="muted">Input</span><select id="midi-input"><option value="">select MIDI input</option></select></label><div><div class="muted">Outputs detected</div><div class="ports" id="midi-outputs">permission not granted</div></div><div><div class="muted">Last message</div><div class="monitor" id="midi-monitor">—</div></div></div></section>
-<section class="panel"><h2>Learn target</h2><div class="learn-grid"><label class="stack"><span class="muted">Target</span><select id="midi-target-kind"><option value="param">Norns parameter</option><option value="key">Hardware key K</option><option value="encoder">Hardware encoder E</option></select></label><label class="stack"><span class="muted">Param id or K/E number</span><input id="midi-target-value" value="cutoff"></label><label class="stack"><span class="muted">Mode</span><select id="midi-mode"><option value="absolute">absolute</option><option value="relative-twos">relative two's complement</option><option value="relative-offset">relative binary offset</option><option value="relative-sign">relative sign/magnitude</option></select></label><label class="check"><input id="midi-pickup" type="checkbox" checked>soft takeover / pickup</label><button class="primary full" id="midi-learn" disabled>Learn next MIDI message</button></div><p class="notice" id="midi-notice"></p></section>
-<section class="panel wide"><h2>Exact script + device profile</h2><div id="midi-mappings"></div></section>
-</div></main><script type="module">import{mountMidiSurface}from'./midi-surface.js';mountMidiSurface();</script></body></html>
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#090a0c">
+  <title>Ingenue MIDI Learn</title>
+  <link rel="stylesheet" href="./midi.css">
+  <link rel="stylesheet" href="./shared-nav.css">
+</head>
+<body>
+  <main class="page">
+    <header class="top">
+      <div><div class="brand">Ingenue MIDI Learn</div><div class="muted">Browser-hosted MIDI → Lua-applied Norns controls</div></div>
+      <nav class="chips" data-ingenue-nav="midi" aria-label="Ingenue pages">
+        <span class="chip" id="midi-status">connecting</span>
+        <span class="chip" id="midi-script">no active script</span>
+      </nav>
+    </header>
+    <div class="layout">
+      <section class="panel">
+        <h2>MIDI access</h2>
+        <div class="stack">
+          <button class="primary" id="midi-permission">Grant MIDI permission</button>
+          <label class="stack"><span class="muted">Input</span><select id="midi-input"><option value="">select MIDI input</option></select></label>
+          <div><div class="muted">Outputs detected</div><div class="ports" id="midi-outputs">permission not granted</div></div>
+          <div><div class="muted">Last message</div><div class="monitor" id="midi-monitor">—</div></div>
+        </div>
+      </section>
+      <section class="panel">
+        <h2>Learn target</h2>
+        <div class="learn-grid">
+          <label class="stack"><span class="muted">Target</span><select id="midi-target-kind"><option value="param">Norns parameter</option><option value="key">Hardware key K</option><option value="encoder">Hardware encoder E</option></select></label>
+          <label class="stack"><span class="muted">Param id or K/E number</span><input id="midi-target-value" value="cutoff"></label>
+          <label class="stack"><span class="muted">Mode</span><select id="midi-mode"><option value="absolute">absolute</option><option value="relative-twos">relative two's complement</option><option value="relative-offset">relative binary offset</option><option value="relative-sign">relative sign/magnitude</option></select></label>
+          <label class="check"><input id="midi-pickup" type="checkbox" checked>soft takeover / pickup</label>
+          <button class="primary full" id="midi-learn" disabled>Learn next MIDI message</button>
+        </div>
+        <p class="notice" id="midi-notice"></p>
+      </section>
+      <section class="panel wide"><h2>Exact script + device profile</h2><div id="midi-mappings"></div></section>
+    </div>
+  </main>
+  <script type="module">import {mountSharedNavigation} from './shared-nav.js'; import {mountMidiSurface} from './midi-surface.js'; mountSharedNavigation(); mountMidiSurface();</script>
+</body>
+</html>

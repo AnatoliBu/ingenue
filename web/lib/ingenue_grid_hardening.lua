@@ -144,8 +144,32 @@ local function apply_config(config)
   send_frame(config.port, true)
 end
 
+local function dispatch_grid_key(args)
+  local port = strict_integer(args[4], 'grid port', 1, 4)
+  local vp = grid and grid.vports and grid.vports[port]
+  if not vp then error('grid port not found') end
+  local cols = math.max(1, vp.cols or grid_adapter.virtual_cols)
+  local rows = math.max(1, vp.rows or grid_adapter.virtual_rows)
+  local x = strict_integer(args[5], 'grid x', 1, cols)
+  local y = strict_integer(args[6], 'grid y', 1, rows)
+  local z = strict_integer(args[7], 'grid state', 0, 1)
+  local handled = false
+  if vp.device and not vp.device._ingenue_virtual and vp.device.key then
+    vp.device.key(x, y, z)
+    handled = true
+  elseif vp.key then
+    vp.key(x, y, z)
+    handled = true
+  end
+  if not handled then error('grid port has no key handler') end
+end
+
 local function execute(args, action)
-  if action ~= 'configure' then error('unsupported Grid hardening command grid.' .. tostring(action)) end
+  if action == 'key' then
+    dispatch_grid_key(args)
+    return
+  end
+  if action ~= 'configure' then error('unsupported Grid command grid.' .. tostring(action)) end
   local config = {
     port = strict_integer(args[4], 'grid port', 1, 4),
     cols = strict_integer(args[5], 'grid cols', 1, 32),

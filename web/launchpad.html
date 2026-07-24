@@ -6,6 +6,7 @@
   <meta name="theme-color" content="#08090b">
   <title>Ingenue Launchpad</title>
   <link rel="stylesheet" href="./launchpad.css">
+  <link rel="stylesheet" href="./shared-nav.css">
 </head>
 <body>
   <main class="launchpad-surface">
@@ -14,16 +15,10 @@
         <div class="launchpad-brand">Ingenue Launchpad</div>
         <div class="launchpad-endpoint" id="launchpad-endpoint"></div>
       </div>
-      <nav class="launchpad-session" aria-label="Ingenue pages">
+      <nav class="launchpad-session" data-ingenue-nav="launchpad" aria-label="Ingenue pages">
         <span class="launchpad-pill" id="launchpad-status">connecting</span>
         <span class="launchpad-pill">rev <b id="launchpad-revision">—</b></span>
         <span class="launchpad-pill" id="launchpad-script">no active script</span>
-        <a class="launchpad-pill" href="./controllers.html">controllers</a>
-        <a class="launchpad-pill" href="./performance.html">performance</a>
-        <a class="launchpad-pill" href="./gamepad.html">Gamepad</a>
-        <a class="launchpad-pill" href="./params.html">Parameters</a>
-        <a class="launchpad-pill" href="./midi.html">MIDI Learn</a>
-        <a class="launchpad-pill" href="./realtime-inspector.html">inspector</a>
       </nav>
     </header>
 
@@ -65,6 +60,6 @@
       </div>
     </section>
   </main>
-  <script type="module">import {mountLaunchpadSurface} from './launchpad-surface.js'; mountLaunchpadSurface();</script>
+  <script type="module">import {mountSharedNavigation} from './shared-nav.js'; import {mountLaunchpadSurface} from './launchpad-surface.js'; mountSharedNavigation(); mountLaunchpadSurface();</script>
 </body>
 </html>

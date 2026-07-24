@@ -104,7 +104,11 @@ local function set_normalized(id, raw)
 end
 
 local function execute_param(args, action)
-  if action == 'describe' then
+  if action == 'set' then
+    local id = tostring(args[4] or '')
+    get_param(id)
+    params:set(id, strict_number(args[5], 'param value'))
+  elseif action == 'describe' then
     return descriptor(args[4])
   elseif action == 'set_normalized' then
     return set_normalized(args[4], args[5])
@@ -113,8 +117,21 @@ local function execute_param(args, action)
     get_param(id)
     params:delta(id, strict_integer(args[5], 'parameter delta', -127, 127))
     return descriptor(id)
+  else
+    error('unsupported parameter command param.' .. tostring(action))
   end
-  error('unsupported MIDI command param.' .. action)
+end
+
+local function execute_control(args, action)
+  if action == 'enc' then
+    _norns.enc(strict_integer(args[4], 'encoder', 1, 3),
+      strict_integer(args[5], 'delta', -127, 127))
+  elseif action == 'key' then
+    _norns.key(strict_integer(args[4], 'key', 1, 3),
+      strict_integer(args[5], 'key state', 0, 1))
+  else
+    error('unsupported control command control.' .. tostring(action))
+  end
 end
 
 function M.register_handler(target, handler)
@@ -133,6 +150,8 @@ local function execute(args)
   local payload
   if target == 'param' then
     payload = execute_param(args, action)
+  elseif target == 'control' then
+    payload = execute_control(args, action)
   elseif M.handlers[target] then
     payload = M.handlers[target](args, action)
   else
@@ -157,7 +176,7 @@ local function install_wrapper()
   if osc.event == M.osc_wrapper then return end
   M.previous_osc_event = osc.event
   M.osc_wrapper = function(path, args, from)
-    if path == '/ingenue/midi-command' or path == '/ingenue/control-command' then
+    if path == '/ingenue/command' or path == '/ingenue/midi-command' or path == '/ingenue/control-command' then
       handle(args or {})
       return
     end
@@ -169,11 +188,16 @@ end
 local function post_init() install_wrapper() end
 
 local function cleanup()
-  if osc.event == M.osc_wrapper then osc.event = M.previous_osc_event end
-  M.previous_osc_event = nil
-  M.osc_wrapper = nil
+  -- Keep the controller dispatcher alive between scripts. When another handler
+  -- replaced osc.event, preserve it as the delegate instead of swallowing OSC.
+  if osc.event ~= M.osc_wrapper then
+    install_wrapper()
+  else
+    M.previous_osc_event = nil
+  end
 end
 
+install_wrapper()
 mods.hook.register('script_pre_init', 'ingenue MIDI pre-init', install_wrapper)
 mods.hook.register('script_post_init', 'ingenue MIDI post-init', post_init)
 mods.hook.register('script_post_cleanup', 'ingenue MIDI cleanup', cleanup)

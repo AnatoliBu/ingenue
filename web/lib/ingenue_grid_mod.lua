@@ -1,7 +1,6 @@
--- Ingenue realtime Lua adapter.
--- Executes browser commands inside matron, returns applied ack/reject over a
--- localhost OSC bridge, and mirrors Grid LED frames without replacing a
--- connected physical Grid.
+-- Ingenue realtime Grid state adapter.
+-- Mirrors Grid LED frames without replacing a connected physical Grid. All
+-- browser command OSC is owned by ingenue_midi.lua's shared dispatcher.
 
 local mods = require 'core/mods'
 
@@ -14,31 +13,12 @@ local M = {
   originals = {},
   wrapped = false,
   virtual_device = nil,
-  previous_osc_event = nil,
-  osc_wrapper = nil,
 }
 
 local function clamp(value, low, high)
   value = tonumber(value) or 0
   if value < low then return low end
   if value > high then return high end
-  return value
-end
-
-local function strict_integer(value, label, low, high)
-  if type(value) ~= 'number' or value ~= math.floor(value) then
-    error(label .. ' must be an integer')
-  end
-  if value < low or value > high then
-    error(label .. ' must be between ' .. low .. ' and ' .. high)
-  end
-  return value
-end
-
-local function strict_number(value, label)
-  if type(value) ~= 'number' or value ~= value or value == math.huge or value == -math.huge then
-    error(label .. ' must be finite')
-  end
   return value
 end
 
@@ -222,75 +202,6 @@ local function install_grid_wrappers()
   end
 end
 
-local function dispatch_grid_key(port, x, y, z)
-  port = strict_integer(port, 'grid port', 1, 4)
-  local vp = grid.vports[port]
-  if not vp then error('grid port not found') end
-  local cols = math.max(1, vp.cols or M.virtual_cols)
-  local rows = math.max(1, vp.rows or M.virtual_rows)
-  x = strict_integer(x, 'grid x', 1, cols)
-  y = strict_integer(y, 'grid y', 1, rows)
-  z = strict_integer(z, 'grid state', 0, 1)
-  local handled = false
-  if vp.device and not vp.device._ingenue_virtual and vp.device.key then
-    vp.device.key(x, y, z)
-    handled = true
-  end
-  if vp.key then
-    vp.key(x, y, z)
-    handled = true
-  end
-  if not handled then error('grid port has no key handler') end
-end
-
-local function execute_command(args)
-  local id = tostring(args[1] or '')
-  local target = tostring(args[2] or '')
-  local action = tostring(args[3] or '')
-  if id == '' then error('command id is required') end
-
-  if target == 'control' and action == 'enc' then
-    _norns.enc(strict_integer(args[4], 'encoder', 1, 3),
-      strict_integer(args[5], 'delta', -127, 127))
-  elseif target == 'control' and action == 'key' then
-    _norns.key(strict_integer(args[4], 'key', 1, 3),
-      strict_integer(args[5], 'key state', 0, 1))
-  elseif target == 'param' and action == 'set' then
-    local param_id = tostring(args[4] or '')
-    if param_id == '' then error('param id is required') end
-    params:set(param_id, strict_number(args[5], 'param value'))
-  elseif target == 'grid' and action == 'key' then
-    dispatch_grid_key(args[4], args[5], args[6], args[7])
-  else
-    error('unsupported command ' .. target .. '.' .. action)
-  end
-  return id
-end
-
-local function handle_command(args)
-  local id = tostring(args[1] or '')
-  local ok, result = pcall(execute_command, args)
-  if ok then
-    -- The bridge correlates the first ACK argument with its pending wire id.
-    send('/ingenue/ack', {id})
-  else
-    send('/ingenue/reject', {id, tostring(result)})
-  end
-end
-
-local function install_osc_wrapper()
-  if osc.event == M.osc_wrapper then return end
-  M.previous_osc_event = osc.event
-  M.osc_wrapper = function(path, args, from)
-    if path == '/ingenue/command' then
-      handle_command(args or {})
-      return
-    end
-    if M.previous_osc_event then return M.previous_osc_event(path, args, from) end
-  end
-  osc.event = M.osc_wrapper
-end
-
 local function send_script_state(active)
   send('/ingenue/script/state', {
     active and 1 or 0,
@@ -303,13 +214,9 @@ local function pre_init()
   read_state_port()
   install_grid_wrappers()
   attach_virtual()
-  install_osc_wrapper()
 end
 
 local function post_init()
-  -- A script may assign osc.event inside init(), after script_pre_init. Re-wrap
-  -- here so the latest script handler remains chained behind Ingenue commands.
-  install_osc_wrapper()
   send_script_state(true)
   for port=1,4 do
     if grid.vports[port] and grid.vports[port].device then send_frame(port, true) end
@@ -318,15 +225,12 @@ end
 
 local function post_cleanup()
   send_script_state(false)
-  if osc.event == M.osc_wrapper then osc.event = M.previous_osc_event end
-  M.previous_osc_event = nil
-  M.osc_wrapper = nil
 end
 
 install_grid_wrappers()
 attach_virtual()
 mods.hook.register('script_pre_init', 'ingenue realtime pre-init', pre_init)
 mods.hook.register('script_post_init', 'ingenue realtime post-init', post_init)
-mods.hook.register('script_post_cleanup', 'ingenue realtime post-cleanup', post_cleanup)
+mods.hook.register('script_post_cleanup', 'ingenue realtime cleanup', post_cleanup)
 
 return M

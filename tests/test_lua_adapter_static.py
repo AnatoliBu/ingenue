@@ -8,6 +8,7 @@ class LuaAdapterStaticTests(unittest.TestCase):
     def setUpClass(cls):
         root = Path(__file__).resolve().parents[1] / "web" / "lib"
         cls.source = (root / "ingenue_grid_mod.lua").read_text(encoding="utf-8")
+        cls.hardening = (root / "ingenue_grid_hardening.lua").read_text(encoding="utf-8")
         cls.loader = (root / "mod.lua").read_text(encoding="utf-8")
         cls.midi = (root / "ingenue_midi.lua").read_text(encoding="utf-8")
 
@@ -20,43 +21,37 @@ class LuaAdapterStaticTests(unittest.TestCase):
             self.assertIn("mods.hook.register('" + hook + "'", self.source)
             self.assertIn("mods.hook.register('" + hook + "'", self.midi)
 
-    def test_osc_wrapper_is_reinstalled_after_script_init(self):
-        post_init = self.source.split("local function post_init()", 1)[1].split(
-            "local function post_cleanup()", 1
-        )[0]
-        self.assertIn("install_osc_wrapper()", post_init)
-        install = self.source.split("local function install_osc_wrapper()", 1)[1].split(
-            "local function send_script_state", 1
-        )[0]
-        self.assertIn("if osc.event == M.osc_wrapper then return end", install)
+    def test_only_shared_dispatcher_owns_osc_event(self):
+        self.assertNotIn("osc.event", self.source)
+        self.assertIn("osc.event = M.osc_wrapper", self.midi)
         self.assertIn("local function post_init() install_wrapper() end", self.midi)
+        for path in ("/ingenue/command", "/ingenue/midi-command", "/ingenue/control-command"):
+            self.assertIn(path, self.midi)
 
     def test_applied_ack_uses_wire_id(self):
-        self.assertRegex(self.source, r"send\('/ingenue/ack',\s*\{\s*id\s*\}\)")
         self.assertIn("local result = {wire_id}", self.midi)
         self.assertIn("send('/ingenue/ack', result)", self.midi)
+        self.assertIn("send('/ingenue/reject', {wire_id", self.midi)
 
-    def test_applied_ack_and_state_paths_are_present(self):
-        for path in (
-            "/ingenue/command", "/ingenue/ack", "/ingenue/reject",
-            "/ingenue/script/state", "/ingenue/grid/frame",
-        ):
+    def test_state_paths_remain_in_grid_mirror(self):
+        for path in ("/ingenue/script/state", "/ingenue/grid/frame"):
             self.assertIn(path, self.source)
-        self.assertIn("/ingenue/midi-command", self.midi)
+        self.assertNotIn("/ingenue/command", self.source)
 
     def test_state_port_supports_flat_and_legacy_nested_install_layouts(self):
         for path in ("ingenue/data/realtime-state-port", "ingenue/web/data/realtime-state-port"):
             self.assertIn(path, self.source)
             self.assertIn(path, self.midi)
 
-    def test_adapter_uses_strict_command_validation(self):
-        self.assertIn("strict_integer", self.source)
-        self.assertIn("strict_number", self.source)
-        self.assertNotRegex(self.source, r"_norns\.(?:enc|key)\(clamp\(")
+    def test_dispatcher_uses_strict_command_validation(self):
+        self.assertIn("strict_integer", self.midi)
+        self.assertIn("strict_number", self.midi)
         self.assertIn("trigger parameters are not writable", self.midi)
+        self.assertIn("dispatch_grid_key", self.hardening)
+        self.assertIn("strict_integer", self.hardening)
 
     def test_adapter_does_not_execute_dynamic_code_or_shell(self):
-        combined = self.source + self.midi + self.loader
+        combined = self.source + self.hardening + self.midi + self.loader
         self.assertNotRegex(combined, r"\bloadstring\s*\(")
         self.assertNotRegex(combined, r"\bos\.execute\s*\(")
         self.assertNotRegex(combined, r"\bio\.popen\s*\(")

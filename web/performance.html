@@ -6,6 +6,7 @@
   <meta name="theme-color" content="#090a0c">
   <title>Ingenue performance</title>
   <link rel="stylesheet" href="./performance.css">
+  <link rel="stylesheet" href="./shared-nav.css">
 </head>
 <body>
   <main class="surface">
@@ -14,17 +15,11 @@
         <div class="brand">Ingenue performance</div>
         <div class="endpoint" id="surface-endpoint"></div>
       </div>
-      <div class="session">
+      <nav class="session" data-ingenue-nav="performance" aria-label="Ingenue pages">
         <span class="pill" id="surface-status">connecting</span>
         <span class="pill">rev <b id="surface-revision">—</b></span>
         <span class="pill" id="surface-script">no active script</span>
-        <a class="pill" href="./controllers.html">controllers</a>
-        <a class="pill" href="./launchpad.html">Launchpad</a>
-        <a class="pill" href="./gamepad.html">Gamepad</a>
-        <a class="pill" href="./params.html">Parameters</a>
-        <a class="pill" href="./midi.html">MIDI Learn</a>
-        <a class="pill" href="./realtime-inspector.html">inspector</a>
-      </div>
+      </nav>
     </header>
 
     <div class="layout">
@@ -97,7 +92,7 @@
         <section class="panel">
           <div class="panel-head"><h2>Parameter lane</h2><span class="muted">one applied command in flight</span></div>
           <div class="param-grid">
-            <input class="wide" id="param-id" data-performance-control value="cutoff" pattern="[A-Za-z0-9_.:-]+" aria-label="Parameter id">
+            <input class="wide" id="param-id" data-performance-control value="cutoff" pattern="[A-Za-z0-9_.:\-]+" maxlength="128" spellcheck="false" aria-label="Parameter id">
             <input id="param-min" data-performance-control type="number" value="0" step="any" aria-label="Minimum">
             <input id="param-max" data-performance-control type="number" value="1" step="any" aria-label="Maximum">
             <input class="wide" id="param-slider" data-performance-control type="range" min="0" max="1" value="0.5" step="0.01" aria-label="Parameter value">
@@ -107,6 +102,6 @@
       </aside>
     </div>
   </main>
-  <script type="module">import {mountPerformanceSurface} from './performance-surface.js'; import {mountGridHardening} from './grid-hardening-ui.js'; const session=mountPerformanceSurface(); mountGridHardening(session);</script>
+  <script type="module">import {mountSharedNavigation} from './shared-nav.js'; import {mountPerformanceSurface} from './performance-surface.js'; import {mountGridHardening} from './grid-hardening-ui.js'; mountSharedNavigation(); const session=mountPerformanceSurface(); mountGridHardening(session);</script>
 </body>
 </html>
