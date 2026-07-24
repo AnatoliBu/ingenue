@@ -5,17 +5,17 @@ import urllib.parse
 
 try:
     from .realtime_bridge import StateBridge
-    from .realtime_params import ParamAppliedAdapter, ParamAppliedHub
+    from .realtime_ownership import OwnershipAppliedAdapter, OwnershipAppliedHub
     from .realtime_server import RealtimeRequestHandler, ThreadingRealtimeServer
 except ImportError:
     from realtime_bridge import StateBridge
-    from realtime_params import ParamAppliedAdapter, ParamAppliedHub
+    from realtime_ownership import OwnershipAppliedAdapter, OwnershipAppliedHub
     from realtime_server import RealtimeRequestHandler, ThreadingRealtimeServer
 
 # Preserve the established injection seam used by tests and downstream wrappers.
-# These aliases now point at the most capable native-controller subclasses.
-MidiAppliedAdapter = ParamAppliedAdapter
-MidiAppliedHub = ParamAppliedHub
+# These aliases now point at the complete ownership-aware controller stack.
+MidiAppliedAdapter = OwnershipAppliedAdapter
+MidiAppliedHub = OwnershipAppliedHub
 
 
 def _default_port(scheme):
@@ -71,8 +71,7 @@ class OriginCheckedHandler(RealtimeRequestHandler):
 class OriginCheckedServer(ThreadingRealtimeServer):
     def __init__(self, address, hub, http_port, allowed_origins):
         # self.hub MUST be set — RealtimeRequestHandler.handle reads self.server.hub.
-        # Skipping it (as this override previously did) makes every socket raise
-        # AttributeError and drop, so the browser loops on 'reconnecting'.
+        # Skipping it makes every socket drop and the browser loop on reconnect.
         self.hub = hub
         self.http_port = int(http_port)
         self.allowed_origins = frozenset(allowed_origins)
@@ -102,7 +101,7 @@ def serve_realtime(host, port, legacy):
             server = ThreadingRealtimeServer((host, port), hub)
             note = "open (local network)"
         with server:
-            print("ingenue realtime on {}:{}/realtime (Lua-applied, Grid/Arc/Gamepad/Params/MIDI-ready, {})".format(host, port, note), flush=True)
+            print("ingenue realtime on {}:{}/realtime (Lua-applied, ownership-safe Grid/Arc/Gamepad/Params/MIDI, {})".format(host, port, note), flush=True)
             server.serve_forever()
     finally:
         bridge.close()
