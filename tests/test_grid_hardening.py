@@ -46,6 +46,13 @@ class GridDeviceContractTests(unittest.TestCase):
         self.adapter.send_prepared(prepared)
         self.assertEqual(self.calls[0][0], "/ingenue/control-command")
 
+    def test_integer_valued_command_numbers_normalize_to_ints(self):
+        prepared = self.adapter.prepare("wire", {
+            "target": "grid", "action": "configure",
+            "args": {"port": 3.0, "cols": 16.0, "rows": 8.0, "rotation": 1.0},
+        })
+        self.assertEqual(prepared.osc_args, ("wire", "grid", "configure", 3, 16, 8, 1))
+
     def test_configure_rejects_non_native_shape(self):
         with self.assertRaises(RealtimeError):
             self.adapter.prepare("wire", {
@@ -63,6 +70,23 @@ class GridDeviceContractTests(unittest.TestCase):
         self.assertEqual(value["rotation"], 1)
         self.assertEqual(value["cols"], 8)
         self.assertEqual(self.adapter.grid_state["ports"]["2"]["frame"], frame)
+
+    def test_lua_osc_integral_floats_are_accepted(self):
+        frame = "f" * 128
+        channel, operations = self.adapter.apply_runtime(
+            "/ingenue/grid/frame", [2.0, 8.0, 16.0, frame, 9.0, 12.0, 1.0, 1.0]
+        )
+        self.assertEqual(channel, "grid")
+        value = operations[0]["value"]
+        self.assertEqual(value["port"], 2)
+        self.assertEqual(value["rotation"], 1)
+        self.assertIn("2", self.adapter.grid_state["ports"])
+
+    def test_fractional_boolean_and_string_grid_ports_are_rejected(self):
+        for value in (1.5, True, "1"):
+            with self.subTest(value=value):
+                with self.assertRaises(RealtimeError):
+                    self.adapter.apply_runtime("/ingenue/grid/disconnect", [value])
 
     def test_legacy_seven_field_frame_preserves_known_rotation(self):
         self.adapter.apply_runtime(
