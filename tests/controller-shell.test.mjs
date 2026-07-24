@@ -10,11 +10,12 @@ const read = relative => fs.readFileSync(path.join(ROOT, relative), 'utf8');
 test('all hardware command OSC paths converge on the shared Lua dispatcher', () => {
   const source = read('web/lib/ingenue_midi.lua');
   for (const route of ['/ingenue/command', '/ingenue/midi-command', '/ingenue/control-command']) {
-    assert.match(source, new RegExp(route.replaceAll('/', '\\/')));
+    assert.match(source, new RegExp(route.replaceAll('/', '\/')));
   }
   assert.match(source, /target == 'control'/);
   assert.match(source, /action == 'set'/);
   assert.match(source, /send\('\/ingenue\/ack', result\)/);
+  assert.match(source, /if osc\.event ~= M\.osc_wrapper then\s+install_wrapper\(\)\s+else\s+M\.previous_osc_event = nil/s);
 });
 
 test('Grid handler accepts both key input and persistent configuration', () => {
@@ -23,6 +24,7 @@ test('Grid handler accepts both key input and persistent configuration', () => {
   assert.match(source, /dispatch_grid_key\(args\)/);
   assert.match(source, /action ~= 'configure'/);
   assert.match(source, /dispatcher\.register_handler\('grid', execute\)/);
+  assert.match(source, /vp\.device\.key\(x, y, z\)[\s\S]*?elseif vp\.key then/);
 });
 
 test('every controller page mounts the shared navigation source', () => {
