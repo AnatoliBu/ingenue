@@ -2,6 +2,19 @@
 
 This roadmap tracks the evolution of Ingenue into a browser-based performance and editing surface for Norns while keeping audio, musical timing, and canonical state on the device.
 
+## Implementation status
+
+The reusable foundation is now shipped:
+
+- versioned realtime commands, snapshots, revisions, heartbeats, reconnect and resync;
+- Lua-applied acknowledgements for controls, params, Grid, Arc and gamepad;
+- stable browser identities, per-resource ownership leases and stuck-input release;
+- persistent virtual Grid and Arc lifecycle with authoritative hotplug deletion;
+- Browser MIDI learn with a localhost secure-context bridge;
+- versioned per-script UI Builder schemas with live K/E/parameter preview and JSON portability.
+
+The remaining roadmap is primarily real-hardware measurement, deeper script adapter APIs, specialized sequencer/sampler editors and hardware export. Shipped foundations still require the real-device validation named in their individual documents.
+
 ## Phase 0 — audit and measurement
 
 - Map the existing browser → server → Matron paths.
