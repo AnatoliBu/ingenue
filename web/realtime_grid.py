@@ -14,9 +14,18 @@ GRID_COMMANDS = tuple(CONTROL_COMMANDS) + (() if "grid.configure" in CONTROL_COM
 
 
 def _integer(value, label, low, high):
-    if isinstance(value, bool) or not isinstance(value, int) or value < low or value > high:
+    # Lua OSC implementations commonly encode integer-valued numbers with the
+    # float type tag. Accept values such as 1.0 while still rejecting booleans,
+    # fractions, strings, infinities, and out-of-range input.
+    if isinstance(value, bool):
         raise RealtimeError("{} must be an integer between {} and {}".format(label, low, high))
-    return value
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError, OverflowError):
+        raise RealtimeError("{} must be an integer between {} and {}".format(label, low, high))
+    if parsed != value or parsed < low or parsed > high:
+        raise RealtimeError("{} must be an integer between {} and {}".format(label, low, high))
+    return parsed
 
 
 class GridAppliedAdapter(MidiAppliedAdapter):
