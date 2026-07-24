@@ -188,10 +188,13 @@ end
 local function post_init() install_wrapper() end
 
 local function cleanup()
-  -- Keep the controller dispatcher alive between scripts, but never retain a
-  -- cleaned-up script's OSC handler as the delegate for the next script.
-  if osc.event ~= M.osc_wrapper then install_wrapper() end
-  M.previous_osc_event = nil
+  -- Keep the controller dispatcher alive between scripts. When another handler
+  -- replaced osc.event, preserve it as the delegate instead of swallowing OSC.
+  if osc.event ~= M.osc_wrapper then
+    install_wrapper()
+  else
+    M.previous_osc_event = nil
+  end
 end
 
 install_wrapper()
