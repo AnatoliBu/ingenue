@@ -10,7 +10,7 @@ import {
 
 export class SessionError extends Error {}
 export class RealtimeSession extends EventTarget {
-  constructor({socketFactory,url,channels=[],reconnect={minMs:250,maxMs:5000,factor:2},heartbeatTimeoutMs=5000,now=()=>Date.now(),setTimer=(fn,ms)=>setTimeout(fn,ms),clearTimer=id=>clearTimeout(id)}) {
+  constructor({socketFactory,url,channels=[],reconnect={minMs:250,maxMs:5000,factor:2},heartbeatTimeoutMs=5000,now=()=>Date.now(),setTimer=(fn,ms)=>globalThis.setTimeout(fn,ms),clearTimer=id=>globalThis.clearTimeout(id)}) {
     super();
     if (typeof socketFactory !== 'function') throw new SessionError('socketFactory is required');
     this.socketFactory=socketFactory;this.url=url;this.channels=[...channels];this.reconnect=reconnect;this.heartbeatTimeoutMs=heartbeatTimeoutMs;this.now=now;this.setTimer=setTimer;this.clearTimer=clearTimer;
