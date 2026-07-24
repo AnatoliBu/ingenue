@@ -7,4 +7,5 @@ local grid_adapter = require 'ingenue_grid_mod'
 require 'ingenue_midi'
 require 'ingenue_grid_hardening'
 require 'ingenue_arc'
+require 'ingenue_gamepad'
 return grid_adapter
