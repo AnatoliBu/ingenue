@@ -1,6 +1,7 @@
 import ast
 import importlib.util
 import json
+import sys
 import threading
 import unittest
 import urllib.error
@@ -12,6 +13,7 @@ ROOT = Path(__file__).resolve().parents[1]
 SOURCE = ROOT / "web" / "midi-local.py"
 SPEC = importlib.util.spec_from_file_location("ingenue_midi_local", SOURCE)
 MIDI_LOCAL = importlib.util.module_from_spec(SPEC)
+sys.modules[SPEC.name] = MIDI_LOCAL
 SPEC.loader.exec_module(MIDI_LOCAL)
 
 
