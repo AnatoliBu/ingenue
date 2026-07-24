@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#08090b">
+  <title>Ingenue Launchpad</title>
+  <link rel="stylesheet" href="./launchpad.css">
+</head>
+<body>
+  <main class="launchpad-surface">
+    <header class="launchpad-topbar">
+      <div>
+        <div class="launchpad-brand">Ingenue Launchpad</div>
+        <div class="launchpad-endpoint" id="launchpad-endpoint"></div>
+      </div>
+      <nav class="launchpad-session" aria-label="Ingenue pages">
+        <span class="launchpad-pill" id="launchpad-status">connecting</span>
+        <span class="launchpad-pill">rev <b id="launchpad-revision">—</b></span>
+        <span class="launchpad-pill" id="launchpad-script">no active script</span>
+        <a class="launchpad-pill" href="./performance.html">performance</a>
+        <a class="launchpad-pill" href="./midi.html">MIDI Learn</a>
+        <a class="launchpad-pill" href="./realtime-inspector.html">inspector</a>
+      </nav>
+    </header>
+
+    <section class="launchpad-panel">
+      <div class="launchpad-toolbar">
+        <label>
+          <span>Grid port</span>
+          <select id="launchpad-port" data-launchpad-control aria-label="Grid port"></select>
+        </label>
+        <label>
+          <span>Pad rotation</span>
+          <select id="launchpad-rotation" data-launchpad-control aria-label="Pad rotation">
+            <option value="0">0°</option>
+            <option value="1">90°</option>
+            <option value="2">180°</option>
+            <option value="3">270°</option>
+          </select>
+        </label>
+        <label class="launchpad-toggle">
+          <input id="launchpad-flip-x" data-launchpad-control type="checkbox">
+          <span>flip X</span>
+        </label>
+        <label class="launchpad-toggle">
+          <input id="launchpad-flip-y" data-launchpad-control type="checkbox">
+          <span>flip Y</span>
+        </label>
+      </div>
+
+      <div class="launchpad-deck">
+        <div class="launchpad-corner" id="launchpad-bank">no Grid frame</div>
+        <div class="launchpad-top-rail" id="launchpad-x-pages" aria-label="Horizontal Grid pages"></div>
+        <div class="launchpad-side-rail" id="launchpad-y-pages" aria-label="Vertical Grid pages"></div>
+        <div class="launchpad-pads" id="launchpad-pads" data-launchpad-control aria-label="Launchpad-style Grid surface"></div>
+      </div>
+
+      <div class="launchpad-footer">
+        <p class="launchpad-notice" id="launchpad-notice">Waiting for authoritative Grid state…</p>
+        <p class="launchpad-help">rails select 8×8 pages · drag across pads · multi-touch supported</p>
+      </div>
+    </section>
+  </main>
+  <script type="module">import {mountLaunchpadSurface} from './launchpad-surface.js'; mountLaunchpadSurface();</script>
+</body>
+</html>
