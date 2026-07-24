@@ -33,8 +33,10 @@ def osc_string(value):
 
 
 def osc_message(path, types, *args):
+    if len(types) != len(args):
+        raise ValueError("OSC type and argument counts must match")
     out = osc_string(path) + osc_string("," + types)
-    for tag, value in zip(types, args, strict=True):
+    for tag, value in zip(types, args):
         if tag == "i":
             out += struct.pack(">i", value)
         elif tag == "f":
