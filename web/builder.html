@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#090a0c">
+  <title>Ingenue UI Builder</title>
+  <link rel="stylesheet" href="./builder.css">
+  <link rel="stylesheet" href="./shared-nav.css">
+</head>
+<body>
+  <main class="builder-page">
+    <header class="builder-top">
+      <div>
+        <div class="builder-brand">Ingenue UI Builder</div>
+        <div class="builder-endpoint" id="builder-endpoint"></div>
+      </div>
+      <nav class="builder-chips" data-ingenue-nav="builder" aria-label="Ingenue pages">
+        <span class="builder-chip" id="builder-status">connecting</span>
+        <span class="builder-chip">rev <b id="builder-revision">—</b></span>
+        <span class="builder-chip" id="builder-script">no active script</span>
+      </nav>
+    </header>
+
+    <div class="builder-layout">
+      <aside class="builder-side">
+        <section class="builder-panel">
+          <h2>Surface</h2>
+          <div class="builder-stack">
+            <label><span>Name</span><input id="builder-name" data-builder-action maxlength="120" autocomplete="off"></label>
+            <label><span>Columns</span><select id="builder-columns" data-builder-action>
+              <option value="1">1</option><option value="2">2</option><option value="3">3</option><option value="4">4</option>
+            </select></label>
+          </div>
+        </section>
+
+        <section class="builder-panel">
+          <h2>Add widget</h2>
+          <div class="builder-palette">
+            <button data-builder-action data-add-widget="key" type="button">Key</button>
+            <button data-builder-action data-add-widget="encoder" type="button">Encoder</button>
+            <button data-builder-action data-add-widget="param" type="button">Parameter</button>
+            <button data-builder-action data-add-widget="label" type="button">Label</button>
+            <button data-builder-action data-add-widget="spacer" type="button">Spacer</button>
+          </div>
+        </section>
+
+        <section class="builder-panel">
+          <h2>JSON</h2>
+          <div class="builder-stack">
+            <textarea id="builder-json" rows="10" spellcheck="false" aria-label="Builder JSON"></textarea>
+            <div class="builder-actions">
+              <button data-builder-action id="builder-export" type="button">export</button>
+              <button data-builder-action id="builder-copy" type="button">copy</button>
+              <button data-builder-action id="builder-download" type="button">download</button>
+              <button data-builder-action id="builder-import" type="button">import</button>
+              <button data-builder-action id="builder-reset" class="danger" type="button">reset</button>
+            </div>
+          </div>
+        </section>
+      </aside>
+
+      <section class="builder-panel builder-editor-panel">
+        <div class="builder-panel-head"><h2>Editor</h2><span id="builder-count">0 widgets</span></div>
+        <div class="builder-editor" id="builder-editor"></div>
+      </section>
+
+      <section class="builder-panel builder-preview-panel">
+        <div class="builder-panel-head"><h2>Live preview</h2><span>Lua-applied</span></div>
+        <h1 id="builder-preview-name">Surface</h1>
+        <div class="builder-preview" id="builder-preview"></div>
+        <p class="builder-notice" id="builder-notice">Waiting for authoritative state…</p>
+      </section>
+    </div>
+  </main>
+  <datalist id="builder-param-options"></datalist>
+  <script type="module">import {mountSharedNavigation} from './shared-nav.js'; import {mountBuilderSurface} from './builder-surface.js'; mountSharedNavigation(); mountBuilderSurface();</script>
+</body>
+</html>

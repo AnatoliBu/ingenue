@@ -1,6 +1,7 @@
 const PAGES = [
   ['controllers', './controllers.html', 'controllers'],
   ['performance', './performance.html', 'performance'],
+  ['builder', './builder.html', 'UI Builder'],
   ['launchpad', './launchpad.html', 'Launchpad'],
   ['gamepad', './gamepad.html', 'Gamepad'],
   ['params', './params.html', 'Parameters'],
