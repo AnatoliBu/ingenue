@@ -15,10 +15,11 @@ export class MidiRuntime {
     this.send=send;this.describe=describe;this.mappings=[];this.states=new Map();this.commandOwners=new Map();this.generation=0;
   }
   async activate(mappings) {
-    const generation=++this.generation;this.mappings=mappings.map(validateMapping);this.states.clear();this.commandOwners.clear();
+    this.deactivate();
+    const generation=this.generation;this.mappings=mappings.map(validateMapping);this.states.clear();this.commandOwners.clear();
     try {
       await Promise.all(this.mappings.map(async mapping=>{
-      const state={mapping,lastGate:null,pickup:null,descriptor:null,lane:null};
+      const state={mapping,lastGate:false,pickup:null,descriptor:null,lane:null};
       if(mapping.target.kind==='param'&&mapping.mode==='absolute'){
         const descriptor=await this.describe(mapping.target.id);
         if(generation!==this.generation)return;
@@ -36,7 +37,15 @@ export class MidiRuntime {
     }
     return this.states.size;
   }
-  deactivate(){this.generation++;this.mappings=[];this.states.clear();this.commandOwners.clear();}
+  deactivate(){
+    const released=[];
+    for(const state of this.states.values()){
+      if(state.mapping?.target?.kind!=='key'||state.lastGate!==true)continue;
+      try{released.push(this.send({target:'control',action:'key',args:{n:state.mapping.target.n,z:0}}));}catch{}
+      state.lastGate=false;
+    }
+    this.generation++;this.mappings=[];this.states.clear();this.commandOwners.clear();return released.filter(Boolean);
+  }
   handle(event){
     const ids=[];
     for(const mapping of this.mappings){
