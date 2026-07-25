@@ -111,10 +111,11 @@ function normalizeEntry(raw) {
 }
 
 export class RuntimeCommandRegistry {
-  constructor(entries = []) {
+  constructor(entries = [], {authoritative = true} = {}) {
     if (!Array.isArray(entries) || entries.length > 128) {
       throw new RuntimeContractError('command registry must contain at most 128 entries', {code: 'unavailable'});
     }
+    this.authoritative = Boolean(authoritative);
     this.entries = new Map();
     for (const raw of entries) {
       const entry = normalizeEntry(raw);
@@ -124,14 +125,14 @@ export class RuntimeCommandRegistry {
   }
 
   static fromCapabilities(capabilities) {
-    if (!plainObject(capabilities)) return new RuntimeCommandRegistry();
+    if (!plainObject(capabilities)) return new RuntimeCommandRegistry([], {authoritative: false});
     if (capabilities.command_registry != null) return new RuntimeCommandRegistry(capabilities.command_registry);
     const legacy = Array.isArray(capabilities.commands) ? capabilities.commands : [];
     return new RuntimeCommandRegistry(legacy.map(name => ({
       name,
       runtime_context: !String(name).startsWith('session.') && !String(name).startsWith('system.'),
       ownership: /^(control|param|grid|arc|gamepad)\./.test(String(name)),
-    })));
+    })), {authoritative: false});
   }
 
   get size() { return this.entries.size; }
@@ -141,7 +142,7 @@ export class RuntimeCommandRegistry {
     validateCommandShape(command);
     const descriptor = this.descriptor(command);
     if (!descriptor) {
-      if (allowUnknown) return null;
+      if (allowUnknown || !this.authoritative) return null;
       throw new RuntimeContractError(`server does not advertise ${commandName(command)}`, {code: 'unavailable'});
     }
     validateArgs(command.args, descriptor.args_schema);
