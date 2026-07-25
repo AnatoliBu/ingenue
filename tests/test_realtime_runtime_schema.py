@@ -11,7 +11,8 @@ sys.path.insert(0, str(ROOT / "web"))
 from realtime_ownership import OWNERSHIP_COMMANDS
 from realtime_runtime import RuntimeAppliedAdapter
 from realtime_runtime_schema import COMMAND_SCHEMAS, SchemaRuntimeAppliedHub, command_registry
-from realtime_secure import MidiAppliedHub
+from realtime_mlr import MlrAppliedAdapter, MlrAppliedHub
+from realtime_secure import MidiAppliedAdapter, MidiAppliedHub
 
 
 class RuntimeSchemaTests(unittest.TestCase):
@@ -48,24 +49,30 @@ class RuntimeSchemaTests(unittest.TestCase):
         self.assertEqual(key["args_schema"]["required"], ["n", "z"])
         self.assertEqual(key["args_schema"]["properties"]["n"]["minimum"], 1)
         self.assertEqual(key["args_schema"]["properties"]["z"]["enum"], [0, 1])
-
         ping = by_name["system.ping"]
         self.assertFalse(ping["runtime_context"])
         self.assertFalse(ping["ownership"])
         self.assertEqual(ping["args_schema"], {
             "type": "object", "additional": False, "required": [], "properties": {},
         })
-
         param = by_name["param.set_normalized"]["args_schema"]
         self.assertEqual(param["properties"]["id"]["pattern"], r"^[A-Za-z0-9_.:-]{1,128}$")
         self.assertEqual(param["properties"]["value"]["minimum"], 0)
         self.assertEqual(param["properties"]["value"]["maximum"], 1)
 
-    def test_production_hub_is_schema_aware(self):
-        self.assertIs(MidiAppliedHub, SchemaRuntimeAppliedHub)
-        hub = SchemaRuntimeAppliedHub(self.adapter)
+    def test_production_hub_is_schema_and_mlr_aware(self):
+        self.assertIs(MidiAppliedAdapter, MlrAppliedAdapter)
+        self.assertIs(MidiAppliedHub, MlrAppliedHub)
+        legacy = self.adapter.legacy
+        mlr_adapter = MlrAppliedAdapter(
+            legacy, realtime_port=7778, state_port=0,
+            session_generation="runtime-schema-mlr-test",
+        )
+        hub = MlrAppliedHub(mlr_adapter)
         capabilities = hub._capabilities()
         self.assertTrue(capabilities["runtime"]["command_schemas"])
+        self.assertTrue(capabilities["mlr"]["observer"])
+        self.assertIn("mlr", capabilities["channels"])
         self.assertEqual(
             {entry["name"] for entry in capabilities["command_registry"]},
             set(OWNERSHIP_COMMANDS),

@@ -3,18 +3,9 @@ export class ControllerHubError extends Error {}
 function object(value) {
   return value && typeof value === 'object' && !Array.isArray(value) ? value : {};
 }
-
-function list(value) {
-  return Array.isArray(value) ? value.map(String) : [];
-}
-
-function countPorts(value) {
-  return Object.keys(object(value).ports || {}).length;
-}
-
-function card(id, label, href, status, detail) {
-  return {id, label, href, status, detail};
-}
+function list(value) { return Array.isArray(value) ? value.map(String) : []; }
+function countPorts(value) { return Object.keys(object(value).ports || {}).length; }
+function card(id, label, href, status, detail) { return {id, label, href, status, detail}; }
 
 export function buildControllerReadiness({hello=null, state=null, webMidiSupported=false, secureContext=false, pingMs=null}={}) {
   const capabilities = object(hello?.capabilities);
@@ -27,11 +18,18 @@ export function buildControllerReadiness({hello=null, state=null, webMidiSupport
   const gridPorts = countPorts(snapshot.grid);
   const arcPorts = countPorts(snapshot.arc);
   const paramItems = Array.isArray(object(snapshot.params).items) ? snapshot.params.items.length : 0;
+  const mlr = object(snapshot.mlr);
+  const mlrActive = Boolean(mlr.active);
+  const mlrGrid = Object.values(object(snapshot.grid).ports || {}).some(port => port?.cols === 16 && port?.rows === 8);
 
   const cards = [
     card('performance', 'Performance', './performance.html',
       protocolReady && commands.has('control.enc') && commands.has('control.key') ? (script.active ? 'ready' : 'warn') : 'off',
       script.active ? `active script: ${script.name}` : 'waiting for an active script'),
+    card('mlr', 'MLR', './mlr.html',
+      protocolReady && channels.has('mlr') && commands.has('grid.key')
+        ? (mlrActive && mlrGrid ? 'ready' : 'warn') : 'off',
+      mlrActive ? `MLR ${mlr.version || ''} · ${mlrGrid ? '16×8 Grid attached' : 'waiting for 16×8 Grid'}` : 'launch upstream MLR to attach'),
     card('grid', 'Grid', './performance.html',
       protocolReady && channels.has('grid') && commands.has('grid.key') ? (gridPorts ? 'ready' : 'warn') : 'off',
       gridPorts ? `${gridPorts} published Grid port${gridPorts === 1 ? '' : 's'}` : 'no Grid frame published'),
@@ -52,27 +50,17 @@ export function buildControllerReadiness({hello=null, state=null, webMidiSupport
   let midiStatus = 'off';
   let midiDetail = 'Web MIDI bridge unavailable';
   if (capabilities.midi?.normalized_params) {
-    if (!webMidiSupported) {
-      midiStatus = 'warn';
-      midiDetail = 'this browser does not expose Web MIDI';
-    } else if (!secureContext) {
-      midiStatus = 'warn';
-      midiDetail = 'browser requires a secure context for Web MIDI';
-    } else {
-      midiStatus = 'ready';
-      midiDetail = 'Web MIDI Learn is available';
-    }
+    if (!webMidiSupported) { midiStatus = 'warn'; midiDetail = 'this browser does not expose Web MIDI'; }
+    else if (!secureContext) { midiStatus = 'warn'; midiDetail = 'browser requires a secure context for Web MIDI'; }
+    else { midiStatus = 'ready'; midiDetail = 'Web MIDI Learn is available'; }
   }
   cards.push(card('midi', 'MIDI Learn', './midi.html', midiStatus, midiDetail));
-
   const pingStatus = Number.isFinite(pingMs) ? 'ready' : protocolReady ? 'warn' : 'off';
   const pingDetail = Number.isFinite(pingMs) ? `${Math.max(0, Math.round(pingMs))} ms browser ↔ server` : 'run the safe ping check';
   cards.push(card('transport', 'Realtime transport', './realtime-inspector.html', pingStatus, pingDetail));
 
   return {
-    synced,
-    protocolReady,
-    scriptActive: Boolean(script.active),
+    synced, protocolReady, scriptActive: Boolean(script.active),
     scriptName: script.active ? String(script.name || 'active script') : 'no active script',
     cards,
     readyCount: cards.filter(item => item.status === 'ready').length,

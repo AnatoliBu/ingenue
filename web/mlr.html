@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#08090b">
+  <title>Ingenue MLR</title>
+  <link rel="stylesheet" href="./mlr.css">
+  <link rel="stylesheet" href="./shared-nav.css">
+</head>
+<body>
+  <main class="mlr-surface">
+    <header class="mlr-topbar">
+      <div><div class="mlr-brand">Ingenue / MLR</div><div class="mlr-endpoint" id="mlr-endpoint"></div></div>
+      <nav class="mlr-session" data-ingenue-nav="mlr" aria-label="Ingenue pages">
+        <span class="mlr-pill" id="mlr-status">connecting</span>
+        <span class="mlr-pill">rev <b id="mlr-revision">—</b></span>
+        <span class="mlr-pill" id="mlr-script">no active script</span>
+      </nav>
+    </header>
+    <section class="mlr-meta" aria-label="MLR state">
+      <span><small>view</small><b id="mlr-view">REC</b></span>
+      <span><small>focus</small><b id="mlr-focus">track 1</b></span>
+      <span><small>modifier</small><b id="mlr-alt">ALT off</b></span>
+      <span><small>timing</small><b id="mlr-quantize">free</b></span>
+      <p id="mlr-help">waiting for MLR view</p>
+    </section>
+    <div class="mlr-layout">
+      <section class="mlr-panel mlr-grid-panel">
+        <div class="mlr-panel-head"><div><h2>16×8 Grid</h2><p>authoritative LEDs · multitouch · Shift-click two CUT pads for a loop</p></div></div>
+        <div class="mlr-grid-shell"><div class="mlr-grid" id="mlr-grid" aria-label="MLR Grid"></div></div>
+        <p class="mlr-notice" id="mlr-notice">Waiting for authoritative norns state…</p>
+      </section>
+      <aside class="mlr-controls">
+        <section class="mlr-panel">
+          <div class="mlr-panel-head"><h2>norns keys</h2><span>K1–K3</span></div>
+          <div class="mlr-keys"><button data-mlr-control data-key="1">K1</button><button data-mlr-control data-key="2">K2</button><button data-mlr-control data-key="3">K3</button></div>
+        </section>
+        <section class="mlr-panel">
+          <div class="mlr-panel-head"><h2>norns encoders</h2><span>drag · wheel · arrows</span></div>
+          <div class="mlr-encoders">
+            <div class="mlr-encoder" data-mlr-control data-encoder="1" role="group" aria-label="MLR encoder 1"><div class="mlr-encoder-dial"></div><strong>E1</strong><div><button data-delta="-1">−</button><button data-delta="1">+</button></div></div>
+            <div class="mlr-encoder" data-mlr-control data-encoder="2" role="group" aria-label="MLR encoder 2"><div class="mlr-encoder-dial"></div><strong>E2</strong><div><button data-delta="-1">−</button><button data-delta="1">+</button></div></div>
+            <div class="mlr-encoder" data-mlr-control data-encoder="3" role="group" aria-label="MLR encoder 3"><div class="mlr-encoder-dial"></div><strong>E3</strong><div><button data-delta="-1">−</button><button data-delta="1">+</button></div></div>
+          </div>
+        </section>
+      </aside>
+    </div>
+    <section class="mlr-panel"><div class="mlr-panel-head"><h2>tracks</h2><span>softcut voices 1–6</span></div><div class="mlr-tracks" id="mlr-tracks"></div></section>
+    <div class="mlr-data-layout">
+      <section class="mlr-panel"><div class="mlr-panel-head"><h2>clips</h2><span>slots 1–7</span></div><div class="mlr-slots" id="mlr-clips"></div></section>
+      <section class="mlr-panel"><div class="mlr-panel-head"><h2>patterns</h2><span>Grid x5–x8</span></div><div class="mlr-memories" id="mlr-patterns"></div></section>
+      <section class="mlr-panel"><div class="mlr-panel-head"><h2>recalls</h2><span>Grid x9–x12</span></div><div class="mlr-memories" id="mlr-recalls"></div></section>
+    </div>
+  </main>
+  <script type="module">import {mountSharedNavigation} from './shared-nav.js'; import {mountMlrSurface} from './mlr-surface.js'; mountSharedNavigation(); mountMlrSurface();</script>
+</body>
+</html>

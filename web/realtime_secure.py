@@ -5,17 +5,17 @@ import urllib.parse
 
 try:
     from .realtime_bridge import StateBridge
-    from .realtime_runtime import RuntimeAppliedAdapter
-    from .realtime_runtime_schema import SchemaRuntimeAppliedHub as RuntimeAppliedHub
+    from .realtime_mlr import MlrAppliedAdapter as RuntimeAppliedAdapter
+    from .realtime_mlr import MlrAppliedHub as RuntimeAppliedHub
     from .realtime_server import RealtimeRequestHandler, ThreadingRealtimeServer
 except ImportError:
     from realtime_bridge import StateBridge
-    from realtime_runtime import RuntimeAppliedAdapter
-    from realtime_runtime_schema import SchemaRuntimeAppliedHub as RuntimeAppliedHub
+    from realtime_mlr import MlrAppliedAdapter as RuntimeAppliedAdapter
+    from realtime_mlr import MlrAppliedHub as RuntimeAppliedHub
     from realtime_server import RealtimeRequestHandler, ThreadingRealtimeServer
 
 # Preserve the established injection seams used by tests and downstream wrappers.
-# They now point at the complete generation/error/ownership/schema-aware runtime stack.
+# They now point at the complete generation/error/ownership/schema/MLR-aware stack.
 MidiAppliedAdapter = RuntimeAppliedAdapter
 MidiAppliedHub = RuntimeAppliedHub
 
@@ -59,10 +59,8 @@ class OriginCheckedHandler(RealtimeRequestHandler):
         method, path, headers = request
         if path == "/realtime":
             allowed = origin_allowed(
-                headers.get("origin"),
-                headers.get("host"),
-                self.server.http_port,
-                self.server.allowed_origins,
+                headers.get("origin"), headers.get("host"),
+                self.server.http_port, self.server.allowed_origins,
             )
             if not allowed:
                 self._http(403, b"forbidden websocket origin\n")
@@ -72,8 +70,6 @@ class OriginCheckedHandler(RealtimeRequestHandler):
 
 class OriginCheckedServer(ThreadingRealtimeServer):
     def __init__(self, address, hub, http_port, allowed_origins):
-        # self.hub MUST be set — RealtimeRequestHandler.handle reads self.server.hub.
-        # Skipping it makes every socket drop and the browser loop on reconnect.
         self.hub = hub
         self.http_port = int(http_port)
         self.allowed_origins = frozenset(allowed_origins)
@@ -85,11 +81,7 @@ def serve_realtime(host, port, legacy):
     http_port = int(getattr(legacy, "PORT", 7777))
     state_port = int(os.environ.get("INGENUE_STATE_PORT", int(port) + 1))
     allowed = [item.strip().rstrip("/") for item in
-               os.environ.get("INGENUE_REALTIME_ORIGINS", "").split(",")
-               if item.strip()]
-    # Origin checking is OFF by default: ingenue is meant for a trusted local
-    # network, where the browser-origin gate is redundant. Set
-    # INGENUE_REALTIME_STRICT=1 to re-enable the origin-checked server.
+               os.environ.get("INGENUE_REALTIME_ORIGINS", "").split(",") if item.strip()]
     strict = os.environ.get("INGENUE_REALTIME_STRICT", "").strip().lower() not in ("", "0", "false", "no")
     adapter = MidiAppliedAdapter(legacy, realtime_port=port, state_port=state_port)
     hub = MidiAppliedHub(adapter)
@@ -105,7 +97,7 @@ def serve_realtime(host, port, legacy):
         with server:
             print(
                 "ingenue realtime on {}:{}/realtime "
-                "(Lua-applied, generation-safe, ownership-safe, schema-aware, {})".format(host, port, note),
+                "(Lua-applied, generation-safe, ownership-safe, schema-aware, MLR-aware, {})".format(host, port, note),
                 flush=True,
             )
             server.serve_forever()

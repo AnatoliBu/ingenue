@@ -9,4 +9,5 @@ require 'ingenue_grid_hardening'
 require 'ingenue_arc'
 require 'ingenue_gamepad'
 require 'ingenue_params'
+require 'ingenue_mlr'
 return grid_adapter

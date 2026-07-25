@@ -22,7 +22,7 @@ export function mountControllerHub(root=document, options={}) {
   const url=options.url||realtimeUrl(options.locationLike||location);
   const session=options.session||new RealtimeSession({
     socketFactory:value=>new WebSocket(value), url,
-    channels:['device','control','script','grid','arc','params'],
+    channels:['device','control','script','grid','arc','params','mlr'],
   });
   const endpoint=root.getElementById('hub-endpoint');
   const status=root.getElementById('hub-connection');
