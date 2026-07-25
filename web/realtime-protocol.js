@@ -1,7 +1,22 @@
 export const PROTOCOL_VERSION = 1;
 export const MESSAGE_TYPES = new Set(['hello','subscribe','snapshot','delta','command','ack','reject','heartbeat','resync']);
+export const RUNTIME_ERROR_CODES = new Set([
+  'validation','ownership','unavailable','matron-timeout','runtime-error','connection-lost','stale-context',
+]);
 
 export class ProtocolError extends Error {}
+
+function validateRuntimeContext(context) {
+  if (!context || typeof context !== 'object' || Array.isArray(context)) throw new ProtocolError('context must be an object');
+  if (typeof context.session_generation !== 'string' || !context.session_generation) throw new ProtocolError('context session_generation must be a non-empty string');
+  if (!Number.isSafeInteger(context.script_generation) || context.script_generation < 0) throw new ProtocolError('context script_generation must be a non-negative integer');
+  return context;
+}
+
+export function runtimeContext(data) {
+  const candidate=data?.runtime;
+  try{return candidate?structuredClone(validateRuntimeContext(candidate)):null;}catch{return null;}
+}
 
 export function validateEnvelope(message) {
   if (!message || typeof message !== 'object' || Array.isArray(message)) throw new ProtocolError('message must be an object');
@@ -9,6 +24,11 @@ export function validateEnvelope(message) {
   if (!MESSAGE_TYPES.has(message.type)) throw new ProtocolError(`unsupported message type: ${message.type}`);
   if (message.rev != null && (!Number.isSafeInteger(message.rev) || message.rev < 0)) throw new ProtocolError('rev must be a non-negative integer');
   if (message.id != null && (typeof message.id !== 'string' || !message.id)) throw new ProtocolError('id must be a non-empty string');
+  if (message.context != null) validateRuntimeContext(message.context);
+  if (message.type === 'reject') {
+    if (message.code != null && !RUNTIME_ERROR_CODES.has(message.code)) throw new ProtocolError(`unsupported runtime error code: ${message.code}`);
+    if (message.retryable != null && typeof message.retryable !== 'boolean') throw new ProtocolError('retryable must be boolean');
+  }
   return message;
 }
 
@@ -96,16 +116,18 @@ export function resyncRequest(state) {
 
 export class CommandTracker {
   constructor() { this.next = 1; this.pending = new Map(); }
-  create(command, now = Date.now()) {
+  create(command, now = Date.now(), context = null) {
     const id = `cmd-${this.next++}`;
-    this.pending.set(id,{command,createdAt:now,status:'pending'});
-    return {v:PROTOCOL_VERSION,type:'command',id,command};
+    this.pending.set(id,{command,createdAt:now,status:'pending',context:clone(context)});
+    const message={v:PROTOCOL_VERSION,type:'command',id,command};
+    if(context)message.context=clone(validateRuntimeContext(context));
+    return message;
   }
-  cancel(id,{status='cancelled',error=null}={}) {
+  cancel(id,{status='cancelled',error=null,errorCode=null,retryable=false}={}) {
     const pending=this.pending.get(id);
     if(!pending)return null;
     this.pending.delete(id);
-    return {...pending,status,revision:null,error};
+    return {...pending,status,revision:null,error,errorCode,retryable:Boolean(retryable),settlementContext:null};
   }
   settle(message) {
     validateEnvelope(message);
@@ -113,7 +135,15 @@ export class CommandTracker {
     const pending = this.pending.get(message.id);
     if (!pending) return null;
     this.pending.delete(message.id);
-    return {...pending,status:message.type,revision:message.rev ?? null,error:message.error ?? null};
+    return {
+      ...pending,
+      status:message.type,
+      revision:message.rev ?? null,
+      error:message.error ?? null,
+      errorCode:message.code ?? null,
+      retryable:Boolean(message.retryable),
+      settlementContext:clone(message.context ?? null),
+    };
   }
 }
 

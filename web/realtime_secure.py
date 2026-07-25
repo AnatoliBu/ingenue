@@ -5,17 +5,17 @@ import urllib.parse
 
 try:
     from .realtime_bridge import StateBridge
-    from .realtime_ownership import OwnershipAppliedAdapter, OwnershipAppliedHub
+    from .realtime_runtime import RuntimeAppliedAdapter, RuntimeAppliedHub
     from .realtime_server import RealtimeRequestHandler, ThreadingRealtimeServer
 except ImportError:
     from realtime_bridge import StateBridge
-    from realtime_ownership import OwnershipAppliedAdapter, OwnershipAppliedHub
+    from realtime_runtime import RuntimeAppliedAdapter, RuntimeAppliedHub
     from realtime_server import RealtimeRequestHandler, ThreadingRealtimeServer
 
-# Preserve the established injection seam used by tests and downstream wrappers.
-# These aliases now point at the complete ownership-aware controller stack.
-MidiAppliedAdapter = OwnershipAppliedAdapter
-MidiAppliedHub = OwnershipAppliedHub
+# Preserve the established injection seams used by tests and downstream wrappers.
+# They now point at the complete generation/error/ownership-aware runtime stack.
+MidiAppliedAdapter = RuntimeAppliedAdapter
+MidiAppliedHub = RuntimeAppliedHub
 
 
 def _default_port(scheme):
@@ -101,7 +101,11 @@ def serve_realtime(host, port, legacy):
             server = ThreadingRealtimeServer((host, port), hub)
             note = "open (local network)"
         with server:
-            print("ingenue realtime on {}:{}/realtime (Lua-applied, ownership-safe Grid/Arc/Gamepad/Params/MIDI, {})".format(host, port, note), flush=True)
+            print(
+                "ingenue realtime on {}:{}/realtime "
+                "(Lua-applied, generation-safe, ownership-safe, {})".format(host, port, note),
+                flush=True,
+            )
             server.serve_forever()
     finally:
         bridge.close()
