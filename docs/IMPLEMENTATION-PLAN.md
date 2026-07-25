@@ -1,114 +1,84 @@
 # Ingenue implementation plan
 
-Ingenue is a browser-hosted virtual controller platform for norns. The browser provides Grid, Arc, MIDI, gamepad, K/E, parameter and script-specific surfaces; norns remains the authoritative musical runtime.
+Ingenue is a browser-hosted virtual-controller platform for norns. The browser provides Grid, Arc, MIDI, gamepad, K/E, parameter and script-specific surfaces; norns remains the authoritative musical runtime.
 
-The implementation order follows the norns/matron lifecycle, Maiden's embedded-web behavior, and the current Ingenue UI at `http://norns.local:7777/`.
+The implementation order follows matron lifecycle, Maiden embedded-web behavior, the current `:7777` UI and pinned script-level references such as MLR.
 
 ## Milestone 0 — browser ↔ norns contract gate
 
 Status: complete in `main`.
 
-Goal: make the real browser boundary observable and mandatory in CI before adding more features.
-
-Delivered:
-
-- Chromium E2E job in GitHub Actions.
-- Real HTTP, localhost proxy and RFC 6455 WebSocket fixture.
-- Surface boot and navigation checks for public pages.
-- Exact realtime-target preservation across the localhost bridge.
-- Command coverage for K/E, Grid, Arc, parameters, MIDI, gamepad and Builder.
-- ACK, reject, disconnect, reconnect and ownership coverage.
-- Playwright trace, screenshots, video and console output on failure.
-
-Exit gate: unit, Python, browser-contract and security jobs are green.
+Delivered Chromium E2E, real HTTP/proxy/WebSocket fixtures, route preservation, K/E/Grid/Arc/params/MIDI/gamepad/Builder commands, ACK/reject/reconnect/ownership and failure artifacts.
 
 ## Milestone 1 — unified matron runtime boundary
 
-Status: active.
+Status: complete in `main`.
 
-Goal: one browser-side and one server-side contract for all matron-facing commands.
-
-Code changes:
-
-- Introduce a shared command registry with target/action schemas and capabilities.
-- Normalize errors into stable categories: validation, ownership, unavailable, matron-timeout, runtime-error and connection-lost.
-- Carry script generation/session generation through snapshots and acknowledgements.
-- Reject stale commands after script changes or reconnects.
-- Centralize ACK/reject/timeout handling instead of duplicating it in each surface.
-- Publish a bounded structured event log suitable for UI diagnostics and CI assertions.
-
-Exit gate: every control surface uses the same runtime client and error model.
+Delivered one command registry, exact browser schemas, runtime/script generations, stale-command rejection, normalized errors, centralized settlement and a bounded structured event log.
 
 ## Milestone 2 — Maiden-style application shell
 
-Goal: remove per-page connection and navigation drift.
+Status: complete in `main`.
 
-Code changes:
+Delivered one connection/status model, diagnostics drawer, bridge-safe navigation, explicit transient states, focus/touch behavior and shared `:7777` visual tokens.
 
-- Shared application shell for navigation, endpoint, script, revision and connection state.
-- Persistent diagnostics drawer showing structured events, reconnects and matron errors.
-- Explicit loading, synced, reconnecting, degraded and disconnected states.
-- Preserve bridge/device parameters on every internal transition.
-- Keyboard navigation, focus states and touch-safe controls.
-- Shared visual tokens based on the current `:7777` UI.
+## Milestone 3 — virtual-device and reference-script parity
 
-Exit gate: all pages inherit one shell and pass route/origin/reconnect E2E tests.
-
-## Milestone 3 — virtual-device parity
+Status: active.
 
 ### K/E and parameters
 
-- Balanced key press/release on pointer, keyboard, blur, pagehide and disconnect.
-- Encoder drag, wheel and keyboard input with bounded deltas.
-- Parameter descriptors, normalized values, pickup and latest-value lanes.
+Status: complete in `main`.
 
-### Grid
+- balanced pointer/keyboard release across blur, pagehide, visibility loss and reconnect;
+- encoder drag, wheel and keyboard deltas;
+- norns-authoritative parameter descriptors and ACK-applied value lanes.
 
-- Four vports, 8×8/16×8/16×16, rotation and intensity.
-- Add/remove lifecycle and authoritative LED snapshots.
-- Multitouch slide, held-key ledger and reconnect release.
+### Grid and Arc
 
-### Arc
-
-- Four vports, two/four rings, 64 LED levels and intensity.
-- Delta, key, touch gestures and authoritative feedback.
+- four vports, supported native shapes, rotation/intensity and lifecycle;
+- authoritative LED snapshots;
+- multitouch slide and reconnect-safe held ledgers;
+- native Arc delta/key gestures and feedback.
 
 ### MIDI and gamepad
 
-- Browser MIDI input/output lifecycle, learn, feedback and hotplug.
-- Gamepad buttons, d-pad, sticks and triggers with dead zones and centering.
+- browser MIDI lifecycle, learn, feedback and hotplug;
+- gamepad buttons, d-pad, sticks and triggers with neutral-state cleanup.
 
-Exit gate: standard norns scripts cannot distinguish Ingenue virtual devices from the corresponding public norns APIs for covered operations.
+### MLR vertical slice
+
+Status: implementation and CI acceptance.
+
+- pinned upstream reference pack for `tehn/mlr` 2.2.5;
+- exact Grid/K/E/LED/state map;
+- read-only Lua observer with 20 Hz playhead/state publication;
+- `mlr` realtime channel and capabilities;
+- specialized responsive `/mlr.html` surface;
+- 16×8 raw Grid parity, multitouch and desktop two-point loop chord;
+- six track cards, seven clips, four patterns and four recalls;
+- Node, Python, static Lua and Chromium scenarios;
+- final audio/timing/modal/pset acceptance on a real Shield.
+
+Exit gate: standard norns scripts cannot distinguish Ingenue virtual devices from public norns APIs for covered operations, and pinned reference scenarios pass their CI and Shield matrices.
 
 ## Milestone 4 — Builder and script-specific surfaces
 
-Goal: build musical interfaces on top of the stable runtime rather than bypassing it.
-
-Code changes:
-
-- Versioned per-script surface schema.
-- Grid/Arc/MIDI/gamepad widgets in addition to K/E/parameter widgets.
-- Import/export validation and migrations.
-- Script-provided optional surface metadata.
-- Presets and reusable controller templates.
-- Live preview through the same authoritative command path.
-
-Exit gate: a saved surface survives reload, script switching and protocol upgrades without stale control events.
+- versioned per-script schema;
+- Grid/Arc/MIDI/gamepad widgets;
+- migrations, templates and presets;
+- optional script-provided metadata;
+- live preview through the shared runtime only.
 
 ## Milestone 5 — visual parity and performance
 
-Goal: make Ingenue feel like a native norns instrument.
-
-Code changes:
-
-- Consolidate shared design tokens and component states.
-- Visual-regression snapshots for desktop, tablet and phone widths.
-- Touch target, contrast, focus and reduced-motion checks.
-- Frame-time and command-latency budgets.
-- Long-session reconnect and memory tests.
-
-Exit gate: functional and visual contract suites are green, followed by final acceptance on a real norns Shield.
+- consolidated components and tokens;
+- desktop/tablet/phone visual regression;
+- touch, contrast, focus and reduced-motion checks;
+- frame-time and command-latency budgets;
+- long-session reconnect and memory testing;
+- final real-Shield acceptance.
 
 ## Working rule
 
-Each milestone is delivered as one meaningful PR or a small number of complete vertical slices. New UI features do not bypass the shared runtime boundary, and a regression discovered on real hardware receives a browser fixture scenario before the fix is merged.
+Each vertical slice is assembled and validated before publication, then delivered as one large feature commit and one squash-merged PR. No UI feature bypasses the shared runtime, and every real-hardware regression receives a deterministic browser fixture before merge.

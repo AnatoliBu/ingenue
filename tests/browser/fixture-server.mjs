@@ -39,58 +39,114 @@ function jsonResponse(response, payload, status = 200) {
   response.end(body);
 }
 
+function mlrFrame() {
+  const values = Array(128).fill(0);
+  const set = (x, y, level) => { values[(y - 1) * 16 + (x - 1)] = level; };
+  set(2, 1, 15);
+  set(6, 1, 9);
+  set(10, 1, 5);
+  set(15, 1, 9);
+  for (let x = 4; x <= 9; x += 1) set(x, 2, 4);
+  set(7, 2, 15);
+  set(16, 2, 15);
+  set(1, 3, 9);
+  return values.map(value => value.toString(16)).join('');
+}
+
+function mlrState() {
+  const tracks = {};
+  for (let index = 1; index <= 6; index += 1) {
+    tracks[String(index)] = {
+      index,
+      play: index === 1 || index === 3,
+      rec: index === 2,
+      loop: index === 1,
+      loop_start: index === 1 ? 4 : 0,
+      loop_end: index === 1 ? 9 : 16,
+      clip: index,
+      pos_grid: index === 1 ? 6 : index === 3 ? 11 : -1,
+      speed: index === 3 ? -1 : 0,
+      reverse: index === 3,
+      tempo_map: index === 4,
+      volume: 1,
+      record_level: index === 2 ? 0.8 : 1,
+      pre_level: index === 2 ? 0.5 : 0,
+      clip_name: `fixture-${index}.wav`,
+      clip_length: 4 + index,
+      clip_bpm: 120,
+    };
+  }
+  const clips = {};
+  for (let index = 1; index <= 7; index += 1) {
+    clips[String(index)] = {index, name: `fixture-${index}.wav`, length: 4 + index, bpm: 120};
+  }
+  const patterns = {};
+  const recalls = {};
+  for (let index = 1; index <= 4; index += 1) {
+    patterns[String(index)] = {
+      index,
+      recording: index === 1,
+      playing: index === 2,
+      count: index <= 3 ? index * 4 : 0,
+    };
+    recalls[String(index)] = {
+      index,
+      recording: index === 1,
+      has_data: index <= 2,
+      active: index === 2,
+      event_count: index <= 2 ? index * 3 : 0,
+    };
+  }
+  return {
+    active: true,
+    version: '2.2.5',
+    view: 2,
+    view_name: 'cut',
+    focus: 1,
+    alt: false,
+    quantize: true,
+    tracks,
+    clips,
+    patterns,
+    recalls,
+  };
+}
+
 function fixtureState() {
   return {
     device: {name: 'Ingenue browser fixture', online: true},
     control: {keys: [0, 0, 0], encoders: [0, 0, 0]},
-    script: {active: true, name: 'browser-contract-fixture'},
+    script: {active: true, name: 'browser-contract-fixture', shortname: 'mlr'},
     grid: {
       ports: {
         '1': {
-          port: 1,
-          cols: 8,
-          rows: 8,
-          frame: '0'.repeat(64),
-          sequence: revision,
-          intensity: 15,
-          rotation: 0,
-          virtual: true,
+          port: 1, cols: 8, rows: 8, frame: '0'.repeat(64), sequence: revision,
+          intensity: 15, rotation: 0, virtual: true,
+        },
+        '2': {
+          port: 2, cols: 16, rows: 8, frame: mlrFrame(), sequence: revision,
+          intensity: 15, rotation: 0, virtual: true,
         },
       },
     },
     arc: {
       ports: {
         '1': {
-          port: 1,
-          rings: 4,
-          frame: '0'.repeat(256),
-          sequence: revision,
-          intensity: 15,
-          virtual: true,
+          port: 1, rings: 4, frame: '0'.repeat(256), sequence: revision,
+          intensity: 15, virtual: true,
         },
       },
     },
     params: {
       generation: 'browser-contract-1',
       script: 'browser-contract-fixture',
-      items: [
-        {
-          index: 1,
-          id: 'cutoff',
-          type: 3,
-          name: 'Cutoff',
-          kind: 'control',
-          normalized: 0.5,
-          value_text: '0.5',
-          min_text: '0',
-          max_text: '1',
-          formatted: '0.50',
-          behavior: 'continuous',
-          writable: true,
-          options: [],
-        },
-      ],
+      items: [{
+        index: 1, id: 'cutoff', type: 3, name: 'Cutoff', kind: 'control',
+        normalized: 0.5, value_text: '0.5', min_text: '0', max_text: '1',
+        formatted: '0.50', behavior: 'continuous', writable: true, options: [],
+      }],
     },
+    mlr: mlrState(),
     ownership: {
       resources: Object.fromEntries([...owners].map(([resource, clientId]) => [resource, {client_id: clientId}])),
     },
@@ -117,10 +173,7 @@ function websocketFrame(payload, opcode = 1) {
 function send(client, message) {
   if (!client.socket.destroyed) client.socket.write(websocketFrame(JSON.stringify(message)));
 }
-
-function broadcast(message) {
-  for (const client of clients) send(client, message);
-}
+function broadcast(message) { for (const client of clients) send(client, message); }
 
 function publishOwnership(resource, clientId) {
   revision += 1;
@@ -142,23 +195,15 @@ function resourceFor(command) {
 
 function paramDescriptor(id = 'cutoff', normalized = 0.5) {
   return {
-    id,
-    type: 3,
-    name: id,
-    kind: 'control',
-    normalized,
-    value_text: String(normalized),
-    min_text: '0',
-    max_text: '1',
-    formatted: normalized.toFixed(2),
-    behavior: 'continuous',
-    writable: true,
-    options: [],
+    id, type: 3, name: id, kind: 'control', normalized,
+    value: normalized, value_text: String(normalized), min: 0, min_text: '0',
+    max: 1, max_text: '1', formatted: normalized.toFixed(2),
+    behavior: 'continuous', writable: true, options: [],
   };
 }
 
-function reject(client, id, error) {
-  send(client, {v: 1, type: 'reject', id, rev: revision, error});
+function reject(client, id, error, code = null, retryable = false) {
+  send(client, {v: 1, type: 'reject', id, rev: revision, error, ...(code ? {code, retryable} : {})});
 }
 
 function acknowledge(client, message) {
@@ -169,7 +214,7 @@ function acknowledge(client, message) {
     if (action === 'claim') {
       const resource = String(command.args?.resource || '');
       const existing = owners.get(resource);
-      if (existing && existing !== client.clientId) return reject(client, id, `resource ${resource} is owned by another client`);
+      if (existing && existing !== client.clientId) return reject(client, id, `resource ${resource} is owned by another client`, 'ownership');
       owners.set(resource, client.clientId);
       publishOwnership(resource, client.clientId);
     } else if (action === 'release') {
@@ -192,7 +237,7 @@ function acknowledge(client, message) {
   const resource = resourceFor(command);
   if (resource) {
     const existing = owners.get(resource);
-    if (existing && existing !== client.clientId) return reject(client, id, `resource ${resource} is owned by another client`);
+    if (existing && existing !== client.clientId) return reject(client, id, `resource ${resource} is owned by another client`, 'ownership');
     if (!existing) {
       owners.set(resource, client.clientId);
       publishOwnership(resource, client.clientId);
@@ -200,13 +245,13 @@ function acknowledge(client, message) {
   }
 
   const paramId = String(command.args?.id || '');
-  if (paramId === 'reject_me') return reject(client, id, 'fixture rejected parameter command');
-  if (paramId === 'timeout_me') return reject(client, id, 'matron acknowledgement timeout');
+  if (paramId === 'reject_me') return reject(client, id, 'fixture rejected parameter command', 'runtime-error');
+  if (paramId === 'timeout_me') return reject(client, id, 'matron acknowledgement timeout', 'matron-timeout', true);
   if (command.target === 'param' && command.action === 'describe') {
     send(client, {v: 1, type: 'ack', id, rev: revision, result: {param: paramDescriptor(paramId)}});
     return;
   }
-  if (command.target === 'param' && command.action === 'set_normalized') {
+  if (command.target === 'param' && (command.action === 'set_normalized' || command.action === 'set')) {
     const normalized = Number(command.args?.value);
     send(client, {v: 1, type: 'ack', id, rev: revision, result: {param: paramDescriptor(paramId, normalized)}});
     return;
@@ -214,19 +259,26 @@ function acknowledge(client, message) {
   send(client, {v: 1, type: 'ack', id, rev: revision, result: {ok: true}});
 }
 
+const COMMANDS = [
+  'control.key', 'control.enc', 'grid.key', 'grid.configure', 'arc.key', 'arc.delta',
+  'arc.configure', 'param.set', 'param.describe', 'param.set_normalized', 'param.delta',
+  'param.catalog', 'param.trigger', 'gamepad.button', 'gamepad.dpad', 'gamepad.analog',
+  'system.ping', 'session.claim', 'session.release', 'session.release_all',
+];
+
 function handleMessage(client, message) {
   protocolEvents.push({client_id: client.clientId, type: message?.type});
   if (message?.type === 'hello') {
     client.clientId = String(message.client_id || `fixture-${connectionCount}`);
     send(client, {
-      v: 1,
-      type: 'hello',
-      server: 'ingenue-browser-fixture',
-      client_id: client.clientId,
+      v: 1, type: 'hello', server: 'ingenue-browser-fixture', client_id: client.clientId,
       capabilities: {
         ack: 'lua-applied',
-        channels: ['device', 'control', 'script', 'grid', 'arc', 'params', 'ownership'],
-        commands: ['control.key', 'control.enc', 'grid.key', 'grid.configure', 'arc.key', 'arc.delta', 'arc.configure', 'param.set', 'param.set_normalized', 'gamepad.button'],
+        channels: ['device', 'control', 'script', 'grid', 'arc', 'params', 'mlr', 'ownership'],
+        commands: COMMANDS,
+        midi: {normalized_params: true, profiles: 'browser'},
+        gamepad: {normalized: true},
+        mlr: {observer: true, upstream: 'tehn/mlr', version: '2.2.5', tracks: 6, clips: 7, patterns: 4, recalls: 4, grid: {cols: 16, rows: 8}},
       },
     });
     return;
@@ -257,14 +309,12 @@ function consumeFrames(client, chunk) {
     let offset = 2;
     if (length === 126) {
       if (client.buffer.length < 4) return;
-      length = client.buffer.readUInt16BE(2);
-      offset = 4;
+      length = client.buffer.readUInt16BE(2); offset = 4;
     } else if (length === 127) {
       if (client.buffer.length < 10) return;
       const large = client.buffer.readBigUInt64BE(2);
       if (large > BigInt(Number.MAX_SAFE_INTEGER)) throw new Error('fixture frame is too large');
-      length = Number(large);
-      offset = 10;
+      length = Number(large); offset = 10;
     }
     const maskLength = masked ? 4 : 0;
     if (client.buffer.length < offset + maskLength + length) return;
@@ -273,52 +323,29 @@ function consumeFrames(client, chunk) {
     const payload = Buffer.from(client.buffer.subarray(offset, offset + length));
     client.buffer = client.buffer.subarray(offset + length);
     if (mask) for (let index = 0; index < payload.length; index += 1) payload[index] ^= mask[index % 4];
-    if (opcode === 0x8) {
-      client.socket.end(websocketFrame(Buffer.alloc(0), 0x8));
-      return;
-    }
-    if (opcode === 0x9) {
-      client.socket.write(websocketFrame(payload, 0xA));
-      continue;
-    }
+    if (opcode === 0x8) { client.socket.end(websocketFrame(Buffer.alloc(0), 0x8)); return; }
+    if (opcode === 0x9) { client.socket.write(websocketFrame(payload, 0xA)); continue; }
     if (opcode !== 0x1) continue;
-    try {
-      handleMessage(client, JSON.parse(payload.toString('utf8')));
-    } catch (error) {
-      reject(client, 'invalid', `fixture protocol error: ${error.message}`);
-    }
+    try { handleMessage(client, JSON.parse(payload.toString('utf8'))); }
+    catch (error) { reject(client, 'invalid', `fixture protocol error: ${error.message}`); }
   }
 }
 
 const realtimeServer = createServer();
 realtimeServer.on('upgrade', (request, socket) => {
   if (new URL(request.url || '/', `http://${request.headers.host || HOST}`).pathname !== '/realtime') {
-    socket.destroy();
-    return;
+    socket.destroy(); return;
   }
   const key = request.headers['sec-websocket-key'];
-  if (!key) {
-    socket.destroy();
-    return;
-  }
+  if (!key) { socket.destroy(); return; }
   const accept = createHash('sha1').update(`${key}258EAFA5-E914-47DA-95CA-C5AB0DC85B11`).digest('base64');
-  socket.write([
-    'HTTP/1.1 101 Switching Protocols',
-    'Upgrade: websocket',
-    'Connection: Upgrade',
-    `Sec-WebSocket-Accept: ${accept}`,
-    '',
-    '',
-  ].join('\r\n'));
+  socket.write(['HTTP/1.1 101 Switching Protocols', 'Upgrade: websocket', 'Connection: Upgrade', `Sec-WebSocket-Accept: ${accept}`, '', ''].join('\r\n'));
   connectionCount += 1;
   const client = {socket, clientId: null, buffer: Buffer.alloc(0), heartbeat: null};
   clients.add(client);
   client.heartbeat = setInterval(() => send(client, {v: 1, type: 'heartbeat', ts: Date.now() / 1000}), 1000);
   socket.on('data', chunk => consumeFrames(client, chunk));
-  const cleanup = () => {
-    clearInterval(client.heartbeat);
-    clients.delete(client);
-  };
+  const cleanup = () => { clearInterval(client.heartbeat); clients.delete(client); };
   socket.on('close', cleanup);
   socket.on('error', cleanup);
 });
@@ -326,37 +353,27 @@ realtimeServer.on('upgrade', (request, socket) => {
 const staticServer = createServer(async (request, response) => {
   const url = new URL(request.url || '/', `http://${request.headers.host || HOST}`);
   if (url.pathname === '/__fixture__/reset') {
-    commands = [];
-    protocolEvents = [];
-    owners.clear();
-    revision = 1;
+    commands = []; protocolEvents = []; owners.clear(); revision = 1;
     return jsonResponse(response, {ok: true});
   }
   if (url.pathname === '/__fixture__/commands') return jsonResponse(response, commands);
-  if (url.pathname === '/__fixture__/stats') {
-    return jsonResponse(response, {
-      connections: connectionCount,
-      subscriptions: subscriptionCount,
-      active_clients: clients.size,
-      protocol_events: protocolEvents,
-    });
-  }
+  if (url.pathname === '/__fixture__/state') return jsonResponse(response, fixtureState());
+  if (url.pathname === '/__fixture__/stats') return jsonResponse(response, {
+    connections: connectionCount, subscriptions: subscriptionCount,
+    active_clients: clients.size, protocol_events: protocolEvents,
+  });
   if (url.pathname === '/__fixture__/disconnect') {
     for (const client of [...clients]) client.socket.destroy();
     return jsonResponse(response, {ok: true});
   }
   if (url.pathname === '/favicon.ico') {
-    response.writeHead(204, {'cache-control': 'no-store'});
-    response.end();
-    return;
+    response.writeHead(204, {'cache-control': 'no-store'}); response.end(); return;
   }
   let pathname = decodeURIComponent(url.pathname);
   if (pathname === '/') pathname = '/midi.html';
   const candidate = path.resolve(WEB_ROOT, `.${pathname}`);
   if (!candidate.startsWith(`${WEB_ROOT}${path.sep}`)) {
-    response.writeHead(403);
-    response.end('forbidden');
-    return;
+    response.writeHead(403); response.end('forbidden'); return;
   }
   try {
     const metadata = await stat(candidate);
@@ -364,8 +381,7 @@ const staticServer = createServer(async (request, response) => {
     const body = await readFile(candidate);
     response.writeHead(200, {
       'content-type': MIME.get(path.extname(candidate).toLowerCase()) || 'application/octet-stream',
-      'content-length': body.length,
-      'cache-control': 'no-store',
+      'content-length': body.length, 'cache-control': 'no-store',
     });
     response.end(body);
   } catch {
@@ -378,18 +394,12 @@ await new Promise(resolve => staticServer.listen(STATIC_PORT, HOST, resolve));
 await new Promise(resolve => realtimeServer.listen(REALTIME_PORT, HOST, resolve));
 
 const python = spawn(process.env.PYTHON || 'python3', [
-  path.join(ROOT, 'web', 'midi-local.py'),
-  '--device', HOST,
-  '--device-port', String(STATIC_PORT),
-  '--realtime-port', String(REALTIME_PORT),
+  path.join(ROOT, 'web', 'midi-local.py'), '--device', HOST,
+  '--device-port', String(STATIC_PORT), '--realtime-port', String(REALTIME_PORT),
   '--local-port', String(BRIDGE_PORT),
 ], {stdio: 'inherit'});
-
 python.on('exit', code => {
-  if (code && code !== 0) {
-    console.error(`localhost bridge exited with code ${code}`);
-    process.exitCode = code;
-  }
+  if (code && code !== 0) { console.error(`localhost bridge exited with code ${code}`); process.exitCode = code; }
 });
 
 async function shutdown() {
@@ -400,9 +410,5 @@ async function shutdown() {
     new Promise(resolve => realtimeServer.close(resolve)),
   ]);
 }
-
-for (const signal of ['SIGINT', 'SIGTERM']) {
-  process.on(signal, () => shutdown().finally(() => process.exit(0)));
-}
-
+for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, () => shutdown().finally(() => process.exit(0)));
 console.log(`Ingenue browser fixture: http://${HOST}:${STATIC_PORT}, ws://${HOST}:${REALTIME_PORT}, bridge http://${HOST}:${BRIDGE_PORT}`);

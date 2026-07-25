@@ -6,78 +6,68 @@ Ingenue is not designing a browser control stack in isolation. The compatibility
 
 Primary references:
 
-- `monome/norns`
-- matron and the Lua-facing norns libraries
-- current norns release and migration notes
+- `monome/norns`;
+- matron and the Lua-facing norns libraries;
+- current norns release and migration notes.
 
-Study these areas:
+Study script load/cleanup/restart, K/E ingestion, Grid/Arc/MIDI/HID routing, vports, screen ownership, callback dispatch, runtime logs and failure propagation.
 
-- script load, cleanup, restart and failure lifecycle;
-- key and encoder ingestion;
-- Grid, Arc, MIDI, HID and gamepad routing;
-- vport discovery, attachment, removal and reassignment;
-- screen redraw ownership;
-- Lua evaluation and callback dispatch;
-- error propagation and runtime logging;
-- restart behaviour across current and historical norns architectures.
-
-Engineering rules derived from this reference:
+Engineering rules:
 
 - norns remains authoritative for script and controller state;
 - browser commands are acknowledged only after Lua-side application;
-- press and release events must remain balanced across disconnects;
-- reconnect and script switching are lifecycle transitions, not merely transport events;
-- internal matron symbols and historical service names are reference material, not a stable extension API.
+- press and release events remain balanced across disconnects;
+- reconnect and script switching are lifecycle transitions;
+- internal matron symbols are reference material, not a stable extension API.
 
 ## Maiden and the native norns browser experience
 
 Primary references:
 
-- `monome/maiden`
+- `monome/maiden`;
 - official Maiden documentation;
-- a live norns web interface at `http://norns.local:7777/`.
+- a live Ingenue/norns web interface at `http://norns.local:7777/`.
 
-Study these areas:
+Study embedded HTTP, WebSocket reconnect, REPL/log presentation, loading/disconnected/stale states, navigation, keyboard workflows and local-HTTP constraints.
 
-- embedded HTTP serving;
-- browser-to-norns WebSocket transport;
-- Lua and SuperCollider REPL behaviour;
-- reconnect after runtime restart;
-- log streaming and readable error presentation;
-- loading, disconnected, stale and failed states;
-- navigation, panel structure, keyboard workflows and responsive behaviour;
-- conservative use of browser capabilities on a local HTTP appliance.
+Engineering rules:
 
-Engineering rules derived from this reference:
+- failures are visible in-page and in browser diagnostics;
+- reconnect restores one coherent authoritative snapshot;
+- endpoint and connection state are inspectable;
+- local-network operation has no cloud dependency;
+- localhost helpers preserve the actual norns realtime target.
 
-- failures must be visible in the page and browser console;
-- reconnect must restore a coherent authoritative snapshot;
-- the endpoint and connection state must be inspectable;
-- local-network operation must remain useful without a cloud dependency;
-- localhost helpers must preserve the actual norns realtime target across navigation.
+## MLR reference application
+
+`tehn/mlr` is the first script-level compatibility reference. Ingenue pins commit `1c21309bdfa1a6bdccd5f4fef5aea9768870732f` (`mlr.lua` 2.2.5) and treats it as a complete musical acceptance scenario rather than a generic Grid demo.
+
+The detailed contract lives under `docs/references/mlr/` and covers:
+
+- six softcut tracks and seven clip slots;
+- REC, CUT, CLIP and TIME views;
+- the complete 16×8 Grid coordinate map;
+- two-point loop chords and multitouch ordering;
+- patterns, recalls, ALT and quantize;
+- K1–K3/E1–E3 behavior;
+- authoritative Grid LED meanings;
+- a read-only observer state channel;
+- browser and real-Shield acceptance sequences.
+
+Engineering rules:
+
+- Ingenue never forks or patches MLR;
+- MLR/softcut remain authoritative for audio and timing;
+- browser input uses ordinary Grid and K/E callbacks;
+- the MLR observer is read-only and publishes only changed state;
+- LEDs are rendered from the standard Grid frame, not reconstructed optimistically;
+- native file/text entry and pset workflows stay on norns.
 
 ## Current Ingenue UI on port 7777
 
-The current Ingenue interface served from `http://norns.local:7777/` is itself a visual and interaction reference. New pages should extend this language before proposing a redesign.
+The interface served from `http://norns.local:7777/` is the visual and interaction baseline. Preserve near-black backgrounds, raised dark panels, muted-green borders, lime active accents, compact monospace headings, touch-safe controls, visible runtime state and an instrument—not dashboard—feel.
 
-Preserve:
-
-- near-black page backgrounds and slightly raised dark panels;
-- thin muted green borders;
-- bright lime only for primary and active actions;
-- compact uppercase or monospace headings;
-- restrained status chips and notices;
-- large touch-safe targets;
-- dense but readable layouts;
-- the feeling of a musical instrument rather than a generic admin dashboard.
-
-Avoid:
-
-- unrelated component-library styling;
-- decorative gradients and excessive animation;
-- tiny controls that only work with a mouse;
-- hiding transport, ownership or ACK state;
-- page-specific visual systems that fragment the application.
+Avoid unrelated component-library styling, excessive animation, mouse-only controls, hidden transport/ACK state and page-specific visual systems.
 
 ## Reference-to-test contract
 
@@ -87,10 +77,11 @@ Avoid:
 | K1-K3 and E1-E3 | matron input path | press/release and encoder-delta browser E2E |
 | Grid and Arc | norns Lua libraries and vports | configuration, feedback, reconnect and release tests |
 | MIDI, HID and gamepad | norns device libraries | routing, ownership, hotplug and neutral-state tests |
+| MLR | pinned `tehn/mlr` 2.2.5 | full control map, observer state, LED frame and musical scenario tests |
 | Logs and errors | Maiden REPL and console | ACK, reject, timeout and reconnect diagnostics |
 | Embedded web routing | Maiden and native norns web | origin, proxy, navigation and WebSocket endpoint tests |
 | Visual language | current Ingenue `:7777` UI | shared tokens, responsive checks and visual regression |
 
 ## Hardware acceptance boundary
 
-Browser fixtures and CI can validate public protocol behaviour, UI event handling, routing, ownership, ACK semantics and reconnect logic. They cannot prove the exact installed norns runtime, system services, audio timing, USB behaviour or script-specific performance. Real Shield acceptance is still required after CI passes.
+Browser fixtures and CI validate protocol behavior, event ordering, routing, ownership, state parsing, ACK semantics, reconnect logic and UI rendering. They cannot prove audio recording, softcut timing, USB devices, native modal workflows or the exact installed Shield runtime. Each script-level reference therefore ends with a real norns Shield acceptance sequence.
