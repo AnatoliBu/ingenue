@@ -1,6 +1,11 @@
 import {RUNTIME_ERROR_CODES} from './realtime-protocol.js';
 
 const SAFE_NAME = /^[A-Za-z][A-Za-z0-9_-]{0,31}$/;
+const SAFE_SCHEMA_PATTERNS = new Map([
+  ['^[A-Za-z0-9_.:-]{1,64}$', /^[A-Za-z0-9_.:-]{1,64}$/],
+  ['^[A-Za-z0-9_.:-]{1,128}$', /^[A-Za-z0-9_.:-]{1,128}$/],
+  ['^[A-Za-z][A-Za-z0-9_]{0,31}$', /^[A-Za-z][A-Za-z0-9_]{0,31}$/],
+]);
 
 export class RuntimeContractError extends Error {
   constructor(message, {code = 'runtime-error', retryable = false, context = null} = {}) {
@@ -66,9 +71,8 @@ function validateField(name, value, specification) {
     }
   }
   if (typeof value === 'string' && specification?.pattern) {
-    let expression;
-    try { expression = new RegExp(specification.pattern); }
-    catch { throw new RuntimeContractError(`server schema for ${name} is invalid`, {code: 'unavailable'}); }
+    const expression=SAFE_SCHEMA_PATTERNS.get(specification.pattern);
+    if (!expression) throw new RuntimeContractError(`server schema pattern for ${name} is unsupported`, {code: 'unavailable'});
     if (!expression.test(value)) throw new RuntimeContractError(`${name} has an invalid format`, {code: 'validation'});
   }
 }
