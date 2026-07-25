@@ -17,7 +17,7 @@ test('Chromium exposes one bounded structured runtime log and local validation e
     const id = session.command({target: 'system', action: 'ping', args: {}});
     let failure = null;
     try {
-      session.command({target: 'control', action: 'key', args: null});
+      session.command({target: 'control', action: 'key', args: []});
     } catch (error) {
       failure = {name: error.name, code: error.code, message: error.message};
     }
