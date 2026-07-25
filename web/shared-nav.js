@@ -9,13 +9,24 @@ const PAGES = [
   ['inspector', './realtime-inspector.html', 'inspector'],
 ];
 
+function bridgeDevice(value) {
+  const raw = String(value || '').trim();
+  if (!raw || raw.length > 255) return null;
+  try {
+    const parsed = new URL(`http://${raw}`);
+    if (parsed.username || parsed.password || parsed.port || parsed.pathname !== '/' || parsed.search || parsed.hash) return null;
+    return parsed.hostname || null;
+  } catch {
+    return null;
+  }
+}
+
 export function bridgeNavigationSearch(locationLike = globalThis.location) {
   const source = new URLSearchParams(locationLike?.search || '');
   if (source.get('bridge') !== 'localhost') return '';
-  const device = String(source.get('device') || '').trim();
+  const device = bridgeDevice(source.get('device'));
   const realtimePort = Number(source.get('rt'));
-  if (!device || device.length > 255 || device.includes('/') || device.includes('@')) return '';
-  if (!Number.isInteger(realtimePort) || realtimePort < 1 || realtimePort > 65535) return '';
+  if (!device || !Number.isInteger(realtimePort) || realtimePort < 1 || realtimePort > 65535) return '';
   return `?${new URLSearchParams({device, rt: String(realtimePort), bridge: 'localhost'})}`;
 }
 
