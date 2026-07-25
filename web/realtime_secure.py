@@ -5,15 +5,17 @@ import urllib.parse
 
 try:
     from .realtime_bridge import StateBridge
-    from .realtime_runtime import RuntimeAppliedAdapter, RuntimeAppliedHub
+    from .realtime_runtime import RuntimeAppliedAdapter
+    from .realtime_runtime_schema import SchemaRuntimeAppliedHub as RuntimeAppliedHub
     from .realtime_server import RealtimeRequestHandler, ThreadingRealtimeServer
 except ImportError:
     from realtime_bridge import StateBridge
-    from realtime_runtime import RuntimeAppliedAdapter, RuntimeAppliedHub
+    from realtime_runtime import RuntimeAppliedAdapter
+    from realtime_runtime_schema import SchemaRuntimeAppliedHub as RuntimeAppliedHub
     from realtime_server import RealtimeRequestHandler, ThreadingRealtimeServer
 
 # Preserve the established injection seams used by tests and downstream wrappers.
-# They now point at the complete generation/error/ownership-aware runtime stack.
+# They now point at the complete generation/error/ownership/schema-aware runtime stack.
 MidiAppliedAdapter = RuntimeAppliedAdapter
 MidiAppliedHub = RuntimeAppliedHub
 
@@ -103,7 +105,7 @@ def serve_realtime(host, port, legacy):
         with server:
             print(
                 "ingenue realtime on {}:{}/realtime "
-                "(Lua-applied, generation-safe, ownership-safe, {})".format(host, port, note),
+                "(Lua-applied, generation-safe, ownership-safe, schema-aware, {})".format(host, port, note),
                 flush=True,
             )
             server.serve_forever()
