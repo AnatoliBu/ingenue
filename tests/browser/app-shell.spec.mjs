@@ -20,6 +20,7 @@ test('every public controller page inherits one shared runtime shell', async ({p
   const pages = [
     'controllers.html',
     'performance.html',
+    'mlr.html',
     'builder.html',
     'launchpad.html',
     'gamepad.html',
@@ -31,7 +32,7 @@ test('every public controller page inherits one shared runtime shell', async ({p
     await page.goto(`${BRIDGE}/${name}${QUERY}`);
     await waitForShell(page);
     await expect(page.locator('[data-ingenue-nav]')).toHaveAttribute('data-connection-state', 'synced');
-    await expect(page.locator('[data-ingenue-nav] a')).toHaveCount(8);
+    await expect(page.locator('[data-ingenue-nav] a')).toHaveCount(9);
     await expect(page.locator('.ingenue-shell-drawer')).toBeHidden();
   }
 });

@@ -59,6 +59,7 @@ test('all browser surfaces boot, connect to norns and keep bridge routing', asyn
   const pages = [
     'controllers.html',
     'performance.html',
+    'mlr.html',
     'builder.html',
     'launchpad.html',
     'gamepad.html',
@@ -73,7 +74,7 @@ test('all browser surfaces boot, connect to norns and keep bridge routing', asyn
     const debug = await page.evaluate(() => ({url: ingenueDebug.latest.url, status: ingenueDebug.latest.state.status}));
     expect(debug).toEqual({url: 'ws://127.0.0.1:7778/realtime', status: 'synced'});
     const links = page.locator('[data-ingenue-nav] a');
-    await expect(links).toHaveCount(8);
+    await expect(links).toHaveCount(9);
     for (const link of await links.all()) {
       await expect(link).toHaveAttribute('href', /\?device=127\.0\.0\.1&rt=7778&bridge=localhost$/);
     }

@@ -26,43 +26,28 @@ Delivered one connection/status model, diagnostics drawer, bridge-safe navigatio
 
 Status: software and CI coverage complete; real-Shield acceptance remains.
 
-Delivered:
-
-- balanced K/E lifecycle and keyboard encoder parity;
-- norns-authoritative parameter descriptors and applied-value lanes;
-- four Grid/Arc vports, native shapes, rotation/intensity, LED feedback, multitouch and reconnect cleanup;
-- connected-only Browser MIDI hotplug, learn, feedback and held-key release;
-- standard browser gamepad buttons, d-pad, sticks and triggers with dead zones and full neutralization;
-- pinned `tehn/mlr` 2.2.5 reference, read-only observer, strict state channel, responsive MLR surface and deterministic CI scenarios.
-
-Audio timing, USB hardware, native file/text modals and pset behavior remain in the documented Shield acceptance matrix and must not be claimed from fixtures alone.
+Delivered balanced K/E, authoritative parameter lanes, four Grid/Arc vports, Browser MIDI lifecycle, standard browser gamepad support and a pinned MLR 2.2.5 reference/runtime/UI/E2E slice.
 
 ## Milestone 4 — Builder and script-specific surfaces
 
-Status: implemented in Builder schema v2; CI acceptance in progress.
+Status: complete in `main`.
 
-Delivered:
-
-- deterministic migration from schema v1;
-- Grid, Arc, Browser MIDI and gamepad widgets alongside K/E/parameter/layout widgets;
-- authoritative Grid/Arc feedback and balanced multitouch/gesture cleanup;
-- typed MIDI and gamepad mappings through the shared runtime only;
-- reusable templates, exact-script named presets and optional script-provided metadata;
-- local overrides without modifying community script repositories;
-- desktop, touch and reload E2E scenarios.
-
-Exit gate: migration, import/export, templates, presets, script switching, lifecycle cleanup and all advanced widget command paths pass unit, Chromium and security CI.
+Delivered schema v2 migration, Grid/Arc/MIDI/gamepad widgets, authoritative feedback, templates, named exact-script presets, script-provided metadata and lifecycle-safe browser contracts.
 
 ## Milestone 5 — visual parity and performance
 
-Status: next.
+Status: software and CI contract complete; physical Shield acceptance pending.
 
-- consolidate component tokens and state styling across every public surface;
-- desktop/tablet/phone visual-regression coverage;
-- touch-target, contrast, focus and reduced-motion checks;
-- frame-time and command-latency budgets;
-- reconnect soak, bounded logs/queues and long-session memory checks;
-- final real-Shield acceptance matrix.
+Delivered:
+
+- one shared quality contract installed on every public surface;
+- MLR in the shared bridge-safe navigation;
+- desktop and phone target-size budgets with narrow instrument-cell exemptions;
+- programmatic-name, contrast, focus and reduced-motion checks;
+- desktop/tablet/phone visual-regression baselines;
+- animation-frame and realtime ACK latency budgets;
+- eight-cycle reconnect soak with bounded session/log/queue invariants;
+- explicit physical-hardware acceptance matrix for audio, USB, native modals, psets and long-session validation.
 
 ## Working rule
 

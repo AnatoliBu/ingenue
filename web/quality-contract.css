@@ -1,0 +1,11 @@
+:root{
+  --ingenue-space-1:4px;--ingenue-space-2:8px;--ingenue-space-3:12px;--ingenue-space-4:16px;
+  --ingenue-control-height:36px;--ingenue-focus-width:2px;
+}
+:where(.ingenue-nav-link,.ingenue-shell-diagnostics-toggle,.ingenue-shell-drawer-actions button){min-width:var(--ingenue-control-height);min-height:var(--ingenue-control-height)}
+:where(button,a[href],input:not([type=range]):not([type=checkbox]):not([type=radio]),select,textarea,[role=button],[tabindex]):not(.grid-key):not(.builder-grid-pad):not(.mlr-pad):not(.launchpad-pad):not(.arc-key):not([data-ingenue-compact]){min-height:var(--ingenue-control-height)}
+:where(button,[role=button]):not(.grid-key):not(.builder-grid-pad):not(.mlr-pad):not(.launchpad-pad):not(.arc-key):not([data-ingenue-compact]){min-width:var(--ingenue-control-height)}
+:where(button,a[href],input,select,textarea,[role=button],[tabindex]):focus-visible{outline:var(--ingenue-focus-width) solid var(--ingenue-accent,#d9ff5b)!important;outline-offset:2px!important}
+html{background:var(--ingenue-bg,#08090b);color:var(--ingenue-text,#eef4e9)}
+@media(max-width:640px){:root{--ingenue-control-height:44px}[data-ingenue-nav]{max-width:100%;overflow-x:auto;overscroll-behavior-inline:contain;scrollbar-width:thin}}
+@media(prefers-reduced-motion:reduce){*,*::before,*::after{animation-delay:0s!important;animation-duration:.001ms!important;animation-iteration-count:1!important;scroll-behavior:auto!important;transition-delay:0s!important;transition-duration:.001ms!important}}
