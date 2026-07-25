@@ -37,9 +37,10 @@ export function validateCommandShape(command) {
   if (!plainObject(command)) throw new RuntimeContractError('command must be an object', {code: 'validation'});
   if (!SAFE_NAME.test(String(command.target || ''))) throw new RuntimeContractError('command target is invalid', {code: 'validation'});
   if (!SAFE_NAME.test(String(command.action || ''))) throw new RuntimeContractError('command action is invalid', {code: 'validation'});
-  if (!plainObject(command.args)) throw new RuntimeContractError('command args must be an object', {code: 'validation'});
-  if (Object.keys(command.args).length > 32) throw new RuntimeContractError('command args contain too many fields', {code: 'validation'});
-  return command;
+  const args=command.args==null?{}:command.args;
+  if (!plainObject(args)) throw new RuntimeContractError('command args must be an object', {code: 'validation'});
+  if (Object.keys(args).length > 32) throw new RuntimeContractError('command args contain too many fields', {code: 'validation'});
+  return {...command,args};
 }
 
 function validateField(name, value, specification) {
@@ -139,13 +140,13 @@ export class RuntimeCommandRegistry {
   descriptor(command) { return this.entries.get(commandName(command)) || null; }
 
   validate(command, {allowUnknown = false} = {}) {
-    validateCommandShape(command);
-    const descriptor = this.descriptor(command);
+    const normalized=validateCommandShape(command);
+    const descriptor = this.descriptor(normalized);
     if (!descriptor) {
       if (allowUnknown || !this.authoritative) return null;
-      throw new RuntimeContractError(`server does not advertise ${commandName(command)}`, {code: 'unavailable'});
+      throw new RuntimeContractError(`server does not advertise ${commandName(normalized)}`, {code: 'unavailable'});
     }
-    validateArgs(command.args, descriptor.args_schema);
+    validateArgs(normalized.args, descriptor.args_schema);
     return descriptor;
   }
 
