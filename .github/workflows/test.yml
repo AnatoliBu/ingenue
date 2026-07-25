@@ -43,3 +43,42 @@ jobs:
           path: test-output.txt
           if-no-files-found: error
           retention-days: 7
+
+  browser-contract:
+    name: browser ↔ norns contract (Chromium)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: install browser test runner
+        run: npm install --no-audit --no-fund
+      - name: install Chromium
+        run: npx playwright install --with-deps chromium
+      - name: run browser and norns contract suite
+        id: browser
+        shell: bash
+        run: |
+          set +e
+          npm run test:browser 2>&1 | tee browser-test-output.txt
+          status=${PIPESTATUS[0]}
+          echo "status=$status" >> "$GITHUB_OUTPUT"
+          exit "$status"
+      - name: upload browser diagnostics
+        if: failure() && steps.browser.outputs.status != '0'
+        uses: actions/upload-artifact@v4
+        with:
+          name: browser-norns-contract-diagnostics
+          path: |
+            browser-test-output.txt
+            playwright-report/
+            test-results/
+          if-no-files-found: warn
+          retention-days: 7
