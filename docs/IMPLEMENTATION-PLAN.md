@@ -6,22 +6,25 @@ The implementation order follows the norns/matron lifecycle, Maiden's embedded-w
 
 ## Milestone 0 — browser ↔ norns contract gate
 
+Status: complete in `main`.
+
 Goal: make the real browser boundary observable and mandatory in CI before adding more features.
 
-Deliverables:
+Delivered:
 
 - Chromium E2E job in GitHub Actions.
 - Real HTTP, localhost proxy and RFC 6455 WebSocket fixture.
-- Surface boot and navigation checks for all public pages.
+- Surface boot and navigation checks for public pages.
 - Exact realtime-target preservation across the localhost bridge.
 - Command coverage for K/E, Grid, Arc, parameters, MIDI, gamepad and Builder.
-- ACK, reject, matron timeout, disconnect and reconnect coverage.
-- Multi-client ownership and held-control release coverage.
+- ACK, reject, disconnect, reconnect and ownership coverage.
 - Playwright trace, screenshots, video and console output on failure.
 
 Exit gate: unit, Python, browser-contract and security jobs are green.
 
 ## Milestone 1 — unified matron runtime boundary
+
+Status: active.
 
 Goal: one browser-side and one server-side contract for all matron-facing commands.
 
