@@ -7,6 +7,9 @@ screenshots/
 .claude/
 .venv
 .vscode/
+node_modules/
+playwright-report/
+test-results/
 
 # internal notes (not published)
 CONSIDER-LATER.md
