@@ -13,6 +13,13 @@ async function waitForCommand(request, predicate) {
   await expect.poll(async () => (await commands(request)).some(predicate)).toBe(true);
 }
 
+async function pressPointer(page, locator) {
+  const box = await locator.boundingBox();
+  expect(box).not.toBeNull();
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.down();
+}
+
 test.beforeEach(async ({request}) => {
   const response = await request.get(`${FIXTURE}/reset`);
   expect(response.ok()).toBeTruthy();
@@ -35,13 +42,14 @@ test('pointer-held K controls release exactly once when the browser loses focus'
   await page.goto(PAGE);
   await page.waitForFunction(() => globalThis.ingenueDebug?.latest?.state?.status === 'synced');
   const key = page.locator('[data-key="1"]');
-  await key.dispatchEvent('pointerdown', {pointerId: 41, pointerType: 'mouse', button: 0, clientX: 10, clientY: 10});
+  await pressPointer(page, key);
   await expect(key).toHaveAttribute('data-pressed', 'true');
   await waitForCommand(request, item => item.command?.target === 'control' && item.command?.action === 'key' && item.command.args?.n === 1 && item.command.args?.z === 1);
 
   await page.evaluate(() => window.dispatchEvent(new Event('blur')));
   await expect(key).toHaveAttribute('data-pressed', 'false');
   await waitForCommand(request, item => item.command?.target === 'control' && item.command?.action === 'key' && item.command.args?.n === 1 && item.command.args?.z === 0);
+  await page.mouse.up();
 
   const matching = (await commands(request)).filter(item => item.command?.target === 'control' && item.command?.action === 'key' && item.command.args?.n === 1);
   expect(matching.map(item => item.command.args.z)).toEqual([1, 0]);
@@ -54,24 +62,27 @@ test('keyboard-held K controls and encoder gestures are cleared on focus loss', 
   const encoder = page.locator('[data-encoder="2"]');
 
   await key.focus();
-  await key.dispatchEvent('keydown', {key: ' ', repeat: false});
+  await page.keyboard.down('Space');
   await expect(key).toHaveAttribute('data-pressed', 'true');
-  await encoder.dispatchEvent('pointerdown', {pointerId: 52, pointerType: 'mouse', button: 0, clientX: 20, clientY: 20});
+  await pressPointer(page, encoder);
   await expect(encoder).toHaveAttribute('data-pressed', 'true');
 
   await page.evaluate(() => window.dispatchEvent(new Event('blur')));
   await expect(key).toHaveAttribute('data-pressed', 'false');
   await expect(encoder).toHaveAttribute('data-pressed', 'false');
   await waitForCommand(request, item => item.command?.target === 'control' && item.command?.action === 'key' && item.command.args?.n === 2 && item.command.args?.z === 0);
+  await page.mouse.up();
+  await page.keyboard.up('Space');
 });
 
 test('disconnect clears pressed visuals while the server releases owned controls', async ({page, request}) => {
   await page.goto(PAGE);
   await page.waitForFunction(() => globalThis.ingenueDebug?.latest?.state?.status === 'synced');
   const key = page.locator('[data-key="3"]');
-  await key.dispatchEvent('pointerdown', {pointerId: 63, pointerType: 'mouse', button: 0, clientX: 10, clientY: 10});
+  await pressPointer(page, key);
   await expect(key).toHaveAttribute('data-pressed', 'true');
   await request.get(`${FIXTURE}/disconnect`);
   await expect(key).toHaveAttribute('data-pressed', 'false');
   await expect(page.locator('body')).toHaveAttribute('data-ingenue-state', 'reconnecting');
+  await page.mouse.up();
 });
