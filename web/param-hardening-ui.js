@@ -1,6 +1,7 @@
 const PARAM_ID = /^[A-Za-z0-9_.:-]{1,128}$/;
 
 function finiteText(value) {
+  if (value == null || (typeof value === 'string' && value.trim() === '')) return null;
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : null;
 }
@@ -77,8 +78,8 @@ export function mountParamHardening(session, root = document) {
       if (id === currentId()) setValue(value);
     }
     if (id === currentId()) {
-      const formatted = String(descriptor.formatted || descriptor.value_text || value ?? '—');
-      status.textContent = `${descriptor.name || id} · applied ${formatted}`;
+      const formattedValue = descriptor.formatted || descriptor.value_text || (value ?? '—');
+      status.textContent = `${descriptor.name || id} · applied ${formattedValue}`;
       idInput.setCustomValidity('');
     }
     return true;
@@ -107,12 +108,13 @@ export function mountParamHardening(session, root = document) {
     describedKey = null;
     describe(true);
   };
-  idInput.addEventListener('change', onIdChange);
-  idInput.addEventListener('keydown', event => {
+  const onIdKeyDown = event => {
     if (event.key !== 'Enter') return;
     event.preventDefault();
     onIdChange();
-  });
+  };
+  idInput.addEventListener('change', onIdChange);
+  idInput.addEventListener('keydown', onIdKeyDown);
 
   const onState = event => {
     const nextReady = event.detail?.status === 'synced' && Boolean(event.detail?.data?.script?.active);
@@ -161,6 +163,7 @@ export function mountParamHardening(session, root = document) {
     get lastApplied() { return new Map(lastApplied); },
     destroy() {
       idInput.removeEventListener('change', onIdChange);
+      idInput.removeEventListener('keydown', onIdKeyDown);
       session.removeEventListener('state', onState);
       session.removeEventListener('command', onCommand);
       status.remove();
