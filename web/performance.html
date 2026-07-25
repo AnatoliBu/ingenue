@@ -111,6 +111,6 @@
       </aside>
     </div>
   </main>
-  <script type="module">import {mountSharedNavigation} from './shared-nav.js'; import {mountPerformanceSurface} from './performance-surface.js'; import {mountGridHardening} from './grid-hardening-ui.js'; import {mountArcHardening} from './arc-hardening-ui.js'; mountSharedNavigation(); const session=mountPerformanceSurface(); mountGridHardening(session); mountArcHardening(session);</script>
+  <script type="module">import {mountSharedNavigation} from './shared-nav.js'; import {mountPerformanceSurface} from './performance-surface.js'; import {mountGridHardening} from './grid-hardening-ui.js'; import {mountArcHardening} from './arc-hardening-ui.js'; import {mountEncoderActionBoundary} from './encoder-action-boundary.js'; mountSharedNavigation(); const session=mountPerformanceSurface(); mountEncoderActionBoundary(); mountGridHardening(session); mountArcHardening(session);</script>
 </body>
 </html>
