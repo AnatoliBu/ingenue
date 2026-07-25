@@ -1,92 +1,54 @@
 # Per-script UI Builder
 
-Ingenue's UI Builder creates small performance surfaces without changing the active norns script. The browser stores a versioned layout for the exact script name and renders its widgets through the same realtime ownership and Lua-applied command path as the built-in performance pages.
+Ingenue's UI Builder creates script-specific performance surfaces without modifying community scripts. Every interactive widget uses the same typed browser → realtime → Lua-applied path as the built-in controller pages, while norns remains authoritative for script state, parameters, Grid/Arc LEDs and musical timing.
 
-Open:
+Open `http://norns.local:7777/builder.html`.
 
-```text
-http://norns.local:7777/builder.html
-```
+## Schema v2 and migration
 
-## Schema
-
-Builder schemas use version `1` and contain:
-
-- the exact active script name;
-- a user-facing surface name;
-- one to four responsive columns;
-- at most 64 ordered widgets.
-
-Layouts are stored in browser `localStorage` under an encoded per-script key. Switching scripts immediately switches layouts. An imported schema must name the currently active script; this prevents accidentally applying a control surface to a different parameter namespace.
-
-Example:
+Schema version `2` keeps the exact script name, surface name, one-to-four-column layout, metadata and at most 64 ordered widgets. Version `1` layouts are migrated automatically on first load and written to the v2 per-script storage key. Imports remain exact-script: a surface for `awake` cannot be applied to `mlr`.
 
 ```json
 {
-  "version": 1,
-  "script": "awake",
-  "name": "Awake live",
-  "columns": 2,
+  "version": 2,
+  "script": "mlr",
+  "name": "MLR companion",
+  "columns": 4,
+  "metadata": {"source": "local", "revision": null},
   "widgets": [
-    {"id": "freeze", "type": "key", "span": 1, "label": "Freeze", "n": 3},
-    {"id": "rate", "type": "encoder", "span": 1, "label": "Rate", "n": 2, "step": 4},
-    {"id": "cutoff", "type": "param", "span": 2, "label": "Cutoff", "paramId": "filter.cutoff", "step": 0.005}
+    {"id":"grid","type":"grid","span":4,"label":"MLR 16×8","port":1,"shape":"16x8"},
+    {"id":"focus","type":"key","span":1,"label":"K2 view","n":2},
+    {"id":"rate","type":"encoder","span":1,"label":"E3 rate","n":3,"step":1},
+    {"id":"output","type":"param","span":2,"label":"Output","paramId":"output_level","step":0.01}
   ]
 }
 ```
 
 ## Widgets
 
-### Key
+- **Key:** K1–K3 with balanced pointer and keyboard release.
+- **Encoder:** E1–E3 through buttons, wheel and keyboard arrows.
+- **Parameter:** normalized norns parameter with one applied command in flight and authoritative formatted feedback.
+- **Grid:** vport 1–4, 8×8, 16×8 or 16×16, ordinary `grid.key` input and authoritative LED frame rendering.
+- **Arc:** vport 1–4 and ring 1–4, delta gestures, wheel/keyboard input, Arc key and authoritative 64-LED feedback.
+- **MIDI:** note, CC or pitch-bend source mapped to K/E/parameter targets. Permission is user-initiated; connected inputs hotplug through Web MIDI. Held key mappings are released on device, profile, page, script or realtime loss.
+- **Gamepad:** virtual button, d-pad or analog controls using the existing `gamepad.button`, `gamepad.dpad` and `gamepad.analog` contracts.
+- **Label and spacer:** safe non-interactive layout elements; imported text is assigned through `textContent`.
 
-Targets K1, K2 or K3. Pointer input uses a press ledger, so each applied `z = 1` has a matching `z = 0` on pointer release, cancellation, page hide or ownership disconnect cleanup.
+## Templates and presets
 
-### Encoder
+The Builder ships reusable Performance, Grid + Arc, MIDI keys, Gamepad and MLR companion templates. Applying a template replaces the active layout only after confirmation. Named presets are stored per exact script and can be saved, loaded or removed without changing the currently running norns script.
 
-Targets E1, E2 or E3. The configured integer step is sent by the minus/plus buttons, mouse wheel or keyboard arrows.
+## Script-provided metadata
 
-### Parameter
+A script or read-only adapter may publish an optional `ingenue_ui`, `ingenueUI` or `ui_surface` schema inside authoritative script state. The Builder uses it only when the browser has no local layout for that exact script. The first edit creates a local override; reset removes the override and exposes script metadata again. Invalid or cross-script metadata is ignored rather than partially rendered.
 
-Targets a norns parameter id through `param.set_normalized`. The active script's writable parameter catalog populates browser suggestions, but ids can also be entered manually. Each slider uses a single-inflight applied-value lane: high-rate input converges to the newest desired value without flooding matron. Lua acknowledgements update the displayed formatted value; rejection restores the last applied normalized value.
+## Realtime and lifecycle
 
-### Label and spacer
+The preview subscribes to `script`, `params`, `control`, `grid` and `arc`. Imported JSON never executes Lua. Grid and Arc frames are rendered from norns snapshots/deltas instead of browser guesses. Every lifecycle transition—blur, page hide, hidden document, reconnect or script switch—releases held K/Grid/Arc/MIDI/gamepad state before the surface becomes inactive.
 
-Labels create non-interactive section text. Spacers reserve layout rhythm. Imported text is assigned through `textContent`, never interpreted as HTML.
+Editing remains available through a temporary reconnect, while preview controls stay disabled until the authoritative snapshot is synchronized again.
 
-## Editing
+## CI contract
 
-The editor supports:
-
-- add, remove and ordered move up/down;
-- widget label, target, step and column-span editing;
-- surface naming and one-to-four-column layout;
-- automatic persistence after each valid change;
-- formatted JSON export;
-- clipboard copy and file download;
-- exact-script JSON import;
-- reset of only the active script's layout.
-
-Reducing the number of columns clamps widget spans to the new layout. Duplicate ids, invalid parameter ids, unsupported types, excessive widget counts and malformed JSON are rejected before storage or rendering.
-
-## Realtime and ownership
-
-The preview subscribes to `script`, `params`, `control` and ownership-aware realtime state. It does not execute Lua from imported JSON. Widgets can only issue the fixed validated command set:
-
-- `control.key`;
-- `control.enc`;
-- `param.set_normalized`;
-- `param.catalog` when the active script has not published a catalog yet.
-
-The first preview command implicitly claims the existing `control` or `params` resource. Competing browser tabs receive a protocol rejection. When the final socket disappears, the server releases held controls immediately and retains only the short reconnect lease.
-
-Editing remains available during a temporary realtime reconnect because the schema is browser-local. Preview controls are disabled until authoritative state is synchronized again.
-
-## Portability
-
-Exported JSON can be copied or downloaded. Profiles are intentionally browser-local rather than written into the script repository: a UI can be changed without modifying community code, and importing remains an explicit user action.
-
-Future schema versions can add Grid/Arc blocks or reusable groups while version `1` remains deterministic and migratable.
-
-## Validation boundary
-
-CI validates schema normalization, widget limits and targets, ordering, layout clamping, exact-script import, storage isolation, parameter filtering, fixed command wiring, press cleanup, safe text rendering and presence of all editor/export controls. Real-device validation should cover touch holds, Wi-Fi loss during a hold, rapid parameter movement, script switching and import/export between two browsers.
+Node tests cover v1→v2 migration, exact-script validation, every widget schema, templates, metadata and preset isolation. Chromium tests cover Grid/Arc/gamepad commands, authoritative LED updates, MIDI mapping and held-key cleanup through the real HTTP/proxy/WebSocket fixture. Security checks assert fixed command targets, safe text rendering and bounded schemas.

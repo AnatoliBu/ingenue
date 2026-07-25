@@ -6,19 +6,15 @@
   <meta name="theme-color" content="#090a0c">
   <title>Ingenue UI Builder</title>
   <link rel="stylesheet" href="./builder.css">
+  <link rel="stylesheet" href="./builder-v2.css">
   <link rel="stylesheet" href="./shared-nav.css">
 </head>
 <body>
   <main class="builder-page">
     <header class="builder-top">
-      <div>
-        <div class="builder-brand">Ingenue UI Builder</div>
-        <div class="builder-endpoint" id="builder-endpoint"></div>
-      </div>
+      <div><div class="builder-brand">Ingenue UI Builder</div><div class="builder-endpoint" id="builder-endpoint"></div></div>
       <nav class="builder-chips" data-ingenue-nav="builder" aria-label="Ingenue pages">
-        <span class="builder-chip" id="builder-status">connecting</span>
-        <span class="builder-chip">rev <b id="builder-revision">—</b></span>
-        <span class="builder-chip" id="builder-script">no active script</span>
+        <span class="builder-chip" id="builder-status">connecting</span><span class="builder-chip">rev <b id="builder-revision">—</b></span><span class="builder-chip" id="builder-script">no active script</span>
       </nav>
     </header>
 
@@ -28,9 +24,22 @@
           <h2>Surface</h2>
           <div class="builder-stack">
             <label><span>Name</span><input id="builder-name" data-builder-action maxlength="120" autocomplete="off"></label>
-            <label><span>Columns</span><select id="builder-columns" data-builder-action>
-              <option value="1">1</option><option value="2">2</option><option value="3">3</option><option value="4">4</option>
-            </select></label>
+            <label><span>Columns</span><select id="builder-columns" data-builder-action><option value="1">1</option><option value="2">2</option><option value="3">3</option><option value="4">4</option></select></label>
+          </div>
+        </section>
+
+        <section class="builder-panel">
+          <h2>Template</h2>
+          <div class="builder-stack"><select id="builder-template" data-builder-action aria-label="Builder template"></select><button id="builder-template-apply" data-builder-action type="button">apply template</button></div>
+        </section>
+
+        <section class="builder-panel">
+          <h2>Presets</h2>
+          <div class="builder-stack">
+            <input id="builder-preset-name" data-builder-action maxlength="80" placeholder="preset name" autocomplete="off">
+            <button id="builder-preset-save" data-builder-action type="button">save current</button>
+            <select id="builder-preset" data-builder-action aria-label="Builder preset"><option value="">select preset</option></select>
+            <div class="builder-actions"><button id="builder-preset-load" data-builder-action type="button">load</button><button id="builder-preset-delete" data-builder-action class="danger" type="button">delete</button></div>
           </div>
         </section>
 
@@ -40,9 +49,18 @@
             <button data-builder-action data-add-widget="key" type="button">Key</button>
             <button data-builder-action data-add-widget="encoder" type="button">Encoder</button>
             <button data-builder-action data-add-widget="param" type="button">Parameter</button>
+            <button data-builder-action data-add-widget="grid" type="button">Grid</button>
+            <button data-builder-action data-add-widget="arc" type="button">Arc</button>
+            <button data-builder-action data-add-widget="midi" type="button">MIDI</button>
+            <button data-builder-action data-add-widget="gamepad" type="button">Gamepad</button>
             <button data-builder-action data-add-widget="label" type="button">Label</button>
             <button data-builder-action data-add-widget="spacer" type="button">Spacer</button>
           </div>
+        </section>
+
+        <section class="builder-panel">
+          <div class="builder-panel-head"><h2>Browser MIDI</h2><span id="builder-midi-status">permission required</span></div>
+          <button id="builder-midi-enable" data-builder-action type="button">enable MIDI widgets</button>
         </section>
 
         <section class="builder-panel">
@@ -50,26 +68,16 @@
           <div class="builder-stack">
             <textarea id="builder-json" rows="10" spellcheck="false" aria-label="Builder JSON"></textarea>
             <div class="builder-actions">
-              <button data-builder-action id="builder-export" type="button">export</button>
-              <button data-builder-action id="builder-copy" type="button">copy</button>
-              <button data-builder-action id="builder-download" type="button">download</button>
-              <button data-builder-action id="builder-import" type="button">import</button>
-              <button data-builder-action id="builder-reset" class="danger" type="button">reset</button>
+              <button data-builder-action id="builder-export" type="button">export</button><button data-builder-action id="builder-copy" type="button">copy</button><button data-builder-action id="builder-download" type="button">download</button><button data-builder-action id="builder-import" type="button">import</button><button data-builder-action id="builder-reset" class="danger" type="button">reset local</button>
             </div>
           </div>
         </section>
       </aside>
 
-      <section class="builder-panel builder-editor-panel">
-        <div class="builder-panel-head"><h2>Editor</h2><span id="builder-count">0 widgets</span></div>
-        <div class="builder-editor" id="builder-editor"></div>
-      </section>
-
+      <section class="builder-panel builder-editor-panel"><div class="builder-panel-head"><h2>Editor</h2><span id="builder-count">0 widgets</span></div><div class="builder-editor" id="builder-editor"></div></section>
       <section class="builder-panel builder-preview-panel">
-        <div class="builder-panel-head"><h2>Live preview</h2><span>Lua-applied</span></div>
-        <h1 id="builder-preview-name">Surface</h1>
-        <div class="builder-preview" id="builder-preview"></div>
-        <p class="builder-notice" id="builder-notice">Waiting for authoritative state…</p>
+        <div class="builder-panel-head"><h2>Live preview</h2><span>norns authoritative</span></div>
+        <h1 id="builder-preview-name">Surface</h1><div class="builder-preview" id="builder-preview"></div><p class="builder-notice" id="builder-notice">Waiting for authoritative state…</p>
       </section>
     </div>
   </main>
