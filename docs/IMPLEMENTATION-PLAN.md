@@ -24,7 +24,7 @@ Delivered one connection/status model, diagnostics drawer, bridge-safe navigatio
 
 ## Milestone 3 — virtual-device and reference-script parity
 
-Status: active.
+Status: software and CI coverage complete; real-Shield acceptance remains.
 
 ### K/E and parameters
 
@@ -36,6 +36,8 @@ Status: complete in `main`.
 
 ### Grid and Arc
 
+Status: complete in the automated contract.
+
 - four vports, supported native shapes, rotation/intensity and lifecycle;
 - authoritative LED snapshots;
 - multitouch slide and reconnect-safe held ledgers;
@@ -43,12 +45,18 @@ Status: complete in `main`.
 
 ### MIDI and gamepad
 
-- browser MIDI lifecycle, learn, feedback and hotplug;
-- gamepad buttons, d-pad, sticks and triggers with neutral-state cleanup.
+Status: complete in the browser-device lifecycle slice.
+
+- connected-only Web MIDI inventory and automatic hotplug;
+- release of held mapped norns keys on input/profile/script/session loss;
+- descriptor and pickup rebuild after reconnect;
+- physical W3C standard browser gamepad mapping;
+- buttons, d-pad, sticks and triggers with dead zones and change thresholds;
+- complete neutral-state cleanup on disconnect, focus loss and page lifecycle loss.
 
 ### MLR vertical slice
 
-Status: implementation and CI acceptance.
+Status: complete in `main`; real audio/timing/modal/pset acceptance remains.
 
 - pinned upstream reference pack for `tehn/mlr` 2.2.5;
 - exact Grid/K/E/LED/state map;
@@ -57,12 +65,13 @@ Status: implementation and CI acceptance.
 - specialized responsive `/mlr.html` surface;
 - 16×8 raw Grid parity, multitouch and desktop two-point loop chord;
 - six track cards, seven clips, four patterns and four recalls;
-- Node, Python, static Lua and Chromium scenarios;
-- final audio/timing/modal/pset acceptance on a real Shield.
+- Node, Python, static Lua and Chromium scenarios.
 
-Exit gate: standard norns scripts cannot distinguish Ingenue virtual devices from public norns APIs for covered operations, and pinned reference scenarios pass their CI and Shield matrices.
+Exit gate: standard norns scripts cannot distinguish Ingenue virtual devices from public norns APIs for covered operations, and pinned reference scenarios pass their CI matrices. Audio, USB hardware and native modal behavior are finalized by the documented Shield matrix.
 
 ## Milestone 4 — Builder and script-specific surfaces
+
+Status: next.
 
 - versioned per-script schema;
 - Grid/Arc/MIDI/gamepad widgets;

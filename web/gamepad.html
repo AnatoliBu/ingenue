@@ -19,6 +19,12 @@
       </nav>
     </header>
 
+    <section class="gamepad-physical" aria-label="Physical browser gamepad">
+      <span><small>browser gamepad</small><b id="gamepad-physical-status">waiting</b></span>
+      <p id="gamepad-physical-device">press a button on a standard gamepad</p>
+      <p>Physical and on-screen controls share the same Lua-applied norns callback path.</p>
+    </section>
+
     <section class="gamepad-panel">
       <div class="gamepad-shoulders">
         <button data-gamepad-control data-gamepad-button="L1">L1</button>
@@ -41,7 +47,7 @@
             <button data-gamepad-control data-gamepad-button="SELECT">select</button>
             <button data-gamepad-control data-gamepad-button="START">start</button>
           </div>
-          <p>touch / mouse / keyboard</p>
+          <p>touch / mouse / keyboard / standard browser gamepad</p>
         </div>
 
         <div class="gamepad-face" aria-label="Face buttons">
@@ -66,6 +72,6 @@
       <p class="gamepad-notice" id="gamepad-notice">Waiting for authoritative session state…</p>
     </section>
   </main>
-  <script type="module">import {mountSharedNavigation} from './shared-nav.js'; import {mountGamepadSurface} from './gamepad-surface.js'; mountSharedNavigation(); mountGamepadSurface();</script>
+  <script type="module">import {mountSharedNavigation} from './shared-nav.js'; import {mountGamepadSurface} from './gamepad-surface.js'; import {mountPhysicalGamepad} from './gamepad-physical.js'; mountSharedNavigation(); const session=mountGamepadSurface(); mountPhysicalGamepad(session);</script>
 </body>
 </html>

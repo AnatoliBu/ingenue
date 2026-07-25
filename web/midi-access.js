@@ -48,7 +48,11 @@ export function midiAvailability(navigatorLike=globalThis.navigator,isSecure=glo
 }
 export function midiPorts(access) {
   const normalize=port=>({id:String(port.id||''),name:String(port.name||'Unnamed MIDI port'),manufacturer:String(port.manufacturer||''),state:String(port.state||''),connection:String(port.connection||''),port});
-  return {inputs:Array.from(access?.inputs?.values?.()||[],normalize),outputs:Array.from(access?.outputs?.values?.()||[],normalize)};
+  const connected=port=>port&&port.state!=='disconnected'&&String(port.id||'');
+  return {
+    inputs:Array.from(access?.inputs?.values?.()||[]).filter(connected).map(normalize),
+    outputs:Array.from(access?.outputs?.values?.()||[]).filter(connected).map(normalize),
+  };
 }
 export async function requestMidiAccess(navigatorLike=globalThis.navigator) {
   return navigatorLike.requestMIDIAccess({sysex:false,software:false});
