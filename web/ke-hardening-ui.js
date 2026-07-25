@@ -1,4 +1,5 @@
 const ACTIVE_SELECTOR = '[data-key], [data-encoder]';
+const PRESSED_SELECTOR = '[data-key][data-pressed="true"], [data-encoder][data-pressed="true"]';
 
 function disabled(element) {
   return Boolean(element?.disabled || element?.dataset?.disabled === 'true');
@@ -23,7 +24,7 @@ export function encoderKeyDelta(event) {
 function syntheticPointerCancel(globalLike, pointerId) {
   try { return new globalLike.PointerEvent('pointercancel', {bubbles: true, pointerId}); }
   catch {
-    const event = new Event('pointercancel', {bubbles: true});
+    const event = new globalLike.Event('pointercancel', {bubbles: true});
     Object.defineProperty(event, 'pointerId', {value: pointerId});
     return event;
   }
@@ -32,7 +33,7 @@ function syntheticPointerCancel(globalLike, pointerId) {
 function syntheticKeyUp(globalLike, key) {
   try { return new globalLike.KeyboardEvent('keyup', {bubbles: true, key}); }
   catch {
-    const event = new Event('keyup', {bubbles: true});
+    const event = new globalLike.Event('keyup', {bubbles: true});
     Object.defineProperty(event, 'key', {value: key});
     return event;
   }
@@ -46,6 +47,7 @@ export function mountKEHardening(session, root = document, globalLike = globalTh
 
   const pointers = new Map();
   const keys = new Map();
+  const encoderListeners = [];
 
   const closestControl = target => target?.closest?.(ACTIVE_SELECTOR) || null;
   const onPointerDown = event => {
@@ -80,7 +82,7 @@ export function mountKEHardening(session, root = document, globalLike = globalTh
       active.control.dispatchEvent(syntheticKeyUp(globalLike, active.key));
       active.control.dataset.pressed = 'false';
     }
-    root.querySelectorAll?.(`${ACTIVE_SELECTOR}[data-pressed="true"]`).forEach(control => {
+    root.querySelectorAll?.(PRESSED_SELECTOR).forEach(control => {
       control.dataset.pressed = 'false';
     });
   };
@@ -95,13 +97,15 @@ export function mountKEHardening(session, root = document, globalLike = globalTh
   root.querySelectorAll('[data-encoder]').forEach(control => {
     if (!control.hasAttribute('tabindex')) control.tabIndex = 0;
     control.setAttribute('aria-keyshortcuts', 'ArrowLeft ArrowRight ArrowUp ArrowDown');
-    control.addEventListener('keydown', event => {
+    const listener = event => {
       if (event.target !== control || disabled(control) || event.repeat) return;
       const delta = encoderKeyDelta(event);
       if (!delta) return;
       event.preventDefault();
       boundedSend(session, Number(control.dataset.encoder), delta);
-    });
+    };
+    control.addEventListener('keydown', listener);
+    encoderListeners.push([control, listener]);
   });
 
   const onBlur = () => releaseAll();
@@ -125,6 +129,7 @@ export function mountKEHardening(session, root = document, globalLike = globalTh
       host.removeEventListener('lostpointercapture', onPointerEnd, true);
       host.removeEventListener('keydown', onKeyDown, true);
       host.removeEventListener('keyup', onKeyUp, true);
+      for (const [control, listener] of encoderListeners) control.removeEventListener('keydown', listener);
       globalLike.removeEventListener?.('blur', onBlur);
       globalLike.removeEventListener?.('pagehide', onPageHide);
       root.removeEventListener?.('visibilitychange', onVisibility);
