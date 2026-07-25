@@ -6,7 +6,7 @@ Browser-owned devices must reach norns through the same Lua-applied runtime as o
 
 - Only connected Web MIDI ports are selectable.
 - Profiles remain scoped to the exact active norns script and input fingerprint.
-- A mapped K1–K3 gate is tracked until note-off.
+- Held mapped keys for K1–K3 are tracked from note-on until their matching note-off.
 - Input disconnect, input change, profile change, script change, page hide or realtime loss sends the matching key release before clearing the profile.
 - Reconnect rebuilds parameter descriptors and pickup state from norns rather than reusing stale browser metadata.
 - Absolute parameter traffic remains one applied command in flight with the newest desired value queued.
