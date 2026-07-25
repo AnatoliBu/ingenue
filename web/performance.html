@@ -81,7 +81,7 @@
         </section>
 
         <section class="panel">
-          <div class="panel-head"><h2>Encoders</h2><span class="muted">drag / wheel</span></div>
+          <div class="panel-head"><h2>Encoders</h2><span class="muted">drag / wheel / keys</span></div>
           <div class="encoders">
             <div class="encoder" data-performance-control data-encoder="1" role="group" aria-label="Encoder 1">
               <div class="encoder-dial"></div><strong>E1</strong>
@@ -99,7 +99,7 @@
         </section>
 
         <section class="panel">
-          <div class="panel-head"><h2>Parameter lane</h2><span class="muted">one applied command in flight</span></div>
+          <div class="panel-head"><h2>Parameter lane</h2><span class="muted">norns-authoritative</span></div>
           <div class="param-grid">
             <input class="wide" id="param-id" data-performance-control value="cutoff" pattern="[A-Za-z0-9_.:\-]+" maxlength="128" spellcheck="false" aria-label="Parameter id">
             <input id="param-min" data-performance-control type="number" value="0" step="any" aria-label="Minimum">
@@ -111,6 +111,6 @@
       </aside>
     </div>
   </main>
-  <script type="module">import {mountSharedNavigation} from './shared-nav.js'; import {mountPerformanceSurface} from './performance-surface.js'; import {mountGridHardening} from './grid-hardening-ui.js'; import {mountArcHardening} from './arc-hardening-ui.js'; import {mountEncoderActionBoundary} from './encoder-action-boundary.js'; mountSharedNavigation(); const session=mountPerformanceSurface(); mountEncoderActionBoundary(); mountGridHardening(session); mountArcHardening(session);</script>
+  <script type="module">import {mountSharedNavigation} from './shared-nav.js'; import {mountPerformanceSurface} from './performance-surface.js'; import {mountGridHardening} from './grid-hardening-ui.js'; import {mountArcHardening} from './arc-hardening-ui.js'; import {mountEncoderActionBoundary} from './encoder-action-boundary.js'; import {mountKEHardening} from './ke-hardening-ui.js'; import {mountParamHardening} from './param-hardening-ui.js'; mountSharedNavigation(); const session=mountPerformanceSurface(); mountEncoderActionBoundary(); mountKEHardening(session); mountParamHardening(session); mountGridHardening(session); mountArcHardening(session);</script>
 </body>
 </html>
