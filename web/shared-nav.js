@@ -1,3 +1,5 @@
+import {installApplicationShell} from './app-shell.js';
+
 const PAGES = [
   ['controllers', './controllers.html', 'controllers'],
   ['performance', './performance.html', 'performance'],
@@ -51,5 +53,6 @@ export function mountSharedNavigation(root = document, locationLike = globalThis
     host.append(fragment);
     host.dataset.ingenueNavMounted = 'true';
   });
+  installApplicationShell(root, globalThis);
   return hosts;
 }
