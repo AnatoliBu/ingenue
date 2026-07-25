@@ -16,6 +16,44 @@ function portLabel(port){return [port.manufacturer,port.name].filter(Boolean).jo
 function mappingLabel(mapping){const source=sourceKey(mapping.source);if(mapping.target.kind==='param')return `${source} → param ${mapping.target.id} (${mapping.mode}${mapping.pickup?' + pickup':''})`;return `${source} → ${mapping.target.kind==='key'?'K':'E'}${mapping.target.n}${mapping.target.kind==='encoder'?` (${mapping.mode})`:''}`;}
 function uid(){return globalThis.crypto?.randomUUID?.()||`map-${Date.now()}-${Math.random().toString(36).slice(2)}`;}
 
+export async function copyTextWithFallback(text,{navigatorLike=globalThis.navigator,documentLike=globalThis.document}={}){
+  const value=String(text||'');
+  if(!value)return false;
+  try{
+    if(typeof navigatorLike?.clipboard?.writeText==='function'){
+      await navigatorLike.clipboard.writeText(value);
+      return true;
+    }
+  }catch{}
+  if(!documentLike?.body||typeof documentLike.createElement!=='function')return false;
+  const textarea=documentLike.createElement('textarea');
+  textarea.value=value;
+  textarea.setAttribute('readonly','');
+  textarea.style.position='fixed';
+  textarea.style.left='-10000px';
+  textarea.style.top='0';
+  documentLike.body.append(textarea);
+  textarea.focus();
+  textarea.select();
+  textarea.setSelectionRange?.(0,value.length);
+  let copied=false;
+  try{copied=Boolean(documentLike.execCommand?.('copy'));}catch{}
+  textarea.remove();
+  return copied;
+}
+
+function selectElementText(element,documentLike){
+  try{
+    const range=documentLike?.createRange?.();
+    const selection=documentLike?.defaultView?.getSelection?.()||globalThis.getSelection?.();
+    if(!range||!selection||!element)return false;
+    range.selectNodeContents(element);
+    selection.removeAllRanges();
+    selection.addRange(range);
+    return true;
+  }catch{return false;}
+}
+
 export function mountMidiSurface(root=document,env={}){
   const navigatorLike=env.navigatorLike||navigator;
   const secure=env.isSecureContext??globalThis.isSecureContext;
@@ -58,19 +96,22 @@ export function mountMidiSurface(root=document,env={}){
     if(!availability?.recoverable||!availability.bridge){bridgePanel.hidden=true;return;}
     bridgePanel.hidden=false;
     bridgeCommand.textContent=availability.bridge.command;
+    bridgeCommand.title=`From a cloned repository root you can also run: ${availability.bridge.repositoryCommand}`;
     bridgeOpen.href=availability.bridge.url;
-    bridgeNotice.textContent=`Device ${availability.bridge.device}; UI ${availability.bridge.httpPort}; realtime ${availability.bridge.realtimePort}. Python 3, no packages required.`;
+    bridgeCopy.textContent=availability.bridge.windows?'copy PowerShell command':'copy shell command';
+    bridgeNotice.textContent=`This command downloads midi-local.py to a temporary file and runs it from any folder. Repository checkout alternative: ${availability.bridge.repositoryCommand}`;
   }
 
   async function copyBridgeCommand(){
     const command=bridgeCommand?.textContent||'';
     if(!command)return;
-    try{
-      if(typeof navigatorLike.clipboard?.writeText!=='function')throw new Error('clipboard API unavailable');
-      await navigatorLike.clipboard.writeText(command);
-      bridgeNotice.textContent='Command copied. Run it from the folder containing midi-local.py.';
-    }catch{
-      bridgeNotice.textContent='Select and copy the command manually, then run it from the folder containing midi-local.py.';
+    const copied=await copyTextWithFallback(command,{navigatorLike,documentLike:root});
+    if(copied){
+      bridgeNotice.textContent='Command copied. Paste it into PowerShell or your terminal; the current folder does not matter.';
+      const old=bridgeCopy.textContent;bridgeCopy.textContent='copied';globalThis.setTimeout?.(()=>{bridgeCopy.textContent=old;},1200);
+    }else{
+      selectElementText(bridgeCommand,root);
+      bridgeNotice.textContent='The command is selected. Press Ctrl+C, then paste it into PowerShell.';
     }
   }
 
@@ -125,7 +166,7 @@ export function mountMidiSurface(root=document,env={}){
   }
 
   permission.addEventListener('click',async()=>{
-    const availability=midiAvailability(navigatorLike,secure,locationLike);configureBridge(availability);if(!availability.ok){setNotice(availability.message,true);return;}
+    const availability=midiAvailability(navigatorLike,secure,locationLike,navigatorLike);configureBridge(availability);if(!availability.ok){setNotice(availability.message,true);return;}
     permission.disabled=true;setNotice('Requesting MIDI permission…');
     try{access=await requestMidiAccess(navigatorLike);access.onstatechange=renderPorts;renderPorts();setNotice('MIDI permission granted.');}
     catch(error){setNotice(`MIDI permission failed: ${error.name||error.message}`,true);}
@@ -144,9 +185,11 @@ export function mountMidiSurface(root=document,env={}){
     status.textContent=event.detail.status;const script=event.detail.data?.script;const next=script?.active?script.name:null;scriptEl.textContent=next||'no active script';
     if(next!==currentScript){currentScript=next;activateProfile();}updateLearnEnabled();
   });
-  session.addEventListener('command',event=>{runtime.settle(event.detail);broker.settle(event.detail);if(event.detail.status==='reject')setNotice(event.detail.error||'Command rejected',true);});
-  session.addEventListener('protocolerror',event=>setNotice(`Protocol error: ${event.detail.message}`,true));
+  session.addEventListener('command',event=>{runtime.settle(event.detail);broker.settle(event.detail);if(event.detail.status==='reject'||event.detail.status==='uncertain')setNotice(event.detail.error||`Command ${event.detail.status}. See the browser Console for details.`,true);});
+  session.addEventListener('protocolerror',event=>setNotice(`Protocol error: ${event.detail.message}. See the browser Console.`,true));
+  session.addEventListener('error',()=>setNotice('Realtime WebSocket error. Open DevTools → Console for the exact endpoint and error.',true));
+  session.addEventListener('stale',()=>setNotice('Realtime heartbeat timed out. Ingenue will reconnect automatically; see Console.',true));
 
-  const availability=midiAvailability(navigatorLike,secure,locationLike);configureBridge(availability);if(!availability.ok){permission.disabled=true;setNotice(availability.message,true);}else setNotice('Grant MIDI permission, then select an input.');
+  const availability=midiAvailability(navigatorLike,secure,locationLike,navigatorLike);configureBridge(availability);if(!availability.ok){permission.disabled=true;setNotice(availability.message,true);}else setNotice('Grant MIDI permission, then select an input.');
   updateLearnEnabled();session.connect();return {session,runtime};
 }
