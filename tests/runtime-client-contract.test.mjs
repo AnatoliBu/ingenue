@@ -40,11 +40,13 @@ function harness(options={}){
   return{session,sockets};
 }
 
-function synchronize(session,socket){
+function synchronize(session,sockets){
   session.connect();
+  const socket=sockets[0];
   socket.open();
   socket.receive({v:1,type:'hello',server:'fixture',client_id:'browser-runtime-client',capabilities:{command_registry:commandRegistry}});
   socket.receive({v:1,type:'snapshot',rev:1,state:{runtime:context,script:{active:true,name:'fixture',generation:3}}});
+  return socket;
 }
 
 test('published command schemas reject invalid and unsupported browser commands before transport',()=>{
@@ -62,21 +64,21 @@ test('published command schemas reject invalid and unsupported browser commands 
 
 test('session uses the registry for context policy and normalized failures',()=>{
   const{session,sockets}=harness();
-  synchronize(session,sockets[0]);
-  const before=sockets[0].sent.length;
+  const socket=synchronize(session,sockets);
+  const before=socket.sent.length;
   const keyId=session.command({target:'control',action:'key',args:{n:1,z:1}});
   const pingId=session.command({target:'system',action:'ping',args:{}});
-  const sent=sockets[0].sent.slice(before);
+  const sent=socket.sent.slice(before);
   const key=sent.find(message=>message.id===keyId);
   const ping=sent.find(message=>message.id===pingId);
   assert.deepEqual(key.context,context);
   assert.equal(Object.hasOwn(ping,'context'),false);
   assert.throws(()=>session.command({target:'control',action:'key',args:{n:9,z:1}}),RuntimeContractError);
-  assert.equal(sockets[0].sent.length,before+2);
+  assert.equal(socket.sent.length,before+2);
 
   let settlement;
   session.addEventListener('command',event=>{settlement=event.detail;});
-  sockets[0].receive({v:1,type:'reject',id:keyId,rev:1,error:'controlled elsewhere',code:'ownership',retryable:false,context});
+  socket.receive({v:1,type:'reject',id:keyId,rev:1,error:'controlled elsewhere',code:'ownership',retryable:false,context});
   assert.deepEqual(settlement.failure,{code:'ownership',message:'controlled elsewhere',retryable:false,context});
 });
 
@@ -96,9 +98,9 @@ test('session exposes structured events for diagnostics and CI assertions',()=>{
   const{session,sockets}=harness({eventLimit:16});
   const observed=[];
   session.addEventListener('runtimeevent',event=>observed.push(event.detail));
-  synchronize(session,sockets[0]);
+  const socket=synchronize(session,sockets);
   const id=session.command({target:'system',action:'ping',args:{}});
-  sockets[0].receive({v:1,type:'ack',id,rev:1,result:{pong:true},context});
+  socket.receive({v:1,type:'ack',id,rev:1,result:{pong:true},context});
   const events=session.eventSnapshot();
   assert.ok(events.some(entry=>entry.event==='server hello'));
   assert.ok(events.some(entry=>entry.event==='snapshot'));
