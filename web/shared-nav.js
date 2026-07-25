@@ -32,6 +32,16 @@ export function bridgeNavigationSearch(locationLike = globalThis.location) {
   return `?${new URLSearchParams({device, rt: String(realtimePort), bridge: 'localhost'})}`;
 }
 
+function bindMountedSession(shell, globalLike = globalThis, attempt = 0) {
+  const session = globalLike.ingenueDebug?.latest;
+  if (session) {
+    shell?.bindSession?.(session);
+    return;
+  }
+  if (attempt >= 100) return;
+  globalLike.setTimeout?.(() => bindMountedSession(shell, globalLike, attempt + 1), 50);
+}
+
 export function mountSharedNavigation(root = document, locationLike = globalThis.location) {
   const hosts = root.querySelectorAll('[data-ingenue-nav]');
   const bridgeSearch = bridgeNavigationSearch(locationLike);
@@ -53,6 +63,7 @@ export function mountSharedNavigation(root = document, locationLike = globalThis
     host.append(fragment);
     host.dataset.ingenueNavMounted = 'true';
   });
-  installApplicationShell(root, globalThis);
+  const shell = installApplicationShell(root, globalThis);
+  globalThis.queueMicrotask?.(() => bindMountedSession(shell));
   return hosts;
 }
