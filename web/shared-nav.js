@@ -1,8 +1,10 @@
 import {installApplicationShell} from './app-shell.js';
+import {installQualityContract} from './quality-contract.js';
 
 const PAGES = [
   ['controllers', './controllers.html', 'controllers'],
   ['performance', './performance.html', 'performance'],
+  ['mlr', './mlr.html', 'MLR'],
   ['builder', './builder.html', 'UI Builder'],
   ['launchpad', './launchpad.html', 'Launchpad'],
   ['gamepad', './gamepad.html', 'Gamepad'],
@@ -64,6 +66,7 @@ export function mountSharedNavigation(root = document, locationLike = globalThis
     host.dataset.ingenueNavMounted = 'true';
   });
   const shell = installApplicationShell(root, globalThis);
+  installQualityContract(root, globalThis);
   globalThis.queueMicrotask?.(() => bindMountedSession(shell));
   return hosts;
 }

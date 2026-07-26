@@ -1,7 +1,9 @@
 .ingenue-nav-link {
   display: inline-flex;
   align-items: center;
-  min-height: 30px;
+  justify-content: center;
+  min-width: 36px;
+  min-height: 36px;
   border: 1px solid var(--line, #30343d);
   border-radius: 999px;
   padding: 6px 10px;
@@ -26,4 +28,8 @@
   color: var(--accent, #d9ff5b);
   cursor: default;
   pointer-events: none;
+}
+
+@media (max-width: 640px) {
+  .ingenue-nav-link { min-width: 44px; min-height: 44px; }
 }
