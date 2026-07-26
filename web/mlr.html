@@ -100,6 +100,7 @@
   </main>
   <script type="module">
     import {mountSharedNavigation} from './shared-nav.js';
+    import {installMlrDiagnostics} from './mlr-diagnostics.js';
     import {mountMlrSurface} from './mlr-surface.js';
     for (const id of ['mlr-workflow-cut','mlr-loop-start','mlr-loop-end']) {
       const select = document.getElementById(id);
@@ -107,7 +108,8 @@
     }
     document.getElementById('mlr-loop-end').value = '16';
     mountSharedNavigation();
-    mountMlrSurface();
+    const session = mountMlrSurface();
+    installMlrDiagnostics(session);
     import('./mlr-workflow.js');
   </script>
 </body>
