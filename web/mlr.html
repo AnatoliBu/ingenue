@@ -6,6 +6,7 @@
   <meta name="theme-color" content="#08090b">
   <title>Ingenue MLR</title>
   <link rel="stylesheet" href="./mlr.css">
+  <link rel="stylesheet" href="./mlr-workflow.css">
   <link rel="stylesheet" href="./shared-nav.css">
 </head>
 <body>
@@ -25,6 +26,50 @@
       <span><small>timing</small><b id="mlr-quantize">free</b></span>
       <p id="mlr-help">waiting for MLR view</p>
     </section>
+
+    <section class="mlr-panel mlr-workflow-panel" id="mlr-workflow" aria-labelledby="mlr-workflow-title">
+      <div class="mlr-workflow-head">
+        <div><h2 id="mlr-workflow-title">MLR workflow</h2><p>Explicit controls that emit the original MLR 2.2.5 Grid/K/E sequences.</p></div>
+        <div class="mlr-workflow-authority" id="mlr-workflow-authority">waiting for runtime</div>
+      </div>
+      <div class="mlr-workflow-grid">
+        <section class="mlr-workflow-group">
+          <h3>1 · target</h3>
+          <div class="mlr-workflow-fields">
+            <label class="mlr-workflow-field">Track<select id="mlr-workflow-track"><option value="1">T1</option><option value="2">T2</option><option value="3">T3</option><option value="4">T4</option><option value="5">T5</option><option value="6">T6</option></select></label>
+            <label class="mlr-workflow-field">Clip region<select id="mlr-workflow-clip"><option value="1">C1</option><option value="2">C2</option><option value="3">C3</option><option value="4">C4</option><option value="5">C5</option><option value="6">C6</option><option value="7">C7</option></select></label>
+          </div>
+          <div class="mlr-workflow-actions"><button id="mlr-assign-clip">Assign clip to track</button><button id="mlr-toggle-track">Start track</button></div>
+        </section>
+        <section class="mlr-workflow-group">
+          <h3>2 · record</h3>
+          <div class="mlr-workflow-actions"><button id="mlr-record-now" data-primary>Record into selected clip</button><button id="mlr-stop-record">Stop recording</button></div>
+          <p class="mlr-workflow-native">Record arms the track and starts its softcut voice. Stop recording disarms writes while playback can continue.</p>
+        </section>
+        <section class="mlr-workflow-group">
+          <h3>3 · cut and loop</h3>
+          <div class="mlr-workflow-fields">
+            <label class="mlr-workflow-field">Play from slice<select id="mlr-workflow-cut"></select></label>
+            <span></span>
+            <label class="mlr-workflow-field">Loop start<select id="mlr-loop-start"></select></label>
+            <label class="mlr-workflow-field">Loop end<select id="mlr-loop-end"></select></label>
+          </div>
+          <div class="mlr-workflow-actions"><button id="mlr-cut-play">Cut / play</button><button id="mlr-loop-apply">Apply loop</button></div>
+        </section>
+        <section class="mlr-workflow-group">
+          <h3>4 · clip management</h3>
+          <div class="mlr-workflow-fields">
+            <label class="mlr-workflow-field">Action<select id="mlr-clip-action"><option value="load">Load</option><option value="clear">Clear selected clip</option><option value="save">Save</option></select></label>
+            <label class="mlr-workflow-field">Reset length<select id="mlr-clip-resize-factor"><option value="0.5">½ beat</option><option value="1">1 beat</option><option value="2">2 beats</option><option value="4">4 beats</option><option value="8">8 beats</option><option value="16">16 beats</option></select></label>
+          </div>
+          <div class="mlr-workflow-actions"><button id="mlr-clip-execute">Execute action</button><button id="mlr-clip-resize">Reset clip length</button><button id="mlr-buffer-clear" data-danger>Clear complete buffer</button></div>
+          <p class="mlr-workflow-native">Load and Save deliberately open the native norns file/text modal. Complete buffer clear destroys every clip region.</p>
+        </section>
+      </div>
+      <p class="mlr-workflow-current" id="mlr-workflow-current">waiting for MLR state</p>
+      <p class="mlr-workflow-status" id="mlr-workflow-status" aria-live="polite">Ready when MLR and a 16×8 Grid are authoritative.</p>
+    </section>
+
     <div class="mlr-layout">
       <section class="mlr-panel mlr-grid-panel">
         <div class="mlr-panel-head"><div><h2>16×8 Grid</h2><p>authoritative LEDs · multitouch · Shift-click two CUT pads for a loop</p></div></div>
@@ -53,6 +98,17 @@
       <section class="mlr-panel"><div class="mlr-panel-head"><h2>recalls</h2><span>Grid x9–x12</span></div><div class="mlr-memories" id="mlr-recalls"></div></section>
     </div>
   </main>
-  <script type="module">import {mountSharedNavigation} from './shared-nav.js'; import {mountMlrSurface} from './mlr-surface.js'; mountSharedNavigation(); mountMlrSurface();</script>
+  <script type="module">
+    import {mountSharedNavigation} from './shared-nav.js';
+    import {mountMlrSurface} from './mlr-surface.js';
+    for (const id of ['mlr-workflow-cut','mlr-loop-start','mlr-loop-end']) {
+      const select = document.getElementById(id);
+      for (let value = 1; value <= 16; value += 1) select.add(new Option(String(value), String(value)));
+    }
+    document.getElementById('mlr-loop-end').value = '16';
+    mountSharedNavigation();
+    mountMlrSurface();
+    import('./mlr-workflow.js');
+  </script>
 </body>
 </html>
