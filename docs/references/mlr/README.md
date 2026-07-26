@@ -15,6 +15,7 @@ The pinned script uses six softcut voices, a 16×8 varibright Grid, K1–K3, E1�
 
 The MLR page provides:
 
+- an explicit workflow for track/clip targeting, recording, transport, cuts, loops and clip operations;
 - the complete 16×8 Grid input surface and authoritative LED frame;
 - simultaneous multitouch holds;
 - a desktop Shift-click chord gesture for two-point loop selection;
@@ -22,12 +23,14 @@ The MLR page provides:
 - six track state cards;
 - clip, pattern and recall state;
 - view, focus, ALT and quantize state;
-- reconnect-safe release of every held or latched input.
+- reconnect-safe release of every held or latched input;
+- a persistent command status that exposes the exact target, error code and reject message.
 
-No browser action calls softcut directly. Audio, timing, quantization, patterns, recalls, psets, file selection and buffer operations remain inside MLR/norns.
+No browser action calls softcut directly. The explicit workflow emits the same original Grid/K/E sequences as a physical surface. Audio, timing, quantization, patterns, recalls, psets, file selection and buffer operations remain inside MLR/norns.
 
 ## Files
 
+- `USAGE.md` — practical record, playback, loop and clip-management workflow.
 - `CONTROL-MAP.md` — exact Grid and norns control mapping.
 - `STATE-AND-LED-CONTRACT.md` — state published by the adapter and LED meanings.
 - `BROWSER-COVERAGE.md` — implementation and acceptance matrix.
