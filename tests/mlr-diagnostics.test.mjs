@@ -37,7 +37,7 @@ test('MLR diagnostics warn once per outage and emit one recovery', () => {
   assert.equal(events[1].level, 'info');
 });
 
-test('MLR availability distinguishes script, observer, Grid and audio telemetry', () => {
+test('MLR availability distinguishes runtime, exact script identity, observer, Grid and audio telemetry', () => {
   const availability = inspectMlrAvailability({
     script: {active: true, shortname: 'mlr', name: 'mlr'},
     mlr: {active: true, clips: {'1': {name: '-'}}},
@@ -48,6 +48,7 @@ test('MLR availability distinguishes script, observer, Grid and audio telemetry'
       },
     },
   });
+  assert.equal(availability.runtimeAvailable, true);
   assert.equal(availability.scriptIsMlr, true);
   assert.equal(availability.observerActive, true);
   assert.equal(availability.active, true);
@@ -68,22 +69,55 @@ test('MLR audio telemetry treats explicit empty measurements as authoritative da
   assert.equal(hasMlrAudioTelemetry({clips: {'1': {name: '-', length: 16}}}), false);
 });
 
-test('MLR control policy blocks synthetic state and separates K/E from missing Grid', () => {
+test('native Grid K E remain available when optional MLR enrichment is absent', () => {
+  const availability = inspectMlrAvailability({
+    script: {active: true, shortname: 'mlre', name: 'mlre'},
+    mlr: {active: false},
+    grid: {
+      ports: {
+        '1': {port: 1, cols: 16, rows: 8, virtual: true},
+      },
+    },
+  });
+  assert.equal(availability.scriptIsMlr, false);
+  assert.equal(availability.active, false);
+  assert.equal(availability.gridAvailable, true);
+  assert.deepEqual(mlrControlPolicy(availability), {
+    keys: true,
+    encoders: true,
+    grid: true,
+    workflow: false,
+  });
+});
+
+test('native controls depend on runtime and Grid availability, not rich observer state', () => {
   assert.deepEqual(mlrControlPolicy({
+    runtimeAvailable: true,
     active: false,
     gridAvailable: true,
   }), {
-    keys: false,
-    encoders: false,
-    grid: false,
+    keys: true,
+    encoders: true,
+    grid: true,
     workflow: false,
   });
   assert.deepEqual(mlrControlPolicy({
+    runtimeAvailable: true,
     active: true,
     gridAvailable: false,
   }), {
     keys: true,
     encoders: true,
+    grid: false,
+    workflow: false,
+  });
+  assert.deepEqual(mlrControlPolicy({
+    runtimeAvailable: false,
+    active: true,
+    gridAvailable: true,
+  }), {
+    keys: false,
+    encoders: false,
     grid: false,
     workflow: false,
   });
