@@ -111,14 +111,25 @@ export function decodeMlrGridFrame(raw) {
   };
 }
 
-export function selectMlrGridPort(ports, preferred = null) {
-  const entries = Object.entries(ports || {})
+function mlrGridEntries(ports) {
+  return Object.entries(ports || {})
     .map(([key, value]) => [Number(key), value])
     .filter(([port, value]) => Number.isSafeInteger(port) && port >= 1 && port <= 4 && value?.cols === 16 && value?.rows === 8)
     .sort(([left], [right]) => left - right);
+}
+
+export function selectMlrGridPort(ports, preferred = null) {
+  const entries = mlrGridEntries(ports);
   const requested = Number(preferred);
   if (Number.isSafeInteger(requested) && entries.some(([port]) => port === requested)) return requested;
   return entries.find(([, value]) => value.virtual)?.[0] ?? entries[0]?.[0] ?? null;
+}
+
+export function selectMlrVirtualGridPort(ports, preferred = null) {
+  const entries = mlrGridEntries(ports).filter(([, value]) => Boolean(value?.virtual));
+  const requested = Number(preferred);
+  if (Number.isSafeInteger(requested) && entries.some(([port]) => port === requested)) return requested;
+  return entries[0]?.[0] ?? null;
 }
 
 export function gridIndex(x, y) {
