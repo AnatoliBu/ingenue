@@ -11,6 +11,11 @@ function scriptIdentity(data) {
   return String(script.shortname || script.name || '').trim().toLowerCase();
 }
 
+function exactMlrIdentity(identity) {
+  const parts = String(identity || '').split('/').filter(Boolean);
+  return parts.at(-1) === 'mlr';
+}
+
 function telemetryField(item) {
   if (!plainObject(item)) return false;
   return [
@@ -32,19 +37,17 @@ export function hasMlrAudioTelemetry(rawMlr) {
 }
 
 export function inspectMlrAvailability(data) {
+  const runtimeAvailable = plainObject(data);
   const identity = scriptIdentity(data);
   const scriptActive = Boolean(data?.script?.active);
-  const scriptIsMlr = scriptActive && (
-    identity === 'mlr' ||
-    identity.endsWith('/mlr') ||
-    identity.includes('mlr')
-  );
+  const scriptIsMlr = scriptActive && exactMlrIdentity(identity);
   const rawMlr = plainObject(data?.mlr) ? data.mlr : null;
   const observerActive = Boolean(rawMlr?.active);
   const active = observerActive && (scriptIsMlr || !identity);
   const ports = plainObject(data?.grid?.ports) ? data.grid.ports : {};
   const gridPort = selectMlrGridPort(ports);
   return Object.freeze({
+    runtimeAvailable,
     identity,
     scriptActive,
     scriptIsMlr,
@@ -58,13 +61,14 @@ export function inspectMlrAvailability(data) {
 }
 
 export function mlrControlPolicy(availability) {
-  const mlrReady = Boolean(availability?.active);
-  const gridReady = mlrReady && Boolean(availability?.gridAvailable);
+  const nativeReady = Boolean(availability?.runtimeAvailable);
+  const gridReady = nativeReady && Boolean(availability?.gridAvailable);
+  const richReady = Boolean(availability?.active);
   return Object.freeze({
-    keys: mlrReady,
-    encoders: mlrReady,
+    keys: nativeReady,
+    encoders: nativeReady,
     grid: gridReady,
-    workflow: gridReady,
+    workflow: gridReady && richReady,
   });
 }
 
@@ -145,12 +149,7 @@ function unavailableMessage(root, text) {
   return message;
 }
 
-function clearInactiveSurface(root) {
-  root.querySelectorAll('.mlr-pad').forEach(pad => {
-    pad.dataset.level = '0';
-    pad.dataset.pressed = 'false';
-    pad.style.setProperty('--mlr-level', '0');
-  });
+function clearInactiveRichSurface(root) {
   const placeholders = [
     ['#mlr-tracks', 'No authoritative MLR track state.'],
     ['#mlr-clips', 'No authoritative MLR clip state.'],
@@ -167,7 +166,7 @@ function clearInactiveSurface(root) {
     '#mlr-focus': '—',
     '#mlr-alt': '—',
     '#mlr-quantize': '—',
-    '#mlr-help': 'Launch MLR on norns to receive authoritative state.',
+    '#mlr-help': 'Native Grid/K/E remain available. Launch MLR only for the optional rich view.',
   };
   for (const [selector, value] of Object.entries(values)) {
     const element = root.querySelector(selector);
@@ -182,12 +181,14 @@ function applyAvailability(root, availability) {
   root.querySelectorAll('.mlr-pad').forEach(element => setDisabled(element, !policy.grid));
   root.querySelectorAll('#mlr-workflow button, #mlr-workflow select, #mlr-workflow input')
     .forEach(element => setDisabled(element, !policy.workflow));
-  root.body?.toggleAttribute('data-mlr-ready', policy.grid);
+  root.body?.toggleAttribute('data-mlr-ready', policy.workflow);
+  root.body?.toggleAttribute('data-native-grid-ready', policy.grid);
   if (root.body) {
+    root.body.dataset.nativeControls = policy.keys ? 'available' : 'unavailable';
     root.body.dataset.mlrAuthority = availability.active ? 'authoritative' : 'unavailable';
     root.body.dataset.mlrAudioObserved = availability.audioTelemetry ? 'true' : 'false';
   }
-  if (!availability.active) clearInactiveSurface(root);
+  if (!availability.active) clearInactiveRichSurface(root);
 }
 
 function debugEnabled(globalLike) {
@@ -219,14 +220,14 @@ export function installMlrDiagnostics(session, {
     applyAvailability(root, availability);
 
     latch.update('script', !availability.active && !availability.scriptIsMlr, {
-      event: 'mlr script inactive',
+      event: 'mlr rich view inactive',
       detail: {
         revision: state.revision ?? null,
         active_script: availability.identity || null,
-        impact: 'MLR controls and displayed track/clip state are disabled',
-        action: 'Launch upstream mlr on norns',
+        impact: 'Optional MLR track/clip state and workflow are unavailable; native Grid/K/E remain available',
+        action: 'Launch upstream mlr only when the optional rich workflow is needed',
       },
-      recoveryEvent: 'mlr script active',
+      recoveryEvent: 'mlr rich view active',
       recoveryDetail: {revision: state.revision ?? null, script: availability.identity || 'mlr'},
     });
 
@@ -235,8 +236,8 @@ export function installMlrDiagnostics(session, {
         event: 'mlr observer unavailable',
         detail: {
           revision: state.revision ?? null,
-          impact: 'The MLR script is active but no authoritative observer state was received',
-          action: 'Restart matron once after enabling the Ingenue mod',
+          impact: 'Native Grid/K/E remain available, but the optional MLR rich state was not received',
+          action: 'Restart matron once after enabling the Ingenue mod if the rich view is required',
         },
         recoveryEvent: 'mlr observer recovered',
         recoveryDetail: {revision: state.revision ?? null},
@@ -245,17 +246,18 @@ export function installMlrDiagnostics(session, {
       latch.forget('observer');
     }
 
+    latch.update('grid', !availability.gridAvailable, {
+      event: 'native 16x8 grid unavailable',
+      detail: {
+        revision: state.revision ?? null,
+        expected: 'one authoritative 16×8 Grid vport',
+        impact: 'Native Grid input and LED rendering are unavailable; K/E remain available',
+      },
+      recoveryEvent: 'native 16x8 grid recovered',
+      recoveryDetail: {revision: state.revision ?? null, port: availability.gridPort},
+    });
+
     if (availability.active) {
-      latch.update('grid', !availability.gridAvailable, {
-        event: 'mlr grid unavailable',
-        detail: {
-          revision: state.revision ?? null,
-          expected: 'one authoritative 16×8 Grid vport',
-          impact: 'Raw Grid and workflow controls are disabled',
-        },
-        recoveryEvent: 'mlr grid recovered',
-        recoveryDetail: {revision: state.revision ?? null, port: availability.gridPort},
-      });
       latch.update('audio', !availability.audioTelemetry, {
         event: 'mlr audio visualization unavailable',
         detail: {
@@ -268,7 +270,6 @@ export function installMlrDiagnostics(session, {
         recoveryDetail: {revision: state.revision ?? null},
       });
     } else {
-      latch.forget('grid');
       latch.forget('audio');
     }
 
