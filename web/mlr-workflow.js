@@ -136,14 +136,14 @@ function mount(session, root = document) {
     const ready = session.state?.status === 'synced' && Boolean(session.state?.data?.mlr?.active) && Boolean(port);
     controls.forEach(control => { if ('disabled' in control) control.disabled = !ready; });
     if (!ready) {
-      current.textContent = 'waiting for active MLR and a 16×8 Grid';
+      current.textContent = 'optional rich workflow waiting for active MLR and a 16×8 Grid';
       authority.textContent = `runtime ${session.state?.status || 'connecting'}`;
       return;
     }
     const owner = session.state.data?.ownership?.resources?.[`grid:${port}`]?.client_id || null;
     authority.textContent = owner && owner !== session.clientId
-      ? `Grid ${port} owned by another browser: ${owner}`
-      : `Grid ${port} · this tab ${session.clientId}`;
+      ? `Grid ${port} owned by another browser`
+      : `Grid ${port} · this tab`;
     if (!state) {
       current.textContent = `T${selectedTrack} state unavailable`;
       return;
