@@ -1,4 +1,4 @@
-import {selectMlrGridPort} from './mlr-core.js';
+import {selectMlrGridPort, selectMlrVirtualGridPort} from './mlr-core.js';
 
 const LOG_PREFIX = '[ingenue mlr]';
 
@@ -9,6 +9,11 @@ function plainObject(value) {
 function scriptIdentity(data) {
   const script = plainObject(data?.script) ? data.script : {};
   return String(script.shortname || script.name || '').trim().toLowerCase();
+}
+
+function exactMlrIdentity(identity) {
+  const parts = String(identity || '').split('/').filter(Boolean);
+  return parts.at(-1) === 'mlr';
 }
 
 function telemetryField(item) {
@@ -34,16 +39,13 @@ export function hasMlrAudioTelemetry(rawMlr) {
 export function inspectMlrAvailability(data) {
   const identity = scriptIdentity(data);
   const scriptActive = Boolean(data?.script?.active);
-  const scriptIsMlr = scriptActive && (
-    identity === 'mlr' ||
-    identity.endsWith('/mlr') ||
-    identity.includes('mlr')
-  );
+  const scriptIsMlr = scriptActive && exactMlrIdentity(identity);
   const rawMlr = plainObject(data?.mlr) ? data.mlr : null;
   const observerActive = Boolean(rawMlr?.active);
   const active = observerActive && (scriptIsMlr || !identity);
   const ports = plainObject(data?.grid?.ports) ? data.grid.ports : {};
-  const gridPort = selectMlrGridPort(ports);
+  const displayGridPort = selectMlrGridPort(ports);
+  const gridPort = selectMlrVirtualGridPort(ports);
   return Object.freeze({
     identity,
     scriptActive,
@@ -51,6 +53,7 @@ export function inspectMlrAvailability(data) {
     observerPresent: Boolean(rawMlr),
     observerActive,
     active,
+    displayGridPort,
     gridPort,
     gridAvailable: gridPort != null,
     audioTelemetry: hasMlrAudioTelemetry(rawMlr),
@@ -163,7 +166,7 @@ function clearInactiveSemanticSurface(root) {
     '#mlr-focus': '—',
     '#mlr-alt': '—',
     '#mlr-quantize': '—',
-    '#mlr-help': 'Native Grid/K/E control remains available; launch MLR for enriched state.',
+    '#mlr-help': 'Native Grid/K/E remain available. Launch MLR only for the optional rich view.',
   };
   for (const [selector, value] of Object.entries(values)) {
     const element = root.querySelector(selector);
@@ -180,7 +183,9 @@ function applyAvailability(root, availability) {
     .forEach(element => setDisabled(element, !policy.workflow));
   root.body?.toggleAttribute('data-mlr-ready', policy.workflow);
   root.body?.toggleAttribute('data-grid-ready', policy.grid);
+  root.body?.toggleAttribute('data-native-grid-ready', policy.grid);
   if (root.body) {
+    root.body.dataset.nativeControls = policy.keys ? 'available' : 'unavailable';
     root.body.dataset.mlrAuthority = availability.active ? 'authoritative' : 'unavailable';
     root.body.dataset.mlrAudioObserved = availability.audioTelemetry ? 'true' : 'false';
   }
@@ -220,14 +225,14 @@ export function installMlrDiagnostics(session, {
     applyAvailability(root, availability);
 
     latch.update('script', !availability.active && !availability.scriptIsMlr, {
-      event: 'mlr enrichment inactive',
+      event: 'mlr rich view inactive',
       detail: {
         revision: state.revision ?? null,
         active_script: availability.identity || null,
-        impact: 'MLR semantic cards and workflow controls are unavailable; native Grid/K/E remains usable',
-        action: 'Launch upstream mlr only when the enriched MLR view is needed',
+        impact: 'Optional MLR track/clip state and workflow are unavailable; native Grid/K/E remain available',
+        action: 'Launch upstream mlr only when the optional rich workflow is needed',
       },
-      recoveryEvent: 'mlr enrichment active',
+      recoveryEvent: 'mlr rich view active',
       recoveryDetail: {revision: state.revision ?? null, script: availability.identity || 'mlr'},
     });
 
@@ -236,8 +241,8 @@ export function installMlrDiagnostics(session, {
         event: 'mlr observer unavailable',
         detail: {
           revision: state.revision ?? null,
-          impact: 'Native Grid/K/E remains usable, but enriched MLR state is unavailable',
-          action: 'Restart matron once after enabling the Ingenue mod',
+          impact: 'Native Grid/K/E remain available, but the optional MLR rich state was not received',
+          action: 'Restart matron once after enabling the Ingenue mod if the rich view is required',
         },
         recoveryEvent: 'mlr observer recovered',
         recoveryDetail: {revision: state.revision ?? null},
@@ -247,13 +252,14 @@ export function installMlrDiagnostics(session, {
     }
 
     latch.update('grid', !availability.gridAvailable, {
-      event: 'native grid unavailable',
+      event: 'native virtual 16x8 grid unavailable',
       detail: {
         revision: state.revision ?? null,
-        expected: 'one authoritative 16×8 Grid vport for this page',
-        impact: 'Raw Grid input is disabled; K/E remains available',
+        expected: 'one authoritative virtual 16×8 Grid vport',
+        mirrored_physical_port: availability.displayGridPort !== availability.gridPort ? availability.displayGridPort : null,
+        impact: 'Browser Grid input is unavailable; physical Grid mirroring and K/E remain available',
       },
-      recoveryEvent: 'native grid recovered',
+      recoveryEvent: 'native virtual 16x8 grid recovered',
       recoveryDetail: {revision: state.revision ?? null, port: availability.gridPort},
     });
 

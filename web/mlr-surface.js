@@ -1,6 +1,12 @@
 import {RealtimeSession} from './realtime-session.js';
 import {realtimeUrl} from './realtime-inspector.js';
-import {decodeMlrGridFrame, normalizeMlrState, selectMlrGridPort, viewHelp} from './mlr-core.js';
+import {
+  decodeMlrGridFrame,
+  normalizeMlrState,
+  selectMlrGridPort,
+  selectMlrVirtualGridPort,
+  viewHelp,
+} from './mlr-core.js';
 
 function send(session, target, action, args) { return session.command({target, action, args}); }
 function chunkedDelta(session, encoder, delta) {
@@ -19,8 +25,16 @@ function setReady(root, ready) {
   root.body?.toggleAttribute('data-mlr-ready', ready);
 }
 function disabled(element) { return Boolean(element?.disabled || element?.dataset?.disabled === 'true'); }
-function padTarget(element, port) { return {port, x: Number(element.dataset.x), y: Number(element.dataset.y)}; }
+function padTarget(element, port) {
+  if (!Number.isSafeInteger(port) || port < 1 || port > 4) throw new Error('virtual Grid input port unavailable');
+  return {port, x: Number(element.dataset.x), y: Number(element.dataset.y)};
+}
 function samePad(left, right) { return Boolean(left && right && left.port === right.port && left.x === right.x && left.y === right.y); }
+function scriptIdentity(script) { return String(script?.shortname || script?.name || '').trim().toLowerCase(); }
+function isExactMlrScript(script) {
+  if (!script?.active) return false;
+  return scriptIdentity(script).split('/').filter(Boolean).at(-1) === 'mlr';
+}
 
 function bindMomentary(button, onChange) {
   const active = new Set();
@@ -173,7 +187,7 @@ function ensureGrid(root) {
     const button = document.createElement('button');
     button.type = 'button'; button.className = 'mlr-pad'; button.dataset.mlrControl = '';
     button.dataset.x = String(x); button.dataset.y = String(y); button.dataset.level = '0';
-    button.setAttribute('aria-label', `MLR Grid ${x}, ${y}`); fragment.append(button);
+    button.setAttribute('aria-label', `Grid ${x}, ${y}`); fragment.append(button);
   }
   container.replaceChildren(fragment);
 }
@@ -262,8 +276,9 @@ export function mountMlrSurface(root = document, options = {}) {
   const notice = root.getElementById('mlr-notice');
   endpoint.textContent = url; ensureGrid(root); setReady(root, false);
 
-  let selectedPort = null;
-  const getPort = () => selectedPort || 1;
+  let selectedDisplayPort = null;
+  let selectedInputPort = null;
+  const getPort = () => selectedInputPort;
   const releases = [createGridController(root, session, getPort)];
   root.querySelectorAll('[data-key]').forEach(button => {
     const key = Number(button.dataset.key);
@@ -282,23 +297,52 @@ export function mountMlrSurface(root = document, options = {}) {
     const ready = state.status === 'synced' && Boolean(state.data); setReady(root, ready);
     if (!ready) {
       releaseAll();
-      notice.textContent = state.status === 'reconnecting' ? 'Connection lost. Every MLR hold was released.' : 'Waiting for authoritative norns state…';
+      notice.textContent = state.status === 'reconnecting' ? 'Connection lost. Every native hold was released.' : 'Waiting for authoritative norns state…';
       return;
     }
-    script.textContent = state.data.script?.active ? state.data.script.name : 'no active script';
-    selectedPort = selectMlrGridPort(state.data.grid?.ports, selectedPort);
-    const rawFrame = selectedPort == null ? null : state.data.grid?.ports?.[String(selectedPort)];
+    const activeScript = state.data.script;
+    const activeScriptName = activeScript?.active ? activeScript.name : 'no active script';
+    script.textContent = activeScriptName;
+    const ports = state.data.grid?.ports || {};
+    const previousInputPort = selectedInputPort;
+    selectedDisplayPort = selectMlrGridPort(ports, selectedDisplayPort);
+    selectedInputPort = selectMlrVirtualGridPort(ports, selectedInputPort);
+    if (previousInputPort !== selectedInputPort) releaseAll();
+    const rawFrame = selectedDisplayPort == null ? null : ports[String(selectedDisplayPort)];
     if (rawFrame) {
       try { renderGrid(root, decodeMlrGridFrame(rawFrame)); } catch (error) { notice.textContent = error.message; }
     } else renderGrid(root, null);
-    try {
-      const mlr = normalizeMlrState(state.data.mlr || {active: false});
-      renderMlrState(root, mlr);
-      const activeScript = String(state.data.script?.shortname || state.data.script?.name || '').toLowerCase();
-      const active = mlr.active && (activeScript.includes('mlr') || !activeScript);
-      notice.textContent = active ? `MLR ${mlr.version} · Grid port ${selectedPort ?? 'not connected'} · state observed at norns` : 'MLR is not active. Launch upstream mlr on norns; this page will attach automatically.';
-      root.body?.toggleAttribute('data-mlr-active', active);
-    } catch (error) { notice.textContent = `MLR state error: ${error.message}`; }
+
+    let richActive = false;
+    const rawMlr = state.data.mlr;
+    if (rawMlr && typeof rawMlr === 'object' && !Array.isArray(rawMlr)) {
+      try {
+        const mlr = normalizeMlrState(rawMlr);
+        richActive = mlr.active && (isExactMlrScript(activeScript) || !scriptIdentity(activeScript));
+        if (richActive) renderMlrState(root, mlr);
+        if (richActive) {
+          if (selectedInputPort != null) {
+            notice.textContent = `MLR ${mlr.version} · native virtual Grid port ${selectedInputPort} · optional rich state observed at norns`;
+          } else if (rawFrame) {
+            notice.textContent = `MLR ${mlr.version} · physical Grid port ${selectedDisplayPort} mirrored · browser Grid input unavailable`;
+          }
+        }
+      } catch (error) {
+        notice.textContent = `MLR rich-state error: ${error.message}. Native K/E and available Grid mirroring remain active.`;
+      }
+    }
+
+    if (!richActive) {
+      const identity = scriptIdentity(activeScript) || 'no active script';
+      if (selectedInputPort != null) {
+        notice.textContent = `Native virtual Grid port ${selectedInputPort} · ${identity} · optional MLR rich view unavailable`;
+      } else if (rawFrame) {
+        notice.textContent = `Physical Grid port ${selectedDisplayPort} mirrored · ${identity} · browser Grid input unavailable`;
+      } else {
+        notice.textContent = `No authoritative 16×8 Grid frame for ${identity}. K/E remain available.`;
+      }
+    }
+    root.body?.toggleAttribute('data-mlr-active', richActive);
   });
   session.addEventListener('command', event => {
     if (event.detail.status === 'reject' || event.detail.status === 'uncertain') notice.textContent = event.detail.failure?.message || event.detail.error || `Command ${event.detail.status}`;

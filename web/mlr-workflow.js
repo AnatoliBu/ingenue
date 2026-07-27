@@ -22,7 +22,7 @@ function selectGridPort(session) {
     .map(([key, value]) => [Number(key), value])
     .filter(([port, value]) => Number.isSafeInteger(port) && port >= 1 && port <= 4 && value?.cols === 16 && value?.rows === 8)
     .sort(([left], [right]) => left - right);
-  return entries.find(([, value]) => value?.virtual)?.[0] ?? entries[0]?.[0] ?? null;
+  return entries.find(([, value]) => value?.virtual)?.[0] ?? null;
 }
 
 function commandLabel(command) { return `${command.target}.${command.action}`; }
@@ -115,7 +115,7 @@ function mount(session, root = document) {
     const selectedTrack = selectedNumber(track);
     const selectedClip = selectedNumber(clip);
     const state = trackState(session, selectedTrack);
-    if (!port) throw new MlrWorkflowError('MLR needs an authoritative 16×8 Grid port');
+    if (!port) throw new MlrWorkflowError('MLR needs an authoritative virtual 16×8 Grid port');
     return {port, track: selectedTrack, clip: selectedClip, state};
   };
 
@@ -136,14 +136,14 @@ function mount(session, root = document) {
     const ready = session.state?.status === 'synced' && Boolean(session.state?.data?.mlr?.active) && Boolean(port);
     controls.forEach(control => { if ('disabled' in control) control.disabled = !ready; });
     if (!ready) {
-      current.textContent = 'waiting for active MLR and a 16×8 Grid';
+      current.textContent = 'optional rich workflow waiting for active MLR and a virtual 16×8 Grid';
       authority.textContent = `runtime ${session.state?.status || 'connecting'}`;
       return;
     }
     const owner = session.state.data?.ownership?.resources?.[`grid:${port}`]?.client_id || null;
     authority.textContent = owner && owner !== session.clientId
-      ? `Grid ${port} owned by another browser: ${owner}`
-      : `Grid ${port} · this tab ${session.clientId}`;
+      ? `Grid ${port} owned by another browser`
+      : `Grid ${port} · this tab`;
     if (!state) {
       current.textContent = `T${selectedTrack} state unavailable`;
       return;

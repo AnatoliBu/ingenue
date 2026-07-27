@@ -1,6 +1,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {decodeMlrGridFrame, gridIndex, loopChordCommands, normalizeMlrState, selectMlrGridPort, viewHelp} from '../web/mlr-core.js';
+import {
+  decodeMlrGridFrame,
+  gridIndex,
+  loopChordCommands,
+  normalizeMlrState,
+  selectMlrGridPort,
+  selectMlrVirtualGridPort,
+  viewHelp,
+} from '../web/mlr-core.js';
 
 function fixtureState() {
   const tracks = {};
@@ -26,10 +34,18 @@ test('MLR Grid decoder requires the upstream 16 by 8 contract', () => {
   assert.throws(() => decodeMlrGridFrame({port: 1, cols: 8, rows: 8, frame: '0'.repeat(64)}), /16×8/);
 });
 
-test('MLR selects an available 16 by 8 vport and ignores ordinary Grid frames', () => {
-  const ports = {'1': {port: 1, cols: 8, rows: 8, virtual: true}, '2': {port: 2, cols: 16, rows: 8, virtual: true}, '3': {port: 3, cols: 16, rows: 8, virtual: false}};
+test('MLR separates a mirrored display Grid from the virtual browser-input port', () => {
+  const ports = {
+    '1': {port: 1, cols: 8, rows: 8, virtual: true},
+    '2': {port: 2, cols: 16, rows: 8, virtual: true},
+    '3': {port: 3, cols: 16, rows: 8, virtual: false},
+  };
   assert.equal(selectMlrGridPort(ports), 2);
   assert.equal(selectMlrGridPort(ports, 3), 3);
+  assert.equal(selectMlrVirtualGridPort(ports), 2);
+  assert.equal(selectMlrVirtualGridPort(ports, 3), 2);
+  assert.equal(selectMlrGridPort({'3': ports['3']}), 3);
+  assert.equal(selectMlrVirtualGridPort({'3': ports['3']}), null);
   assert.equal(selectMlrGridPort({'1': ports['1']}), null);
 });
 
