@@ -10,9 +10,11 @@ async function injectState(page, scenario) {
     data.script = {active: true, name: 'mlre', shortname: 'mlre'};
     data.mlr = {active: false};
     if (kind === 'physical-only') {
-      const virtual = data.grid.ports['1'];
+      const source = Object.values(data.grid.ports)
+        .find(port => port?.cols === 16 && port?.rows === 8 && port?.virtual);
+      if (!source) throw new Error('fixture has no virtual 16×8 Grid frame');
       data.grid.ports = {
-        '3': {...virtual, port: 3, virtual: false},
+        '3': {...source, port: 3, virtual: false},
       };
     }
     const nextState = {
