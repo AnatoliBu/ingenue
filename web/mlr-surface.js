@@ -21,6 +21,11 @@ function setReady(root, ready) {
 function disabled(element) { return Boolean(element?.disabled || element?.dataset?.disabled === 'true'); }
 function padTarget(element, port) { return {port, x: Number(element.dataset.x), y: Number(element.dataset.y)}; }
 function samePad(left, right) { return Boolean(left && right && left.port === right.port && left.x === right.x && left.y === right.y); }
+function scriptIdentity(script) { return String(script?.shortname || script?.name || '').trim().toLowerCase(); }
+function isExactMlrScript(script) {
+  if (!script?.active) return false;
+  return scriptIdentity(script).split('/').filter(Boolean).at(-1) === 'mlr';
+}
 
 function bindMomentary(button, onChange) {
   const active = new Set();
@@ -173,7 +178,7 @@ function ensureGrid(root) {
     const button = document.createElement('button');
     button.type = 'button'; button.className = 'mlr-pad'; button.dataset.mlrControl = '';
     button.dataset.x = String(x); button.dataset.y = String(y); button.dataset.level = '0';
-    button.setAttribute('aria-label', `MLR Grid ${x}, ${y}`); fragment.append(button);
+    button.setAttribute('aria-label', `Grid ${x}, ${y}`); fragment.append(button);
   }
   container.replaceChildren(fragment);
 }
@@ -282,23 +287,40 @@ export function mountMlrSurface(root = document, options = {}) {
     const ready = state.status === 'synced' && Boolean(state.data); setReady(root, ready);
     if (!ready) {
       releaseAll();
-      notice.textContent = state.status === 'reconnecting' ? 'Connection lost. Every MLR hold was released.' : 'Waiting for authoritative norns state…';
+      notice.textContent = state.status === 'reconnecting' ? 'Connection lost. Every native hold was released.' : 'Waiting for authoritative norns state…';
       return;
     }
-    script.textContent = state.data.script?.active ? state.data.script.name : 'no active script';
+    const activeScript = state.data.script;
+    const activeScriptName = activeScript?.active ? activeScript.name : 'no active script';
+    script.textContent = activeScriptName;
     selectedPort = selectMlrGridPort(state.data.grid?.ports, selectedPort);
     const rawFrame = selectedPort == null ? null : state.data.grid?.ports?.[String(selectedPort)];
     if (rawFrame) {
       try { renderGrid(root, decodeMlrGridFrame(rawFrame)); } catch (error) { notice.textContent = error.message; }
     } else renderGrid(root, null);
-    try {
-      const mlr = normalizeMlrState(state.data.mlr || {active: false});
-      renderMlrState(root, mlr);
-      const activeScript = String(state.data.script?.shortname || state.data.script?.name || '').toLowerCase();
-      const active = mlr.active && (activeScript.includes('mlr') || !activeScript);
-      notice.textContent = active ? `MLR ${mlr.version} · Grid port ${selectedPort ?? 'not connected'} · state observed at norns` : 'MLR is not active. Launch upstream mlr on norns; this page will attach automatically.';
-      root.body?.toggleAttribute('data-mlr-active', active);
-    } catch (error) { notice.textContent = `MLR state error: ${error.message}`; }
+
+    let richActive = false;
+    const rawMlr = state.data.mlr;
+    if (rawMlr && typeof rawMlr === 'object' && !Array.isArray(rawMlr)) {
+      try {
+        const mlr = normalizeMlrState(rawMlr);
+        richActive = mlr.active && (isExactMlrScript(activeScript) || !scriptIdentity(activeScript));
+        if (richActive) renderMlrState(root, mlr);
+        if (richActive) {
+          notice.textContent = `MLR ${mlr.version} · native Grid port ${selectedPort ?? 'not connected'} · optional rich state observed at norns`;
+        }
+      } catch (error) {
+        notice.textContent = `MLR rich-state error: ${error.message}. Native Grid/K/E remain available.`;
+      }
+    }
+
+    if (!richActive) {
+      const identity = scriptIdentity(activeScript) || 'no active script';
+      notice.textContent = rawFrame
+        ? `Native Grid port ${selectedPort} · ${identity} · optional MLR rich view unavailable`
+        : `No authoritative 16×8 Grid frame for ${identity}. K/E remain available.`;
+    }
+    root.body?.toggleAttribute('data-mlr-active', richActive);
   });
   session.addEventListener('command', event => {
     if (event.detail.status === 'reject' || event.detail.status === 'uncertain') notice.textContent = event.detail.failure?.message || event.detail.error || `Command ${event.detail.status}`;
