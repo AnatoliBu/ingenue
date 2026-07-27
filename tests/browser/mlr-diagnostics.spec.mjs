@@ -40,3 +40,32 @@ test('missing MLR audio display data warns once and is retained in diagnostics',
       .filter({hasText: 'mlr audio visualization unavailable'})
   ).toHaveCount(1);
 });
+
+test('MLRE and unrelated scripts keep native Grid K E while MLR workflow falls back', async ({page}) => {
+  await page.goto(PAGE);
+  await page.waitForFunction(() => globalThis.ingenueDebug?.latest?.state?.status === 'synced');
+
+  const beforeLevels = await page.locator('.mlr-pad').evaluateAll(pads => pads.map(pad => pad.dataset.level));
+  await page.evaluate(() => {
+    const session = globalThis.ingenueDebug.latest;
+    const data = structuredClone(session.state.data);
+    data.script = {active: true, name: 'mlre', shortname: 'mlre'};
+    data.mlr = {active: false};
+    session.dispatchEvent(new CustomEvent('state', {
+      detail: {...session.state, status: 'synced', revision: session.state.revision + 1, data},
+    }));
+  });
+
+  await expect(page.locator('body')).toHaveAttribute('data-mlr-authority', 'unavailable');
+  await expect(page.locator('body')).toHaveAttribute('data-native-controls', 'available');
+  await expect(page.locator('body')).toHaveAttribute('data-native-grid-ready', '');
+  await expect(page.getByRole('button', {name: 'Grid 1, 1'})).toBeEnabled();
+  await expect(page.getByRole('button', {name: 'K1'})).toBeEnabled();
+  await expect(page.locator('[data-encoder="1"]')).toHaveAttribute('data-disabled', 'false');
+  await expect(page.getByRole('button', {name: 'Record into selected clip'})).toBeDisabled();
+  await expect(page.locator('#mlr-notice')).toContainText('Native Grid port');
+  await expect(page.locator('#mlr-help')).toContainText('Native Grid/K/E remain available');
+
+  const afterLevels = await page.locator('.mlr-pad').evaluateAll(pads => pads.map(pad => pad.dataset.level));
+  expect(afterLevels).toEqual(beforeLevels);
+});
