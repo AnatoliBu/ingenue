@@ -54,7 +54,7 @@ test('MLR availability distinguishes script, observer, Grid and audio telemetry'
   assert.equal(availability.gridPort, 2);
   assert.equal(availability.gridAvailable, true);
   assert.equal(availability.audioTelemetry, false);
-  assert.deepEqual(mlrControlPolicy(availability), {
+  assert.deepEqual(mlrControlPolicy({...availability, runtimeReady: true}), {
     keys: true,
     encoders: true,
     grid: true,
@@ -68,22 +68,34 @@ test('MLR audio telemetry treats explicit empty measurements as authoritative da
   assert.equal(hasMlrAudioTelemetry({clips: {'1': {name: '-', length: 16}}}), false);
 });
 
-test('MLR control policy blocks synthetic state and separates K/E from missing Grid', () => {
+test('native Grid and K/E do not depend on MLR observer state', () => {
   assert.deepEqual(mlrControlPolicy({
+    runtimeReady: true,
     active: false,
     gridAvailable: true,
   }), {
-    keys: false,
-    encoders: false,
-    grid: false,
+    keys: true,
+    encoders: true,
+    grid: true,
     workflow: false,
   });
   assert.deepEqual(mlrControlPolicy({
-    active: true,
+    runtimeReady: true,
+    active: false,
     gridAvailable: false,
   }), {
     keys: true,
     encoders: true,
+    grid: false,
+    workflow: false,
+  });
+  assert.deepEqual(mlrControlPolicy({
+    runtimeReady: false,
+    active: true,
+    gridAvailable: true,
+  }), {
+    keys: false,
+    encoders: false,
     grid: false,
     workflow: false,
   });
