@@ -1,4 +1,4 @@
-import {selectMlrGridPort} from './mlr-core.js';
+import {selectMlrGridPort, selectMlrVirtualGridPort} from './mlr-core.js';
 
 const LOG_PREFIX = '[ingenue mlr]';
 
@@ -45,7 +45,8 @@ export function inspectMlrAvailability(data) {
   const observerActive = Boolean(rawMlr?.active);
   const active = observerActive && (scriptIsMlr || !identity);
   const ports = plainObject(data?.grid?.ports) ? data.grid.ports : {};
-  const gridPort = selectMlrGridPort(ports);
+  const displayGridPort = selectMlrGridPort(ports);
+  const gridPort = selectMlrVirtualGridPort(ports);
   return Object.freeze({
     runtimeAvailable,
     identity,
@@ -54,6 +55,7 @@ export function inspectMlrAvailability(data) {
     observerPresent: Boolean(rawMlr),
     observerActive,
     active,
+    displayGridPort,
     gridPort,
     gridAvailable: gridPort != null,
     audioTelemetry: hasMlrAudioTelemetry(rawMlr),
@@ -247,13 +249,14 @@ export function installMlrDiagnostics(session, {
     }
 
     latch.update('grid', !availability.gridAvailable, {
-      event: 'native 16x8 grid unavailable',
+      event: 'native virtual 16x8 grid unavailable',
       detail: {
         revision: state.revision ?? null,
-        expected: 'one authoritative 16×8 Grid vport',
-        impact: 'Native Grid input and LED rendering are unavailable; K/E remain available',
+        expected: 'one authoritative virtual 16×8 Grid vport',
+        mirrored_physical_port: availability.displayGridPort !== availability.gridPort ? availability.displayGridPort : null,
+        impact: 'Browser Grid input is unavailable; physical Grid mirroring and K/E remain available',
       },
-      recoveryEvent: 'native 16x8 grid recovered',
+      recoveryEvent: 'native virtual 16x8 grid recovered',
       recoveryDetail: {revision: state.revision ?? null, port: availability.gridPort},
     });
 
