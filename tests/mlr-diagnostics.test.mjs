@@ -37,7 +37,7 @@ test('MLR diagnostics warn once per outage and emit one recovery', () => {
   assert.equal(events[1].level, 'info');
 });
 
-test('MLR availability distinguishes script, observer, Grid and audio telemetry', () => {
+test('MLR availability distinguishes exact script, observer and Grid capabilities', () => {
   const availability = inspectMlrAvailability({
     script: {active: true, shortname: 'mlr', name: 'mlr'},
     mlr: {active: true, clips: {'1': {name: '-'}}},
@@ -51,6 +51,7 @@ test('MLR availability distinguishes script, observer, Grid and audio telemetry'
   assert.equal(availability.scriptIsMlr, true);
   assert.equal(availability.observerActive, true);
   assert.equal(availability.active, true);
+  assert.equal(availability.displayGridPort, 2);
   assert.equal(availability.gridPort, 2);
   assert.equal(availability.gridAvailable, true);
   assert.equal(availability.audioTelemetry, false);
@@ -62,13 +63,46 @@ test('MLR availability distinguishes script, observer, Grid and audio telemetry'
   });
 });
 
+test('MLRE is not treated as the optional MLR rich observer target', () => {
+  const availability = inspectMlrAvailability({
+    script: {active: true, shortname: 'mlre', name: 'mlre'},
+    mlr: {active: true},
+    grid: {ports: {'2': {port: 2, cols: 16, rows: 8, virtual: true}}},
+  });
+  assert.equal(availability.scriptIsMlr, false);
+  assert.equal(availability.active, false);
+  assert.deepEqual(mlrControlPolicy({...availability, runtimeReady: true}), {
+    keys: true,
+    encoders: true,
+    grid: true,
+    workflow: false,
+  });
+});
+
 test('MLR audio telemetry treats explicit empty measurements as authoritative data', () => {
   assert.equal(hasMlrAudioTelemetry({clips: {'1': {has_audio: false}}}), true);
   assert.equal(hasMlrAudioTelemetry({clips: {'1': {peak: 0, rms: 0, waveform: []}}}), true);
   assert.equal(hasMlrAudioTelemetry({clips: {'1': {name: '-', length: 16}}}), false);
 });
 
-test('native Grid and K/E do not depend on MLR observer state', () => {
+test('a physical-only Grid can be mirrored but cannot receive browser input', () => {
+  const availability = inspectMlrAvailability({
+    script: {active: true, shortname: 'mlre', name: 'mlre'},
+    mlr: {active: false},
+    grid: {ports: {'3': {port: 3, cols: 16, rows: 8, virtual: false}}},
+  });
+  assert.equal(availability.displayGridPort, 3);
+  assert.equal(availability.gridPort, null);
+  assert.equal(availability.gridAvailable, false);
+  assert.deepEqual(mlrControlPolicy({...availability, runtimeReady: true}), {
+    keys: true,
+    encoders: true,
+    grid: false,
+    workflow: false,
+  });
+});
+
+test('native Grid and K/E do not depend on optional MLR observer state', () => {
   assert.deepEqual(mlrControlPolicy({
     runtimeReady: true,
     active: false,
