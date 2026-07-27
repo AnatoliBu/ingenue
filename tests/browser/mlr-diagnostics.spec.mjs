@@ -10,6 +10,7 @@ async function injectState(page, scenario) {
     data.script = {active: true, name: 'mlre', shortname: 'mlre'};
     data.mlr = {active: false};
     if (kind === 'physical-only') {
+      // Preserve the authoritative LED payload while removing every virtual input vport.
       const source = Object.values(data.grid.ports)
         .find(port => port?.cols === 16 && port?.rows === 8 && port?.virtual);
       if (!source) throw new Error('fixture has no virtual 16×8 Grid frame');
