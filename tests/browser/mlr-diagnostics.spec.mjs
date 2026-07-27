@@ -92,6 +92,7 @@ test('physical-only Grid LEDs are mirrored but browser Grid input is disabled', 
   await page.goto(PAGE);
   await page.waitForFunction(() => globalThis.ingenueDebug?.latest?.state?.status === 'synced');
 
+  const expectedLevels = await page.locator('.mlr-pad').evaluateAll(pads => pads.map(pad => pad.dataset.level));
   await injectState(page, 'physical-only');
 
   await expect(page.locator('body')).not.toHaveAttribute('data-native-grid-ready', '');
@@ -100,5 +101,7 @@ test('physical-only Grid LEDs are mirrored but browser Grid input is disabled', 
   await expect(page.locator('[data-encoder="1"]')).toHaveAttribute('data-disabled', 'false');
   await expect(page.getByRole('button', {name: 'Record into selected clip'})).toBeDisabled();
   await expect(page.locator('#mlr-notice')).toContainText('Physical Grid port 3 mirrored');
-  await expect(page.locator('.mlr-pad').first()).not.toHaveAttribute('data-level', '0');
+
+  const mirroredLevels = await page.locator('.mlr-pad').evaluateAll(pads => pads.map(pad => pad.dataset.level));
+  expect(mirroredLevels).toEqual(expectedLevels);
 });
