@@ -3,11 +3,18 @@ import {test, expect} from '@playwright/test';
 const FIXTURE = 'http://127.0.0.1:7777/__fixture__';
 const PAGE = 'http://localhost:7780/mlr.html?device=127.0.0.1&rt=7778&bridge=localhost';
 
-async function injectState(page, mutate) {
-  await page.evaluate(source => {
+async function injectState(page, scenario) {
+  await page.evaluate(kind => {
     const session = globalThis.ingenueDebug.latest;
     const data = structuredClone(session.state.data);
-    Function('data', source)(data);
+    data.script = {active: true, name: 'mlre', shortname: 'mlre'};
+    data.mlr = {active: false};
+    if (kind === 'physical-only') {
+      const virtual = data.grid.ports['1'];
+      data.grid.ports = {
+        '3': {...virtual, port: 3, virtual: false},
+      };
+    }
     const nextState = {
       ...session.state,
       status: 'synced',
@@ -16,7 +23,7 @@ async function injectState(page, mutate) {
     };
     session.state = nextState;
     session.dispatchEvent(new CustomEvent('state', {detail: nextState}));
-  }, mutate.toString().replace(/^.*?=>\s*{/, '').replace(/}\s*$/, ''));
+  }, scenario);
 }
 
 test.beforeEach(async ({request}) => {
@@ -62,10 +69,7 @@ test('MLRE and unrelated scripts keep native Grid K E while MLR workflow falls b
   await page.waitForFunction(() => globalThis.ingenueDebug?.latest?.state?.status === 'synced');
 
   const beforeLevels = await page.locator('.mlr-pad').evaluateAll(pads => pads.map(pad => pad.dataset.level));
-  await injectState(page, data => {
-    data.script = {active: true, name: 'mlre', shortname: 'mlre'};
-    data.mlr = {active: false};
-  });
+  await injectState(page, 'mlre');
 
   await expect(page.locator('body')).toHaveAttribute('data-mlr-authority', 'unavailable');
   await expect(page.locator('body')).toHaveAttribute('data-native-controls', 'available');
@@ -85,14 +89,7 @@ test('physical-only Grid LEDs are mirrored but browser Grid input is disabled', 
   await page.goto(PAGE);
   await page.waitForFunction(() => globalThis.ingenueDebug?.latest?.state?.status === 'synced');
 
-  await injectState(page, data => {
-    data.script = {active: true, name: 'mlre', shortname: 'mlre'};
-    data.mlr = {active: false};
-    const virtual = data.grid.ports['1'];
-    data.grid.ports = {
-      '3': {...virtual, port: 3, virtual: false},
-    };
-  });
+  await injectState(page, 'physical-only');
 
   await expect(page.locator('body')).not.toHaveAttribute('data-native-grid-ready', '');
   await expect(page.getByRole('button', {name: 'Grid 1, 1'})).toBeDisabled();
