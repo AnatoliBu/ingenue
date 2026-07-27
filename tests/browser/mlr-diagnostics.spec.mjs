@@ -51,9 +51,14 @@ test('MLRE and unrelated scripts keep native Grid K E while MLR workflow falls b
     const data = structuredClone(session.state.data);
     data.script = {active: true, name: 'mlre', shortname: 'mlre'};
     data.mlr = {active: false};
-    session.dispatchEvent(new CustomEvent('state', {
-      detail: {...session.state, status: 'synced', revision: session.state.revision + 1, data},
-    }));
+    const nextState = {
+      ...session.state,
+      status: 'synced',
+      revision: Number(session.state.revision || 0) + 1,
+      data,
+    };
+    session.state = nextState;
+    session.dispatchEvent(new CustomEvent('state', {detail: nextState}));
   });
 
   await expect(page.locator('body')).toHaveAttribute('data-mlr-authority', 'unavailable');
