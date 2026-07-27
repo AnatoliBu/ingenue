@@ -52,6 +52,7 @@ test('MLR availability distinguishes runtime, exact script identity, observer, G
   assert.equal(availability.scriptIsMlr, true);
   assert.equal(availability.observerActive, true);
   assert.equal(availability.active, true);
+  assert.equal(availability.displayGridPort, 2);
   assert.equal(availability.gridPort, 2);
   assert.equal(availability.gridAvailable, true);
   assert.equal(availability.audioTelemetry, false);
@@ -86,6 +87,27 @@ test('native Grid K E remain available when optional MLR enrichment is absent', 
     keys: true,
     encoders: true,
     grid: true,
+    workflow: false,
+  });
+});
+
+test('a physical-only Grid can be mirrored but cannot receive browser key input', () => {
+  const availability = inspectMlrAvailability({
+    script: {active: true, shortname: 'mlre', name: 'mlre'},
+    mlr: {active: false},
+    grid: {
+      ports: {
+        '3': {port: 3, cols: 16, rows: 8, virtual: false},
+      },
+    },
+  });
+  assert.equal(availability.displayGridPort, 3);
+  assert.equal(availability.gridPort, null);
+  assert.equal(availability.gridAvailable, false);
+  assert.deepEqual(mlrControlPolicy(availability), {
+    keys: true,
+    encoders: true,
+    grid: false,
     workflow: false,
   });
 });
