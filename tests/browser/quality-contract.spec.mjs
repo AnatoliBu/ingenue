@@ -21,13 +21,13 @@ const VISUAL_BASELINES=Object.freeze({
   'controllers-desktop':'28e461ca36364ca07206496066c5ce069506e97cd1e3a3252bd5f7da119f0ce6',
   'performance-desktop':'9869a0e9ce961b16b366d532ca4984b31ef9dbed0837e809f106562f8d971ccc',
   'builder-desktop':'2df2776017086a95db4d2c176d3b9aaad98731938a01b1996e71b78c08ff9df4',
-  'mlr-desktop':'2dc5db28d3de2565450393dd642974a7afc109eea9870b443d2ddde117710b48',
+  'mlr-desktop':'b994209f457e4cb4e78cdd9ac4f9a7620826ffa7b708db97ba904c9569c4b05d',
   'performance-tablet':'5f5231f3e167c836f440fc5e10f232a473a7bf1995a714f353108ebc6869fb06',
   'builder-tablet':'cf1e279d8313c46234384622b41ac2219488693b7ba0262cb0bd8f237b52c348',
-  'mlr-tablet':'31ceb7cae9dc62147423f210d59aeeead4c22781def543b2dca89ea69248433d',
+  'mlr-tablet':'d24c87d478fac872d638f1421494438a20b151dc2e30ae934831c63896b42698',
   'performance-phone':'8288d8d1ec8b916f2e20759fb3c8e9097a905a0371910d17d72c99f20c7079e2',
   'builder-phone':'b88a2aa221dff384a6bedc8844d4e20b0664a4cdf4634fd4fb8bb441db69b630',
-  'mlr-phone':'f90c2655c945c5092cfd833fb312a624ae43a04681f2f83bb1ced3486069e2a7',
+  'mlr-phone':'1f50ac3fbbdb40a045bfdd8b066d92e42b807687cd24c9d7b7ea7fa3070de96d',
 });
 const VISUALS=[
   ['controllers','controllers.html'],
